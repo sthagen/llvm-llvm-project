@@ -5247,6 +5247,9 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
       for (Expr *A : Args.slice(ArgIx)) {
         ExprResult Arg = DefaultVariadicArgumentPromotion(A, CallType, FDecl);
         Invalid |= Arg.isInvalid();
+        // Copy blocks to the heap.
+        if (A->getType()->isBlockPointerType())
+          maybeExtendBlockObject(Arg);
         AllArgs.push_back(Arg.get());
       }
     }
@@ -8973,6 +8976,12 @@ static bool tryGCCVectorConvertAndSplat(Sema &S, ExprResult *Scalar,
       return true;
 
     ScalarCast = CK_IntegralCast;
+  } else if (VectorEltTy->isIntegralType(S.Context) &&
+             ScalarTy->isRealFloatingType()) {
+    if (S.Context.getTypeSize(VectorEltTy) == S.Context.getTypeSize(ScalarTy))
+      ScalarCast = CK_FloatingToIntegral;
+    else
+      return true;
   } else if (VectorEltTy->isRealFloatingType()) {
     if (ScalarTy->isRealFloatingType()) {
 
@@ -10592,7 +10601,8 @@ static QualType checkArithmeticOrEnumeralThreeWayCompare(Sema &S,
   assert(!Type.isNull() && "composite type for <=> has not been set");
 
   return S.CheckComparisonCategoryType(
-      *getComparisonCategoryForBuiltinCmp(Type), Loc);
+      *getComparisonCategoryForBuiltinCmp(Type), Loc,
+      Sema::ComparisonCategoryUsage::OperatorInExpression);
 }
 
 static QualType checkArithmeticOrEnumeralCompare(Sema &S, ExprResult &LHS,
@@ -10729,7 +10739,8 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
       CCT = ComparisonCategoryType::StrongEquality;
     }
 
-    return CheckComparisonCategoryType(*CCT, Loc);
+    return CheckComparisonCategoryType(
+        *CCT, Loc, ComparisonCategoryUsage::OperatorInExpression);
   };
 
   if (!IsRelational && LHSIsNull != RHSIsNull) {
