@@ -11,6 +11,7 @@
 #include "AST.h"
 #include "CodeCompletionStrings.h"
 #include "FindTarget.h"
+#include "FormattedString.h"
 #include "Logger.h"
 #include "Selection.h"
 #include "SourceCode.h"
@@ -94,7 +95,7 @@ std::string printDefinition(const Decl *D) {
 }
 
 void printParams(llvm::raw_ostream &OS,
-                        const std::vector<HoverInfo::Param> &Params) {
+                 const std::vector<HoverInfo::Param> &Params) {
   for (size_t I = 0, E = Params.size(); I != E; ++I) {
     if (I)
       OS << ", ";
@@ -409,9 +410,12 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
       llvm::consumeError(Offset.takeError());
       return llvm::None;
     }
-    SelectionTree Selection(AST.getASTContext(), AST.getTokens(), *Offset);
+    // Editors send the position on the left of the hovered character.
+    // So our selection tree should be biased right. (Tested with VSCode).
+    SelectionTree ST = SelectionTree::createRight(
+        AST.getASTContext(), AST.getTokens(), *Offset, *Offset);
     std::vector<const Decl *> Result;
-    if (const SelectionTree::Node *N = Selection.commonAncestor()) {
+    if (const SelectionTree::Node *N = ST.commonAncestor()) {
       DeclRelationSet Rel = DeclRelation::TemplatePattern | DeclRelation::Alias;
       auto Decls = targetDecl(N->ASTNode, Rel);
       if (!Decls.empty()) {
@@ -441,28 +445,29 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
   return HI;
 }
 
-FormattedString HoverInfo::present() const {
-  FormattedString Output;
+markup::Document HoverInfo::present() const {
+  markup::Document Output;
   if (NamespaceScope) {
-    Output.appendText("Declared in");
+    auto &P = Output.addParagraph();
+    P.appendText("Declared in");
     // Drop trailing "::".
     if (!LocalScope.empty())
-      Output.appendInlineCode(llvm::StringRef(LocalScope).drop_back(2));
+      P.appendCode(llvm::StringRef(LocalScope).drop_back(2));
     else if (NamespaceScope->empty())
-      Output.appendInlineCode("global namespace");
+      P.appendCode("global namespace");
     else
-      Output.appendInlineCode(llvm::StringRef(*NamespaceScope).drop_back(2));
+      P.appendCode(llvm::StringRef(*NamespaceScope).drop_back(2));
   }
 
   if (!Definition.empty()) {
-    Output.appendCodeBlock(Definition);
+    Output.addCodeBlock(Definition);
   } else {
     // Builtin types
-    Output.appendCodeBlock(Name);
+    Output.addCodeBlock(Name);
   }
 
   if (!Documentation.empty())
-    Output.appendText(Documentation);
+    Output.addParagraph().appendText(Documentation);
   return Output;
 }
 
