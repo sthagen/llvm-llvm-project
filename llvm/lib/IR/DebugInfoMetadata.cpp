@@ -1199,8 +1199,8 @@ bool DIExpression::isConstant() const {
 DIExpression::ExtOps DIExpression::getExtOps(unsigned FromSize, unsigned ToSize,
                                              bool Signed) {
   dwarf::TypeKind TK = Signed ? dwarf::DW_ATE_signed : dwarf::DW_ATE_unsigned;
-  DIExpression::ExtOps Ops({dwarf::DW_OP_LLVM_convert, FromSize, TK,
-                            dwarf::DW_OP_LLVM_convert, ToSize, TK});
+  DIExpression::ExtOps Ops{{dwarf::DW_OP_LLVM_convert, FromSize, TK,
+                            dwarf::DW_OP_LLVM_convert, ToSize, TK}};
   return Ops;
 }
 
