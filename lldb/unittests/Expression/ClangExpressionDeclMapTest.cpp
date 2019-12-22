@@ -33,7 +33,7 @@ struct FakeClangExpressionDeclMap : public ClangExpressionDeclMap {
     // persistent declaration and must be inside the scratch AST context.
     assert(d);
     assert(d->getName().startswith("$"));
-    assert(&d->getASTContext() == m_scratch_context->getASTContext());
+    assert(&d->getASTContext() == &m_scratch_context->getASTContext());
     m_persistent_decls[d->getName()] = d;
   }
 
@@ -75,7 +75,7 @@ struct ClangExpressionDeclMapTest : public testing::Test {
     importer = std::make_shared<ClangASTImporter>();
     decl_map = std::make_unique<FakeClangExpressionDeclMap>(importer);
     target_ast = clang_utils::createAST();
-    decl_map->InstallASTContext(*target_ast, *target_ast->getFileManager());
+    decl_map->InstallASTContext(*target_ast);
   }
 
   void TearDown() override {
