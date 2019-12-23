@@ -80,3 +80,10 @@ template<typename T> requires C4<void>
 int g() { }
 
 static_assert(sizeof(g<int>()));
+
+// Regression - used template parameter detection when only first out of
+// multiple parameters are used
+template <unsigned> struct X {};
+template <class...> int h(X<0>);
+template <unsigned b, class...> int h(X<b>);
+static_assert(sizeof(h(X<0>{})));

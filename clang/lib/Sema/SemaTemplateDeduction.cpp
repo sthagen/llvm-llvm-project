@@ -5412,8 +5412,6 @@ struct OccurringTemplateParameterFinder :
 
 protected:
   void noteParameter(unsigned Index) {
-    if (OccurringIndices.size() >= Index)
-      OccurringIndices.resize(Index + 1, false);
     OccurringIndices.set(Index);
   }
 };

@@ -552,13 +552,13 @@ static bool substituteParameterMappings(Sema &S, NormalizedConstraint &N,
   MultiLevelTemplateArgumentList MLTAL;
   MLTAL.addOuterTemplateArguments(TemplateArgs);
   if (!Atomic.ParameterMapping) {
-    llvm::SmallBitVector OccurringIndices;
+    llvm::SmallBitVector OccurringIndices(TemplateParams->size());
     S.MarkUsedTemplateParameters(Atomic.ConstraintExpr, /*OnlyDeduced=*/false,
                                  /*Depth=*/0, OccurringIndices);
     Atomic.ParameterMapping.emplace();
     Atomic.ParameterMapping->reserve(OccurringIndices.size());
     for (unsigned I = 0, C = TemplateParams->size(); I != C; ++I)
-      if (I < OccurringIndices.size() && OccurringIndices[I])
+      if (OccurringIndices[I])
         Atomic.ParameterMapping->push_back(
             S.getIdentityTemplateArgumentLoc(TemplateParams->begin()[I],
                 // Here we assume we do not support things like
