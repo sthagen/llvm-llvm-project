@@ -3868,19 +3868,12 @@ entry:
 define <2 x i32> @constrained_vector_fptosi_v2i32_v2f32() #0 {
 ; CHECK-LABEL: constrained_vector_fptosi_v2i32_v2f32:
 ; CHECK:       # %bb.0: # %entry
-; CHECK-NEXT:    cvttss2si {{.*}}(%rip), %eax
-; CHECK-NEXT:    movd %eax, %xmm1
-; CHECK-NEXT:    cvttss2si {{.*}}(%rip), %eax
-; CHECK-NEXT:    movd %eax, %xmm0
-; CHECK-NEXT:    punpckldq {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[1],xmm1[1]
+; CHECK-NEXT:    cvttps2dq {{.*}}(%rip), %xmm0
 ; CHECK-NEXT:    retq
 ;
 ; AVX-LABEL: constrained_vector_fptosi_v2i32_v2f32:
 ; AVX:       # %bb.0: # %entry
-; AVX-NEXT:    vcvttss2si {{.*}}(%rip), %eax
-; AVX-NEXT:    vmovd %eax, %xmm0
-; AVX-NEXT:    vcvttss2si {{.*}}(%rip), %eax
-; AVX-NEXT:    vpinsrd $1, %eax, %xmm0, %xmm0
+; AVX-NEXT:    vcvttps2dq {{.*}}(%rip), %xmm0
 ; AVX-NEXT:    retq
 entry:
   %result = call <2 x i32> @llvm.experimental.constrained.fptosi.v2i32.v2f32(
@@ -4363,10 +4356,10 @@ define <2 x i32> @constrained_vector_fptoui_v2i32_v2f32() #0 {
 ;
 ; AVX512-LABEL: constrained_vector_fptoui_v2i32_v2f32:
 ; AVX512:       # %bb.0: # %entry
-; AVX512-NEXT:    vcvttss2usi {{.*}}(%rip), %eax
-; AVX512-NEXT:    vmovd %eax, %xmm0
-; AVX512-NEXT:    vcvttss2usi {{.*}}(%rip), %eax
-; AVX512-NEXT:    vpinsrd $1, %eax, %xmm0, %xmm0
+; AVX512-NEXT:    vmovaps {{.*#+}} xmm0 = [4.2E+1,4.3E+1,0.0E+0,0.0E+0]
+; AVX512-NEXT:    vcvttps2udq %zmm0, %zmm0
+; AVX512-NEXT:    # kill: def $xmm0 killed $xmm0 killed $zmm0
+; AVX512-NEXT:    vzeroupper
 ; AVX512-NEXT:    retq
 entry:
   %result = call <2 x i32> @llvm.experimental.constrained.fptoui.v2i32.v2f32(
@@ -6227,23 +6220,14 @@ entry:
 define <2 x float> @constrained_vector_sitofp_v2f32_v2i32(<2 x i32> %x) #0 {
 ; CHECK-LABEL: constrained_vector_sitofp_v2f32_v2i32:
 ; CHECK:       # %bb.0: # %entry
-; CHECK-NEXT:    movd %xmm0, %eax
-; CHECK-NEXT:    cvtsi2ss %eax, %xmm1
-; CHECK-NEXT:    pshufd {{.*#+}} xmm0 = xmm0[1,1,2,3]
-; CHECK-NEXT:    movd %xmm0, %eax
-; CHECK-NEXT:    xorps %xmm0, %xmm0
-; CHECK-NEXT:    cvtsi2ss %eax, %xmm0
-; CHECK-NEXT:    unpcklps {{.*#+}} xmm1 = xmm1[0],xmm0[0],xmm1[1],xmm0[1]
-; CHECK-NEXT:    movaps %xmm1, %xmm0
+; CHECK-NEXT:    movq {{.*#+}} xmm0 = xmm0[0],zero
+; CHECK-NEXT:    cvtdq2ps %xmm0, %xmm0
 ; CHECK-NEXT:    retq
 ;
 ; AVX-LABEL: constrained_vector_sitofp_v2f32_v2i32:
 ; AVX:       # %bb.0: # %entry
-; AVX-NEXT:    vextractps $1, %xmm0, %eax
-; AVX-NEXT:    vcvtsi2ss %eax, %xmm1, %xmm1
-; AVX-NEXT:    vmovd %xmm0, %eax
-; AVX-NEXT:    vcvtsi2ss %eax, %xmm2, %xmm0
-; AVX-NEXT:    vinsertps {{.*#+}} xmm0 = xmm0[0],xmm1[0],xmm0[2,3]
+; AVX-NEXT:    vmovq {{.*#+}} xmm0 = xmm0[0],zero
+; AVX-NEXT:    vcvtdq2ps %xmm0, %xmm0
 ; AVX-NEXT:    retq
 entry:
   %result = call <2 x float>
@@ -6844,14 +6828,22 @@ define <2 x float> @constrained_vector_uitofp_v2f32_v2i32(<2 x i32> %x) #0 {
 ; CHECK-NEXT:    cvtpd2ps %xmm0, %xmm0
 ; CHECK-NEXT:    retq
 ;
-; AVX-LABEL: constrained_vector_uitofp_v2f32_v2i32:
-; AVX:       # %bb.0: # %entry
-; AVX-NEXT:    vpmovzxdq {{.*#+}} xmm0 = xmm0[0],zero,xmm0[1],zero
-; AVX-NEXT:    vmovdqa {{.*#+}} xmm1 = [4.503599627370496E+15,4.503599627370496E+15]
-; AVX-NEXT:    vpor %xmm1, %xmm0, %xmm0
-; AVX-NEXT:    vsubpd %xmm1, %xmm0, %xmm0
-; AVX-NEXT:    vcvtpd2ps %xmm0, %xmm0
-; AVX-NEXT:    retq
+; AVX1-LABEL: constrained_vector_uitofp_v2f32_v2i32:
+; AVX1:       # %bb.0: # %entry
+; AVX1-NEXT:    vpmovzxdq {{.*#+}} xmm0 = xmm0[0],zero,xmm0[1],zero
+; AVX1-NEXT:    vmovdqa {{.*#+}} xmm1 = [4.503599627370496E+15,4.503599627370496E+15]
+; AVX1-NEXT:    vpor %xmm1, %xmm0, %xmm0
+; AVX1-NEXT:    vsubpd %xmm1, %xmm0, %xmm0
+; AVX1-NEXT:    vcvtpd2ps %xmm0, %xmm0
+; AVX1-NEXT:    retq
+;
+; AVX512-LABEL: constrained_vector_uitofp_v2f32_v2i32:
+; AVX512:       # %bb.0: # %entry
+; AVX512-NEXT:    vmovq {{.*#+}} xmm0 = xmm0[0],zero
+; AVX512-NEXT:    vcvtudq2ps %zmm0, %zmm0
+; AVX512-NEXT:    # kill: def $xmm0 killed $xmm0 killed $zmm0
+; AVX512-NEXT:    vzeroupper
+; AVX512-NEXT:    retq
 entry:
   %result = call <2 x float>
            @llvm.experimental.constrained.uitofp.v2f32.v2i32(<2 x i32> %x,
