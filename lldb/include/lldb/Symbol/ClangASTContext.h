@@ -164,11 +164,11 @@ public:
   static bool AreTypesSame(CompilerType type1, CompilerType type2,
                            bool ignore_qualifiers = false);
 
-  static CompilerType GetTypeForDecl(clang::NamedDecl *decl);
+  CompilerType GetTypeForDecl(clang::NamedDecl *decl);
 
-  static CompilerType GetTypeForDecl(clang::TagDecl *decl);
+  CompilerType GetTypeForDecl(clang::TagDecl *decl);
 
-  static CompilerType GetTypeForDecl(clang::ObjCInterfaceDecl *objc_decl);
+  CompilerType GetTypeForDecl(clang::ObjCInterfaceDecl *objc_decl);
 
   template <typename RecordDeclType>
   CompilerType
@@ -352,15 +352,9 @@ public:
 
   // Integer type functions
 
-  static CompilerType GetIntTypeFromBitSize(clang::ASTContext *ast,
-                                            size_t bit_size, bool is_signed);
+  CompilerType GetIntTypeFromBitSize(size_t bit_size, bool is_signed);
 
-  CompilerType GetPointerSizedIntType(bool is_signed) {
-    return GetPointerSizedIntType(&getASTContext(), is_signed);
-  }
-
-  static CompilerType GetPointerSizedIntType(clang::ASTContext *ast,
-                                             bool is_signed);
+  CompilerType GetPointerSizedIntType(bool is_signed);
 
   // Floating point functions
 
