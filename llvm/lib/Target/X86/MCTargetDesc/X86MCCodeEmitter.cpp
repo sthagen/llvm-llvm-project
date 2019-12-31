@@ -52,27 +52,6 @@ public:
                          const MCSubtargetInfo &STI) const override;
 
 private:
-  /// \param Op operand # of the memory operand.
-  ///
-  /// \returns true if the specified instruction has a 16-bit memory operand.
-  bool Is16BitMemOperand(const MCInst &MI, unsigned Op,
-                         const MCSubtargetInfo &STI) const {
-    const MCOperand &BaseReg = MI.getOperand(Op + X86::AddrBaseReg);
-    const MCOperand &IndexReg = MI.getOperand(Op + X86::AddrIndexReg);
-    const MCOperand &Disp = MI.getOperand(Op + X86::AddrDisp);
-
-    if (STI.hasFeature(X86::Mode16Bit) && BaseReg.getReg() == 0 &&
-        Disp.isImm() && Disp.getImm() < 0x10000)
-      return true;
-    if ((BaseReg.getReg() != 0 &&
-         X86MCRegisterClasses[X86::GR16RegClassID].contains(
-             BaseReg.getReg())) ||
-        (IndexReg.getReg() != 0 &&
-         X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg.getReg())))
-      return true;
-    return false;
-  }
-
   unsigned getX86RegNum(const MCOperand &MO) const {
     return Ctx.getRegisterInfo()->getEncodingValue(MO.getReg()) & 0x7;
   }
@@ -142,8 +121,6 @@ private:
 
   uint8_t determineREXPrefix(const MCInst &MI, uint64_t TSFlags, int MemOperand,
                              const MCInstrDesc &Desc) const;
-
-  bool isPCRel32Branch(const MCInst &MI) const;
 };
 
 } // end anonymous namespace
@@ -194,8 +171,29 @@ static MCFixupKind getImmFixupKind(uint64_t TSFlags) {
   return MCFixup::getKindForSize(Size, isPCRel);
 }
 
+/// \param Op operand # of the memory operand.
+///
+/// \returns true if the specified instruction has a 16-bit memory operand.
+static bool is16BitMemOperand(const MCInst &MI, unsigned Op,
+                              const MCSubtargetInfo &STI) {
+  const MCOperand &BaseReg = MI.getOperand(Op + X86::AddrBaseReg);
+  const MCOperand &IndexReg = MI.getOperand(Op + X86::AddrIndexReg);
+  const MCOperand &Disp = MI.getOperand(Op + X86::AddrDisp);
+
+  if (STI.hasFeature(X86::Mode16Bit) && BaseReg.getReg() == 0 && Disp.isImm() &&
+      Disp.getImm() < 0x10000)
+    return true;
+  if ((BaseReg.getReg() != 0 &&
+       X86MCRegisterClasses[X86::GR16RegClassID].contains(BaseReg.getReg())) ||
+      (IndexReg.getReg() != 0 &&
+       X86MCRegisterClasses[X86::GR16RegClassID].contains(IndexReg.getReg())))
+    return true;
+  return false;
+}
+
+/// \param Op operand # of the memory operand.
+///
 /// \returns true if the specified instruction has a 32-bit memory operand.
-/// Op specifies the operand # of the memoperand.
 static bool is32BitMemOperand(const MCInst &MI, unsigned Op) {
   const MCOperand &BaseReg = MI.getOperand(Op + X86::AddrBaseReg);
   const MCOperand &IndexReg = MI.getOperand(Op + X86::AddrIndexReg);
@@ -214,8 +212,9 @@ static bool is32BitMemOperand(const MCInst &MI, unsigned Op) {
   return false;
 }
 
-/// \returns true if the specified instruction has
-/// a 64-bit memory operand. Op specifies the operand # of the memoperand.
+/// \param Op operand # of the memory operand.
+///
+/// \returns true if the specified instruction has a 64-bit memory operand.
 #ifndef NDEBUG
 static bool is64BitMemOperand(const MCInst &MI, unsigned Op) {
   const MCOperand &BaseReg = MI.getOperand(Op + X86::AddrBaseReg);
@@ -266,7 +265,7 @@ static bool hasSecRelSymbolRef(const MCExpr *Expr) {
   return false;
 }
 
-bool X86MCCodeEmitter::isPCRel32Branch(const MCInst &MI) const {
+static bool isPCRel32Branch(const MCInst &MI, const MCInstrInfo &MCII) {
   unsigned Opcode = MI.getOpcode();
   const MCInstrDesc &Desc = MCII.get(Opcode);
   if ((Opcode != X86::CALL64pcrel32 && Opcode != X86::JMP_4) ||
@@ -428,7 +427,7 @@ void X86MCCodeEmitter::emitMemModRMByte(const MCInst &MI, unsigned Op,
 
   // 16-bit addressing forms of the ModR/M byte have a different encoding for
   // the R/M field and are far more limited in which registers can be used.
-  if (Is16BitMemOperand(MI, Op, STI)) {
+  if (is16BitMemOperand(MI, Op, STI)) {
     if (BaseReg) {
       // For 32-bit addressing, the row and column values in Table 2-2 are
       // basically the same. It's AX/CX/DX/BX/SP/BP/SI/DI in that order, with
@@ -1305,15 +1304,15 @@ void X86MCCodeEmitter::encodeInstruction(const MCInst &MI, raw_ostream &OS,
   } else if (MemoryOperand < 0) {
     need_address_override = false;
   } else if (STI.hasFeature(X86::Mode64Bit)) {
-    assert(!Is16BitMemOperand(MI, MemoryOperand, STI));
+    assert(!is16BitMemOperand(MI, MemoryOperand, STI));
     need_address_override = is32BitMemOperand(MI, MemoryOperand);
   } else if (STI.hasFeature(X86::Mode32Bit)) {
     assert(!is64BitMemOperand(MI, MemoryOperand));
-    need_address_override = Is16BitMemOperand(MI, MemoryOperand, STI);
+    need_address_override = is16BitMemOperand(MI, MemoryOperand, STI);
   } else {
     assert(STI.hasFeature(X86::Mode16Bit));
     assert(!is64BitMemOperand(MI, MemoryOperand));
-    need_address_override = !Is16BitMemOperand(MI, MemoryOperand, STI);
+    need_address_override = !is16BitMemOperand(MI, MemoryOperand, STI);
   }
 
   if (need_address_override)
@@ -1388,7 +1387,7 @@ void X86MCCodeEmitter::encodeInstruction(const MCInst &MI, raw_ostream &OS,
   case X86II::RawFrm:
     emitByte(BaseOpcode + OpcodeOffset, CurByte, OS);
 
-    if (!STI.hasFeature(X86::Mode64Bit) || !isPCRel32Branch(MI))
+    if (!STI.hasFeature(X86::Mode64Bit) || !isPCRel32Branch(MI, MCII))
       break;
 
     const MCOperand &Op = MI.getOperand(CurOp++);
