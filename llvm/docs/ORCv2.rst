@@ -55,7 +55,7 @@ ORC provides the following features:
   session object (``ExecutionSession``). Compiling eagerly by default makes it
   easy to use ORC as a simple in-memory compiler within an existing JIT
   infrastructure. However ORC also provides support for lazy compilation via
-  lazy-reexports (see Laziness_).
+  lazy-reexports (see :ref:`Laziness`).
 
 *Support for Custom Compilers and Program Representations*
   Clients can supply custom compilers for each symbol that they define in their
@@ -317,9 +317,10 @@ to be re-used across JIT sessions as the JIT'd code no longer changes, only the
 absolute symbol definition does.
 
 For process and library symbols the DynamicLibrarySearchGenerator utility (See
-ProcessAndLibrarySymbols_) can be used to automatically build absolute symbol
-mappings for you. However the absoluteSymbols function is still useful for
-making non-global objects in your JIT visible to JIT'd code. For example,
+:ref:`How to Add Process and Library Symbols to JITDylibs
+<ProcessAndLibrarySymbols>`) can be used to automatically build absolute
+symbol mappings for you. However the absoluteSymbols function is still useful
+for making non-global objects in your JIT visible to JIT'd code. For example,
 imagine that your JIT standard library needs access to your JIT object to make
 some calls. We could bake the address of your object into the library, but then
 it would need to be recompiled for each session:
@@ -402,6 +403,7 @@ The reexports utility can be handy for composing a single JITDylib interface by
 re-exporting symbols from several other JITDylibs.
 
 .. _Laziness:
+
 Laziness
 ========
 
@@ -521,7 +523,7 @@ How-tos
 =======
 
 How to manage symbol strings
-############################
+----------------------------
 
 Symbol strings in ORC are uniqued to improve lookup performance, reduce memory
 overhead, and allow symbol names to function as efficient keys. To get the
@@ -554,7 +556,7 @@ will perform both jobs for you:
     auto Sym = ES.lookup({&ES.getMainJITDylib()}, Mangle("main"));
 
 How to create JITDylibs and set up linkage relationships
-########################################################
+--------------------------------------------------------
 
 In ORC, all symbol definitions reside in JITDylibs. JITDylibs are created by
 calling the ``ExecutionSession::createJITDylib`` method with a unique name:
@@ -577,7 +579,7 @@ default. A reference to it can be obtained by calling
     auto &MainJD = ES.getMainJITDylib();
 
 How to use ThreadSafeModule and ThreadSafeContext
-#################################################
+-------------------------------------------------
 
 ThreadSafeModule and ThreadSafeContext are wrappers around Modules and
 LLVMContexts respectively. A ThreadSafeModule is a pair of a
@@ -680,6 +682,7 @@ all modules on the same context:
     }
 
 .. _ProcessAndLibrarySymbols:
+
 How to Add Process and Library Symbols to the JITDylibs
 =======================================================
 
