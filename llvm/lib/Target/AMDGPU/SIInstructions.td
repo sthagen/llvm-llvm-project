@@ -1957,11 +1957,12 @@ def : GCNPat <
 >;
 
 def : GCNPat <
-  (i64 (int_amdgcn_mov_dpp i64:$src, timm:$dpp_ctrl, timm:$row_mask, timm:$bank_mask,
-                           timm:$bound_ctrl)),
-  (V_MOV_B64_DPP_PSEUDO $src, $src, (as_i32imm $dpp_ctrl),
-                        (as_i32imm $row_mask), (as_i32imm $bank_mask),
-                        (as_i1imm $bound_ctrl))
+  (i64 (int_amdgcn_mov_dpp i64:$src, timm:$dpp_ctrl, timm:$row_mask,
+                           timm:$bank_mask, timm:$bound_ctrl)),
+  (V_MOV_B64_DPP_PSEUDO VReg_64:$src, VReg_64:$src,
+                        (as_i32timm $dpp_ctrl), (as_i32timm $row_mask),
+                        (as_i32timm $bank_mask),
+                        (as_i1timm $bound_ctrl))
 >;
 
 def : GCNPat <
@@ -2150,8 +2151,13 @@ def G_AMDGPU_FFBH_U32 : AMDGPUGenericInstruction {
 // operands.
 def G_AMDGPU_ATOMIC_CMPXCHG : AMDGPUGenericInstruction {
   let OutOperandList = (outs type0:$oldval);
-  let InOperandList = (ins ptype1:$addr, type0:$cmpval_nnenwval);
+  let InOperandList = (ins ptype1:$addr, type0:$cmpval_newval);
   let hasSideEffects = 0;
   let mayLoad = 1;
   let mayStore = 1;
+}
+
+let Namespace = "AMDGPU" in {
+def G_AMDGPU_ATOMIC_INC : G_ATOMICRMW_OP;
+def G_AMDGPU_ATOMIC_DEC : G_ATOMICRMW_OP;
 }
