@@ -28808,7 +28808,6 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
     return;
   }
   case ISD::ABS: {
-    const TargetLowering &TLI = DAG.getTargetLoweringInfo();
     assert(N->getValueType(0) == MVT::i64 &&
            "Unexpected type (!= i64) on ABS.");
     MVT HalfT = MVT::i32;
@@ -28821,8 +28820,7 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
                      DAG.getConstant(1, dl, HalfT));
     Tmp = DAG.getNode(
         ISD::SRA, dl, HalfT, Hi,
-        DAG.getConstant(HalfT.getSizeInBits() - 1, dl,
-                        TLI.getShiftAmountTy(HalfT, DAG.getDataLayout())));
+        DAG.getShiftAmountConstant(HalfT.getSizeInBits() - 1, HalfT, dl));
     Lo = DAG.getNode(ISD::UADDO, dl, VTList, Tmp, Lo);
     Hi = DAG.getNode(ISD::ADDCARRY, dl, VTList, Tmp, Hi,
                      SDValue(Lo.getNode(), 1));
@@ -37098,6 +37096,10 @@ static SDValue combineExtractWithShuffle(SDNode *N, SelectionDAG &DAG,
   if (SrcSVT == MVT::i1 || !isa<ConstantSDNode>(Idx))
     return SDValue();
 
+  const APInt &IdxC = N->getConstantOperandAPInt(1);
+  if (IdxC.uge(NumSrcElts))
+    return SDValue();
+
   SDValue SrcBC = peekThroughBitcasts(Src);
 
   // Handle extract(broadcast(scalar_value)), it doesn't matter what index is.
@@ -37127,8 +37129,7 @@ static SDValue combineExtractWithShuffle(SDNode *N, SelectionDAG &DAG,
   // Handle extract(truncate(x)) for 0'th index.
   // TODO: Treat this as a faux shuffle?
   // TODO: When can we use this for general indices?
-  if (ISD::TRUNCATE == Src.getOpcode() && SrcVT.is128BitVector() &&
-      isNullConstant(Idx)) {
+  if (ISD::TRUNCATE == Src.getOpcode() && SrcVT.is128BitVector() && IdxC == 0) {
     Src = extract128BitVector(Src.getOperand(0), 0, DAG, dl);
     Src = DAG.getBitcast(SrcVT, Src);
     return DAG.getNode(N->getOpcode(), dl, VT, Src, Idx);
@@ -37170,7 +37171,7 @@ static SDValue combineExtractWithShuffle(SDNode *N, SelectionDAG &DAG,
   if (Mask.size() != NumSrcElts)
     return SDValue();
 
-  int SrcIdx = Mask[N->getConstantOperandVal(1)];
+  int SrcIdx = Mask[IdxC.getZExtValue()];
 
   // If the shuffle source element is undef/zero then we can just accept it.
   if (SrcIdx == SM_SentinelUndef)
