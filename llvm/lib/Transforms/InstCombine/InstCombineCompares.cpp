@@ -2928,12 +2928,9 @@ Instruction *InstCombiner::foldICmpBinOpEqualityWithConstant(ICmpInst &Cmp,
     break;
   case Instruction::Add: {
     // Replace ((add A, B) != C) with (A != C-B) if B & C are constants.
-    const APInt *BOC;
-    if (match(BOp1, m_APInt(BOC))) {
-      if (BO->hasOneUse()) {
-        Constant *SubC = ConstantExpr::getSub(RHS, cast<Constant>(BOp1));
-        return new ICmpInst(Pred, BOp0, SubC);
-      }
+    if (Constant *BOC = dyn_cast<Constant>(BOp1)) {
+      if (BO->hasOneUse())
+        return new ICmpInst(Pred, BOp0, ConstantExpr::getSub(RHS, BOC));
     } else if (C.isNullValue()) {
       // Replace ((add A, B) != 0) with (A != -B) if A or B is
       // efficiently invertible, or if the add has just this one use.
@@ -2963,11 +2960,11 @@ Instruction *InstCombiner::foldICmpBinOpEqualityWithConstant(ICmpInst &Cmp,
     break;
   case Instruction::Sub:
     if (BO->hasOneUse()) {
-      const APInt *BOC;
-      if (match(BOp0, m_APInt(BOC))) {
+      // Only check for constant LHS here, as constant RHS will be canonicalized
+      // to add and use the fold above.
+      if (Constant *BOC = dyn_cast<Constant>(BOp0)) {
         // Replace ((sub BOC, B) != C) with (B != BOC-C).
-        Constant *SubC = ConstantExpr::getSub(cast<Constant>(BOp0), RHS);
-        return new ICmpInst(Pred, BOp1, SubC);
+        return new ICmpInst(Pred, BOp1, ConstantExpr::getSub(BOC, RHS));
       } else if (C.isNullValue()) {
         // Replace ((sub A, B) != 0) with (A != B).
         return new ICmpInst(Pred, BOp0, BOp1);
@@ -5349,21 +5346,47 @@ static Instruction *foldICmpWithHighBitMask(ICmpInst &Cmp,
 
 static Instruction *foldVectorCmp(CmpInst &Cmp,
                                   InstCombiner::BuilderTy &Builder) {
-  // If both arguments of the cmp are shuffles that use the same mask and
-  // shuffle within a single vector, move the shuffle after the cmp.
+  const CmpInst::Predicate Pred = Cmp.getPredicate();
   Value *LHS = Cmp.getOperand(0), *RHS = Cmp.getOperand(1);
+  bool IsFP = isa<FCmpInst>(Cmp);
+
   Value *V1, *V2;
   Constant *M;
-  if (match(LHS, m_ShuffleVector(m_Value(V1), m_Undef(), m_Constant(M))) &&
-      match(RHS, m_ShuffleVector(m_Value(V2), m_Undef(), m_Specific(M))) &&
-      V1->getType() == V2->getType() &&
-      (LHS->hasOneUse() || RHS->hasOneUse())) {
-    // cmp (shuffle V1, M), (shuffle V2, M) --> shuffle (cmp V1, V2), M
-    CmpInst::Predicate P = Cmp.getPredicate();
-    Value *NewCmp = isa<ICmpInst>(Cmp) ? Builder.CreateICmp(P, V1, V2)
-                                       : Builder.CreateFCmp(P, V1, V2);
+  if (!match(LHS, m_ShuffleVector(m_Value(V1), m_Undef(), m_Constant(M))))
+    return nullptr;
+
+  // If both arguments of the cmp are shuffles that use the same mask and
+  // shuffle within a single vector, move the shuffle after the cmp:
+  // cmp (shuffle V1, M), (shuffle V2, M) --> shuffle (cmp V1, V2), M
+  Type *V1Ty = V1->getType();
+  if (match(RHS, m_ShuffleVector(m_Value(V2), m_Undef(), m_Specific(M))) &&
+      V1Ty == V2->getType() && (LHS->hasOneUse() || RHS->hasOneUse())) {
+    Value *NewCmp = IsFP ? Builder.CreateFCmp(Pred, V1, V2)
+                         : Builder.CreateICmp(Pred, V1, V2);
     return new ShuffleVectorInst(NewCmp, UndefValue::get(NewCmp->getType()), M);
   }
+
+  // Try to canonicalize compare with splatted operand and splat constant.
+  // TODO: We could generalize this for more than splats. See/use the code in
+  //       InstCombiner::foldVectorBinop().
+  Constant *C;
+  if (!LHS->hasOneUse() || !match(RHS, m_Constant(C)))
+    return nullptr;
+
+  // Length-changing splats are ok, so adjust the constants as needed:
+  // cmp (shuffle V1, M), C --> shuffle (cmp V1, C'), M
+  Constant *ScalarC = C->getSplatValue(/* AllowUndefs */ true);
+  Constant *ScalarM = M->getSplatValue(/* AllowUndefs */ true);
+  if (ScalarC && ScalarM) {
+    // We allow undefs in matching, but this transform removes those for safety.
+    // Demanded elements analysis should be able to recover some/all of that.
+    C = ConstantVector::getSplat(V1Ty->getVectorNumElements(), ScalarC);
+    M = ConstantVector::getSplat(M->getType()->getVectorNumElements(), ScalarM);
+    Value *NewCmp = IsFP ? Builder.CreateFCmp(Pred, V1, C)
+                         : Builder.CreateICmp(Pred, V1, C);
+    return new ShuffleVectorInst(NewCmp, UndefValue::get(NewCmp->getType()), M);
+  }
+
   return nullptr;
 }
 

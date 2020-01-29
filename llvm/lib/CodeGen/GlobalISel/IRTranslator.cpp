@@ -1105,7 +1105,7 @@ bool IRTranslator::translateGetElementPtr(const User &U,
         auto ElementSizeMIB = MIRBuilder.buildConstant(
             getLLTForType(*OffsetIRTy, *DL), ElementSize);
         GepOffsetReg =
-            MIRBuilder.buildMul(OffsetTy, ElementSizeMIB, IdxReg).getReg(0);
+            MIRBuilder.buildMul(OffsetTy, IdxReg, ElementSizeMIB).getReg(0);
       } else
         GepOffsetReg = IdxReg;
 
@@ -1531,6 +1531,13 @@ bool IRTranslator::translateKnownIntrinsic(const CallInst &CI, Intrinsic::ID ID,
     MIRBuilder
         .buildInstr(TargetOpcode::G_READ_REGISTER, {getOrCreateVReg(CI)}, {})
         .addMetadata(cast<MDNode>(cast<MetadataAsValue>(Arg)->getMetadata()));
+    return true;
+  }
+  case Intrinsic::write_register: {
+    Value *Arg = CI.getArgOperand(0);
+    MIRBuilder.buildInstr(TargetOpcode::G_WRITE_REGISTER)
+      .addMetadata(cast<MDNode>(cast<MetadataAsValue>(Arg)->getMetadata()))
+      .addUse(getOrCreateVReg(*CI.getArgOperand(1)));
     return true;
   }
   }
