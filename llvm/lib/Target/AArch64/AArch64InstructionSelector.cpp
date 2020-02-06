@@ -171,6 +171,13 @@ private:
   MachineInstr *emitCSetForICMP(Register DefReg, unsigned Pred,
                                 MachineIRBuilder &MIRBuilder) const;
 
+  /// Emit a TB(N)Z instruction which tests \p Bit in \p TestReg.
+  /// \p IsNegative is true if the test should be "not zero".
+  /// This will also optimize the test bit instruction when possible.
+  MachineInstr *emitTestBit(Register TestReg, uint64_t Bit, bool IsNegative,
+                            MachineBasicBlock *DstMBB,
+                            MachineIRBuilder &MIB) const;
+
   // Equivalent to the i32shift_a and friends from AArch64InstrInfo.td.
   // We use these manually instead of using the importer since it doesn't
   // support SDNodeXForm.
@@ -996,6 +1003,11 @@ static Register getTestBitReg(Register Reg, uint64_t &Bit, bool &Invert,
   assert(Reg.isValid() && "Expected valid register!");
   while (MachineInstr *MI = getDefIgnoringCopies(Reg, MRI)) {
     unsigned Opc = MI->getOpcode();
+
+    if (!MI->getOperand(0).isReg() ||
+        !MRI.hasOneUse(MI->getOperand(0).getReg()))
+      break;
+
     // (tbz (any_ext x), b) -> (tbz x, b) if we don't use the extended bits.
     //
     // (tbz (trunc x), b) -> (tbz x, b) is always safe, because the bit number
@@ -1034,6 +1046,8 @@ static Register getTestBitReg(Register Reg, uint64_t &Bit, bool &Invert,
         C = VRegAndVal->Value;
       break;
     }
+    case TargetOpcode::G_ASHR:
+    case TargetOpcode::G_LSHR:
     case TargetOpcode::G_SHL: {
       TestReg = MI->getOperand(1).getReg();
       auto VRegAndVal =
@@ -1044,13 +1058,14 @@ static Register getTestBitReg(Register Reg, uint64_t &Bit, bool &Invert,
     }
     }
 
-    // Didn't find a constant. Bail out of the loop.
-    if (!C)
+    // Didn't find a constant or viable register. Bail out of the loop.
+    if (!C || !TestReg.isValid())
       break;
 
     // We found a suitable instruction with a constant. Check to see if we can
     // walk through the instruction.
     Register NextReg;
+    unsigned TestRegSize = MRI.getType(TestReg).getSizeInBits();
     switch (Opc) {
     default:
       break;
@@ -1062,9 +1077,24 @@ static Register getTestBitReg(Register Reg, uint64_t &Bit, bool &Invert,
     case TargetOpcode::G_SHL:
       // (tbz (shl x, c), b) -> (tbz x, b-c) when b-c is positive and fits in
       // the type of the register.
-      if (*C <= Bit && (Bit - *C) < MRI.getType(TestReg).getSizeInBits()) {
+      if (*C <= Bit && (Bit - *C) < TestRegSize) {
         NextReg = TestReg;
         Bit = Bit - *C;
+      }
+      break;
+    case TargetOpcode::G_ASHR:
+      // (tbz (ashr x, c), b) -> (tbz x, b+c) or (tbz x, msb) if b+c is > # bits
+      // in x
+      NextReg = TestReg;
+      Bit = Bit + *C;
+      if (Bit >= TestRegSize)
+        Bit = TestRegSize - 1;
+      break;
+    case TargetOpcode::G_LSHR:
+      // (tbz (lshr x, c), b) -> (tbz x, b+c) when b + c is < # bits in x
+      if ((Bit + *C) < TestRegSize) {
+        NextReg = TestReg;
+        Bit = Bit + *C;
       }
       break;
     case TargetOpcode::G_XOR:
@@ -1083,12 +1113,46 @@ static Register getTestBitReg(Register Reg, uint64_t &Bit, bool &Invert,
     }
 
     // Check if we found anything worth folding.
-    if (!NextReg.isValid() || !MRI.hasOneUse(NextReg))
-      break;
+    if (!NextReg.isValid())
+      return Reg;
     Reg = NextReg;
   }
 
   return Reg;
+}
+
+MachineInstr *AArch64InstructionSelector::emitTestBit(
+    Register TestReg, uint64_t Bit, bool IsNegative, MachineBasicBlock *DstMBB,
+    MachineIRBuilder &MIB) const {
+  MachineRegisterInfo &MRI = *MIB.getMRI();
+#ifndef NDEBUG
+  assert(ProduceNonFlagSettingCondBr &&
+         "Cannot emit TB(N)Z with speculation tracking!");
+  assert(TestReg.isValid());
+  LLT Ty = MRI.getType(TestReg);
+  unsigned Size = Ty.getSizeInBits();
+  assert(Bit < Size &&
+         "Bit to test must be smaler than the size of a test register!");
+  assert(Ty.isScalar() && "Expected a scalar!");
+  assert(Size >= 32 && "Expected at least a 32-bit register!");
+#endif
+
+  // Attempt to optimize the test bit by walking over instructions.
+  TestReg = getTestBitReg(TestReg, Bit, IsNegative, MRI);
+  bool UseWReg = Bit < 32;
+
+  // When the test register is a 64-bit register, we have to narrow to make
+  // TBNZW work.
+  if (UseWReg)
+    TestReg = narrowExtendRegIfNeeded(TestReg, MIB);
+
+  static const unsigned OpcTable[2][2] = {{AArch64::TBZX, AArch64::TBNZX},
+                                          {AArch64::TBZW, AArch64::TBNZW}};
+  unsigned Opc = OpcTable[UseWReg][IsNegative];
+  auto TestBitMI =
+      MIB.buildInstr(Opc).addReg(TestReg).addImm(Bit).addMBB(DstMBB);
+  constrainSelectedInstRegOperands(*TestBitMI, TII, TRI, RBI);
+  return &*TestBitMI;
 }
 
 bool AArch64InstructionSelector::tryOptAndIntoCompareBranch(
@@ -1135,30 +1199,12 @@ bool AArch64InstructionSelector::tryOptAndIntoCompareBranch(
   if (!MaybeBit || !isPowerOf2_64(MaybeBit->Value))
     return false;
 
-  // Try to optimize the TB(N)Z.
   uint64_t Bit = Log2_64(static_cast<uint64_t>(MaybeBit->Value));
   Register TestReg = AndInst->getOperand(1).getReg();
   bool Invert = Pred == CmpInst::Predicate::ICMP_NE;
-  TestReg = getTestBitReg(TestReg, Bit, Invert, MRI);
 
-  // Choose the correct TB(N)Z opcode to use.
-  unsigned Opc = 0;
-  if (Bit < 32) {
-    // When the bit is less than 32, we have to use a TBZW even if we're on a 64
-    // bit register.
-    Opc = Invert ? AArch64::TBNZW : AArch64::TBZW;
-    TestReg = narrowExtendRegIfNeeded(TestReg, MIB);
-  } else {
-    // Same idea for when Bit >= 32. We don't have to narrow here, because if
-    // Bit > 32, then the G_CONSTANT must be outside the range of valid 32-bit
-    // values. So, we must have a s64.
-    Opc = Invert ? AArch64::TBNZX : AArch64::TBZX;
-  }
-
-  // Construct the branch.
-  auto BranchMI =
-      MIB.buildInstr(Opc).addReg(TestReg).addImm(Bit).addMBB(DstMBB);
-  constrainSelectedInstRegOperands(*BranchMI, TII, TRI, RBI);
+  // Emit a TB(N)Z.
+  emitTestBit(TestReg, Bit, Invert, DstMBB, MIB);
   return true;
 }
 
@@ -1198,6 +1244,18 @@ bool AArch64InstructionSelector::selectCompareBranch(
   MachineInstr *LHSMI = getDefIgnoringCopies(LHS, MRI);
   if (tryOptAndIntoCompareBranch(LHSMI, VRegAndVal->Value, Pred, DestMBB,
                                  MIB)) {
+    I.eraseFromParent();
+    return true;
+  }
+
+  // When we have a less than comparison, we can just test if the last bit
+  // is not zero.
+  //
+  // Note that we don't want to do this when we have a G_AND because it can
+  // become a tst. The tst will make the test bit in the TB(N)Z redundant.
+  if (Pred == CmpInst::ICMP_SLT && LHSMI->getOpcode() != TargetOpcode::G_AND) {
+    uint64_t Bit = MRI.getType(LHS).getSizeInBits() - 1;
+    emitTestBit(LHS, Bit, /*IsNegative = */ true, DestMBB, MIB);
     I.eraseFromParent();
     return true;
   }
@@ -1575,10 +1633,9 @@ bool AArch64InstructionSelector::contractCrossBankCopyIntoStore(
   // G_STORE %x:gpr(s32)
   //
   // And then continue the selection process normally.
-  MachineInstr *Def = getDefIgnoringCopies(I.getOperand(0).getReg(), MRI);
-  if (!Def)
+  Register DefDstReg = getSrcRegIgnoringCopies(I.getOperand(0).getReg(), MRI);
+  if (!DefDstReg.isValid())
     return false;
-  Register DefDstReg = Def->getOperand(0).getReg();
   LLT DefDstTy = MRI.getType(DefDstReg);
   Register StoreSrcReg = I.getOperand(0).getReg();
   LLT StoreSrcTy = MRI.getType(StoreSrcReg);
