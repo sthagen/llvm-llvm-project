@@ -313,8 +313,8 @@ SBThread::GetStopReasonExtendedBacktraces(InstrumentationRuntimeType type) {
 }
 
 size_t SBThread::GetStopDescription(char *dst, size_t dst_len) {
-  LLDB_RECORD_METHOD(size_t, SBThread, GetStopDescription, (char *, size_t),
-                     dst, dst_len);
+  LLDB_RECORD_METHOD(size_t, SBThread, GetStopDescription, (char *, size_t), "",
+                     dst_len);
 
   std::unique_lock<std::recursive_mutex> lock;
   ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
@@ -325,8 +325,11 @@ size_t SBThread::GetStopDescription(char *dst, size_t dst_len) {
 
       StopInfoSP stop_info_sp = exe_ctx.GetThreadPtr()->GetStopInfo();
       if (stop_info_sp) {
-        const char *stop_desc = stop_info_sp->GetDescription();
-        if (stop_desc) {
+        std::string thread_stop_desc =
+            exe_ctx.GetThreadPtr()->GetStopDescription();
+        const char *stop_desc = thread_stop_desc.c_str();
+
+        if (stop_desc[0] != '\0') {
           if (dst)
             return ::snprintf(dst, dst_len, "%s", stop_desc);
           else {
@@ -970,23 +973,20 @@ SBError SBThread::StepUsingScriptedThreadPlan(const char *script_class_name) {
 SBError SBThread::StepUsingScriptedThreadPlan(const char *script_class_name,
                                             bool resume_immediately) {
   LLDB_RECORD_METHOD(lldb::SBError, SBThread, StepUsingScriptedThreadPlan,
-                     (const char *, bool), script_class_name, 
+                     (const char *, bool), script_class_name,
                      resume_immediately);
 
   lldb::SBStructuredData no_data;
-  return LLDB_RECORD_RESULT(
-      StepUsingScriptedThreadPlan(script_class_name, 
-                                  no_data, 
-                                  resume_immediately));
+  return LLDB_RECORD_RESULT(StepUsingScriptedThreadPlan(
+      script_class_name, no_data, resume_immediately));
 }
 
 SBError SBThread::StepUsingScriptedThreadPlan(const char *script_class_name,
                                               SBStructuredData &args_data,
                                               bool resume_immediately) {
   LLDB_RECORD_METHOD(lldb::SBError, SBThread, StepUsingScriptedThreadPlan,
-                     (const char *, lldb::SBStructuredData &, bool), 
-                     script_class_name, args_data,
-                     resume_immediately);
+                     (const char *, lldb::SBStructuredData &, bool),
+                     script_class_name, args_data, resume_immediately);
 
   SBError error;
 
