@@ -764,7 +764,7 @@ void DwarfDebug::constructCallSiteEntryDIEs(const DISubprogram &SP,
 
       // Skip instructions which aren't calls. Both calls and tail-calling jump
       // instructions (e.g TAILJMPd64) are classified correctly here.
-      if (!MI.isCall())
+      if (!MI.isCandidateForCallSiteEntry())
         continue;
 
       // TODO: Add support for targets with delay slots (see: beginInstruction).
@@ -1260,8 +1260,6 @@ void DwarfDebug::endModule() {
   // Finalize the debug info for the module.
   finalizeModuleInfo();
 
-  emitDebugStr();
-
   if (useSplitDwarf())
     // Emit debug_loc.dwo/debug_loclists.dwo section.
     emitDebugLocDWO();
@@ -1288,6 +1286,8 @@ void DwarfDebug::endModule() {
   else
   // Emit info into a debug macinfo section.
     emitDebugMacinfo();
+
+  emitDebugStr();
 
   if (useSplitDwarf()) {
     emitDebugStrDWO();

@@ -1299,10 +1299,10 @@ EVT SITargetLowering::getOptimalMemOpType(
   // use. Make sure we switch these to 64-bit accesses.
 
   if (Op.size() >= 16 &&
-      Op.getDstAlign() >= 4) // XXX: Should only do for global
+      Op.isDstAligned(Align(4))) // XXX: Should only do for global
     return MVT::v4i32;
 
-  if (Op.size() >= 8 && Op.getDstAlign() >= 4)
+  if (Op.size() >= 8 && Op.isDstAligned(Align(4)))
     return MVT::v2i32;
 
   // Use the default.
@@ -3303,7 +3303,7 @@ computeIndirectRegAndOffset(const SIRegisterInfo &TRI,
   if (Offset >= NumElts || Offset < 0)
     return std::make_pair(AMDGPU::sub0, Offset);
 
-  return std::make_pair(AMDGPU::sub0 + Offset, 0);
+  return std::make_pair(AMDGPURegisterInfo::getSubRegFromChannel(Offset), 0);
 }
 
 // Return true if the index is an SGPR and was set.
