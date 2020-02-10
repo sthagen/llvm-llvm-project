@@ -11681,7 +11681,7 @@ static int matchShuffleAsBitRotate(ArrayRef<int> Mask, int NumSubElts) {
         continue;
       if (!isInRange(M, i, i + NumSubElts))
         return -1;
-      int Offset = ((M - i) + (NumSubElts - j)) % NumSubElts;
+      int Offset = (NumSubElts - (M - (i + j))) % NumSubElts;
       if (0 <= RotateAmt && Offset != RotateAmt)
         return -1;
       RotateAmt = Offset;
@@ -11702,7 +11702,9 @@ static SDValue lowerShuffleAsBitRotate(const SDLoc &DL, MVT VT, SDValue V1,
   assert(EltSizeInBits < 64 && "Can't rotate 64-bit integers");
 
   // Only XOP + AVX512 targets have bit rotation instructions.
-  if (!((VT.is128BitVector() && Subtarget.hasXOP()) || Subtarget.hasAVX512()))
+  bool IsLegal =
+      (VT.is128BitVector() && Subtarget.hasXOP()) || Subtarget.hasAVX512();
+  if (!IsLegal)
     return SDValue();
 
   // AVX512 only has vXi32/vXi64 rotates, so limit the rotation sub group size.
@@ -11712,10 +11714,10 @@ static SDValue lowerShuffleAsBitRotate(const SDLoc &DL, MVT VT, SDValue V1,
     int RotateAmt = matchShuffleAsBitRotate(Mask, NumSubElts);
     if (RotateAmt < 0)
       continue;
+    int RotateAmtInBits = RotateAmt * EltSizeInBits;
     int NumElts = VT.getVectorNumElements();
     MVT RotateSVT = MVT::getIntegerVT(EltSizeInBits * NumSubElts);
     MVT RotateVT = MVT::getVectorVT(RotateSVT, NumElts / NumSubElts);
-    int RotateAmtInBits = RotateAmt * EltSizeInBits;
     SDValue Rot =
         DAG.getNode(ISD::ROTL, DL, RotateVT, DAG.getBitcast(RotateVT, V1),
                     DAG.getConstant(RotateAmtInBits, DL, RotateVT));
@@ -18006,11 +18008,22 @@ SDValue X86TargetLowering::LowerINSERT_VECTOR_ELT(SDValue Op,
   assert(VT.is128BitVector() && "Only 128-bit vector types should be left!");
 
   // This will be just movd/movq/movss/movsd.
-  if (IdxVal == 0 && ISD::isBuildVectorAllZeros(N0.getNode()) &&
-      (EltVT == MVT::i32 || EltVT == MVT::f32 || EltVT == MVT::f64 ||
-       EltVT == MVT::i64)) {
-    N1 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, N1);
-    return getShuffleVectorZeroOrUndef(N1, 0, true, Subtarget, DAG);
+  if (IdxVal == 0 && ISD::isBuildVectorAllZeros(N0.getNode())) {
+    if (EltVT == MVT::i32 || EltVT == MVT::f32 || EltVT == MVT::f64 ||
+        EltVT == MVT::i64) {
+      N1 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, N1);
+      return getShuffleVectorZeroOrUndef(N1, 0, true, Subtarget, DAG);
+    }
+
+    // We can't directly insert an i8 or i16 into a vector, so zero extend
+    // it to i32 first.
+    if (EltVT == MVT::i16 || EltVT == MVT::i8) {
+      N1 = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i32, N1);
+      MVT ShufVT = MVT::getVectorVT(MVT::i32, VT.getSizeInBits()/32);
+      N1 = DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, ShufVT, N1);
+      N1 = getShuffleVectorZeroOrUndef(N1, 0, true, Subtarget, DAG);
+      return DAG.getBitcast(VT, N1);
+    }
   }
 
   // Transform it so it match pinsr{b,w} which expects a GR32 as its second

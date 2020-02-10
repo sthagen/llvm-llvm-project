@@ -44,7 +44,9 @@ STATISTIC(NumOpenMPRuntimeFunctionsIdentified,
 STATISTIC(NumOpenMPRuntimeFunctionUsesIdentified,
           "Number of OpenMP runtime function uses identified");
 
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 static constexpr auto TAG = "[" DEBUG_TYPE "]";
+#endif
 
 namespace {
 struct OpenMPOpt {
@@ -211,9 +213,9 @@ private:
                       << RFI.Name
                       << (ReplVal ? " with an existing value\n" : "\n")
                       << "\n");
-    assert(!ReplVal || (isa<Argument>(ReplVal) &&
-                        cast<Argument>(ReplVal)->getParent() == &F) &&
-                           "Unexpected replacement value!");
+    assert((!ReplVal || (isa<Argument>(ReplVal) &&
+                         cast<Argument>(ReplVal)->getParent() == &F)) &&
+           "Unexpected replacement value!");
     if (!ReplVal) {
       for (Use *U : Uses)
         if (CallInst *CI = getCallIfRegularCall(*U, &RFI)) {

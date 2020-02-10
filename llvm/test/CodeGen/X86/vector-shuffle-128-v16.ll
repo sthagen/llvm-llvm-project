@@ -1924,12 +1924,12 @@ define <16 x i8> @shuffle_v16i8_03_00_01_02_07_04_05_06_11_08_09_10_15_12_13_14(
 ;
 ; AVX512VL-LABEL: shuffle_v16i8_03_00_01_02_07_04_05_06_11_08_09_10_15_12_13_14:
 ; AVX512VL:       # %bb.0:
-; AVX512VL-NEXT:    vprold $24, %xmm0, %xmm0
+; AVX512VL-NEXT:    vprold $8, %xmm0, %xmm0
 ; AVX512VL-NEXT:    retq
 ;
 ; XOP-LABEL: shuffle_v16i8_03_00_01_02_07_04_05_06_11_08_09_10_15_12_13_14:
 ; XOP:       # %bb.0:
-; XOP-NEXT:    vprotd $24, %xmm0, %xmm0
+; XOP-NEXT:    vprotd $8, %xmm0, %xmm0
 ; XOP-NEXT:    retq
   %shuffle = shufflevector <16 x i8> %a, <16 x i8> undef, <16 x i32> <i32 3, i32 0, i32 1, i32 2, i32 7, i32 4, i32 5, i32 6, i32 11, i32 8, i32 9, i32 10, i32 15, i32 12, i32 13, i32 14>
   ret <16 x i8> %shuffle
@@ -1962,12 +1962,12 @@ define <16 x i8> @shuffle_v16i8_02_03_04_05_06_07_00_01_10_11_12_13_14_15_08_09(
 ;
 ; AVX512VL-LABEL: shuffle_v16i8_02_03_04_05_06_07_00_01_10_11_12_13_14_15_08_09:
 ; AVX512VL:       # %bb.0:
-; AVX512VL-NEXT:    vprolq $16, %xmm0, %xmm0
+; AVX512VL-NEXT:    vprolq $48, %xmm0, %xmm0
 ; AVX512VL-NEXT:    retq
 ;
 ; XOP-LABEL: shuffle_v16i8_02_03_04_05_06_07_00_01_10_11_12_13_14_15_08_09:
 ; XOP:       # %bb.0:
-; XOP-NEXT:    vprotq $16, %xmm0, %xmm0
+; XOP-NEXT:    vprotq $48, %xmm0, %xmm0
 ; XOP-NEXT:    retq
   %shuffle = shufflevector <16 x i8> %a, <16 x i8> undef, <16 x i32> <i32 2, i32 3, i32 4, i32 5, i32 6, i32 7, i32 0, i32 1, i32 10, i32 11, i32 12, i32 13, i32 14, i32 15, i32 8, i32 9>
   ret <16 x i8> %shuffle
@@ -2446,16 +2446,16 @@ define <16 x i8> @PR31364(i8* nocapture readonly %a, i8* nocapture readonly %b) 
 ;
 ; SSE41-LABEL: PR31364:
 ; SSE41:       # %bb.0:
-; SSE41-NEXT:    pxor %xmm0, %xmm0
-; SSE41-NEXT:    pinsrb $0, (%rdi), %xmm0
+; SSE41-NEXT:    movzbl (%rdi), %eax
+; SSE41-NEXT:    movd %eax, %xmm0
 ; SSE41-NEXT:    pinsrb $1, (%rsi), %xmm0
 ; SSE41-NEXT:    pshufb {{.*#+}} xmm0 = xmm0[1,1,1,1,1,1,1],zero,xmm0[1,1,1,1,1,0,0,0]
 ; SSE41-NEXT:    retq
 ;
 ; AVX-LABEL: PR31364:
 ; AVX:       # %bb.0:
-; AVX-NEXT:    vpxor %xmm0, %xmm0, %xmm0
-; AVX-NEXT:    vpinsrb $0, (%rdi), %xmm0, %xmm0
+; AVX-NEXT:    movzbl (%rdi), %eax
+; AVX-NEXT:    vmovd %eax, %xmm0
 ; AVX-NEXT:    vpinsrb $1, (%rsi), %xmm0, %xmm0
 ; AVX-NEXT:    vpshufb {{.*#+}} xmm0 = xmm0[1,1,1,1,1,1,1],zero,xmm0[1,1,1,1,1,0,0,0]
 ; AVX-NEXT:    retq
