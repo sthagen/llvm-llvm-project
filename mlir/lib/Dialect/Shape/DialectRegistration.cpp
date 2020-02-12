@@ -1,4 +1,4 @@
-//===- DialectRegistration.cpp - MLIR GPU dialect registration ------------===//
+//===- DialectRegistration.cpp - Register shape dialect -------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/GPU/GPUDialect.h"
+#include "mlir/Dialect/Shape/IR/Shape.h"
+using namespace mlir;
 
-// Static initialization for GPU dialect registration.
-static mlir::DialectRegistration<mlir::gpu::GPUDialect> kernelDialect;
+// Static initialization for shape dialect registration.
+static DialectRegistration<shape::ShapeDialect> ShapeOps;
