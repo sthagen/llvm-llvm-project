@@ -801,7 +801,7 @@ public:
       std::string S;
       if (Parser.parseEscapedString(S))
         return error("Cannot parse string constant: ", Lexer.getTok());
-      Out.EmitBytes(StringRef(S.c_str(), S.length() + 1));
+      Out.emitBytes(StringRef(S.c_str(), S.length() + 1));
       return expect(AsmToken::EndOfStatement, "EOL");
     }
 
@@ -894,7 +894,7 @@ public:
     // user.
     if (!LastFunctionLabel) return;
     auto TempSym = getContext().createLinkerPrivateTempSymbol();
-    getStreamer().EmitLabel(TempSym);
+    getStreamer().emitLabel(TempSym);
     auto Start = MCSymbolRefExpr::create(LastFunctionLabel, getContext());
     auto End = MCSymbolRefExpr::create(TempSym, getContext());
     auto Expr =

@@ -746,8 +746,8 @@ void BTFDebug::emitBTFSection() {
   uint32_t StringOffset = 0;
   for (const auto &S : StringTable.getTable()) {
     OS.AddComment("string offset=" + std::to_string(StringOffset));
-    OS.EmitBytes(S);
-    OS.EmitBytes(StringRef("\0", 1));
+    OS.emitBytes(S);
+    OS.emitBytes(StringRef("\0", 1));
     StringOffset += S.size() + 1;
   }
 }
@@ -967,7 +967,7 @@ void BTFDebug::processReloc(const MachineOperand &MO) {
     auto *GVar = dyn_cast<GlobalVariable>(GVal);
     if (GVar && GVar->hasAttribute(BPFCoreSharedInfo::AmaAttr)) {
       MCSymbol *ORSym = OS.getContext().createTempSymbol();
-      OS.EmitLabel(ORSym);
+      OS.emitLabel(ORSym);
 
       MDNode *MDN = GVar->getMetadata(LLVMContext::MD_preserve_access_index);
       DIType *Ty = dyn_cast<DIType>(MDN);
@@ -1040,7 +1040,7 @@ void BTFDebug::beginInstruction(const MachineInstr *MI) {
 
   // Create a temporary label to remember the insn for lineinfo.
   MCSymbol *LineSym = OS.getContext().createTempSymbol();
-  OS.EmitLabel(LineSym);
+  OS.emitLabel(LineSym);
 
   // Construct the lineinfo.
   auto SP = DL.get()->getScope()->getSubprogram();

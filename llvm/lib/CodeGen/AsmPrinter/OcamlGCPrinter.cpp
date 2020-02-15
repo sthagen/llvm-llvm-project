@@ -66,8 +66,8 @@ static void EmitCamlGlobal(const Module &M, AsmPrinter &AP, const char *Id) {
 
   MCSymbol *Sym = AP.OutContext.getOrCreateSymbol(TmpStr);
 
-  AP.OutStreamer->EmitSymbolAttribute(Sym, MCSA_Global);
-  AP.OutStreamer->EmitLabel(Sym);
+  AP.OutStreamer->emitSymbolAttribute(Sym, MCSA_Global);
+  AP.OutStreamer->emitLabel(Sym);
 }
 
 void OcamlGCMetadataPrinter::beginAssembly(Module &M, GCModuleInfo &Info,
@@ -164,7 +164,7 @@ void OcamlGCMetadataPrinter::finishAssembly(Module &M, GCModuleInfo &Info,
                            Twine(LiveCount) + " >= 65536.");
       }
 
-      AP.OutStreamer->EmitSymbolValue(J->Label, IntPtrSize);
+      AP.OutStreamer->emitSymbolValue(J->Label, IntPtrSize);
       AP.emitInt16(FrameSize);
       AP.emitInt16(LiveCount);
 

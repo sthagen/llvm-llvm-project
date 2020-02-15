@@ -101,13 +101,13 @@ public:
   CVMCAdapter(MCStreamer &OS, TypeCollection &TypeTable)
       : OS(&OS), TypeTable(TypeTable) {}
 
-  void EmitBytes(StringRef Data) { OS->EmitBytes(Data); }
+  void emitBytes(StringRef Data) { OS->emitBytes(Data); }
 
   void EmitIntValue(uint64_t Value, unsigned Size) {
     OS->EmitIntValueInHex(Value, Size);
   }
 
-  void EmitBinaryData(StringRef Data) { OS->EmitBinaryData(Data); }
+  void emitBinaryData(StringRef Data) { OS->emitBinaryData(Data); }
 
   void AddComment(const Twine &T) { OS->AddComment(T); }
 
@@ -549,7 +549,7 @@ void CodeViewDebug::maybeRecordLocation(const DebugLoc &DL,
 }
 
 void CodeViewDebug::emitCodeViewMagicVersion() {
-  OS.EmitValueToAlignment(4);
+  OS.emitValueToAlignment(4);
   OS.AddComment("Debug section magic");
   OS.EmitIntValue(COFF::DEBUG_SECTION_MAGIC, 4);
 }
@@ -631,7 +631,7 @@ emitNullTerminatedSymbolName(MCStreamer &OS, StringRef S,
   SmallString<32> NullTerminatedString(
       S.take_front(MaxRecordLength - MaxFixedRecordLength - 1));
   NullTerminatedString.push_back('\0');
-  OS.EmitBytes(NullTerminatedString);
+  OS.emitBytes(NullTerminatedString);
 }
 
 void CodeViewDebug::emitTypeInformation() {
@@ -674,7 +674,7 @@ void CodeViewDebug::emitTypeGlobalHashes() {
   // hardcoded to version 0, SHA1.
   OS.SwitchSection(Asm->getObjFileLowering().getCOFFGlobalTypeHashesSection());
 
-  OS.EmitValueToAlignment(4);
+  OS.emitValueToAlignment(4);
   OS.AddComment("Magic");
   OS.EmitIntValue(COFF::DEBUG_HASHES_SECTION_MAGIC, 4);
   OS.AddComment("Section Version");
@@ -696,7 +696,7 @@ void CodeViewDebug::emitTypeGlobalHashes() {
     assert(GHR.Hash.size() == 8);
     StringRef S(reinterpret_cast<const char *>(GHR.Hash.data()),
                 GHR.Hash.size());
-    OS.EmitBinaryData(S);
+    OS.emitBinaryData(S);
   }
 }
 
@@ -1095,7 +1095,7 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
         // nice .asciz directive.
         StringRef Str = cast<MDString>(MD)->getString();
         assert(Str.data()[Str.size()] == '\0' && "non-nullterminated MDString");
-        OS.EmitBytes(StringRef(Str.data(), Str.size() + 1));
+        OS.emitBytes(StringRef(Str.data(), Str.size() + 1));
       }
       endSymbolRecord(AnnotEnd);
     }
@@ -2918,14 +2918,14 @@ MCSymbol *CodeViewDebug::beginCVSubsection(DebugSubsectionKind Kind) {
   OS.EmitIntValue(unsigned(Kind), 4);
   OS.AddComment("Subsection size");
   OS.emitAbsoluteSymbolDiff(EndLabel, BeginLabel, 4);
-  OS.EmitLabel(BeginLabel);
+  OS.emitLabel(BeginLabel);
   return EndLabel;
 }
 
 void CodeViewDebug::endCVSubsection(MCSymbol *EndLabel) {
-  OS.EmitLabel(EndLabel);
+  OS.emitLabel(EndLabel);
   // Every subsection must be aligned to a 4-byte boundary.
-  OS.EmitValueToAlignment(4);
+  OS.emitValueToAlignment(4);
 }
 
 static StringRef getSymbolName(SymbolKind SymKind) {
@@ -2940,7 +2940,7 @@ MCSymbol *CodeViewDebug::beginSymbolRecord(SymbolKind SymKind) {
            *EndLabel = MMI->getContext().createTempSymbol();
   OS.AddComment("Record length");
   OS.emitAbsoluteSymbolDiff(EndLabel, BeginLabel, 2);
-  OS.EmitLabel(BeginLabel);
+  OS.emitLabel(BeginLabel);
   if (OS.isVerboseAsm())
     OS.AddComment("Record kind: " + getSymbolName(SymKind));
   OS.EmitIntValue(unsigned(SymKind), 2);
@@ -2952,8 +2952,8 @@ void CodeViewDebug::endSymbolRecord(MCSymbol *SymEnd) {
   // an extra copy of every symbol record in LLD. This increases object file
   // size by less than 1% in the clang build, and is compatible with the Visual
   // C++ linker.
-  OS.EmitValueToAlignment(4);
-  OS.EmitLabel(SymEnd);
+  OS.emitValueToAlignment(4);
+  OS.emitLabel(SymEnd);
 }
 
 void CodeViewDebug::emitEndSymbolRecord(SymbolKind EndKind) {
@@ -3116,7 +3116,7 @@ void CodeViewDebug::emitDebugInfoForGlobal(const CVGlobalVariable &CVGV) {
     CodeViewRecordIO IO(Writer);
     cantFail(IO.mapEncodedInteger(Val));
     StringRef SRef((char *)data, Writer.getOffset());
-    OS.EmitBinaryData(SRef);
+    OS.emitBinaryData(SRef);
 
     OS.AddComment("Name");
     const DIScope *Scope = DIGV->getScope();

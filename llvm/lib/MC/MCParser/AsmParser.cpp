@@ -814,7 +814,7 @@ bool AsmParser::processIncbinFile(const std::string &Filename, int64_t Skip,
       return Warning(Loc, "negative count has no effect");
     Bytes = Bytes.take_front(Res);
   }
-  getStreamer().EmitBytes(Bytes);
+  getStreamer().emitBytes(Bytes);
   return false;
 }
 
@@ -902,7 +902,7 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
     MCSection *Sec = getStreamer().getCurrentSectionOnly();
     if (!Sec->getBeginSymbol()) {
       MCSymbol *SectionStartSym = getContext().createTempSymbol();
-      getStreamer().EmitLabel(SectionStartSym);
+      getStreamer().emitLabel(SectionStartSym);
       Sec->setBeginSymbol(SectionStartSym);
     }
     bool InsertResult = getContext().addGenDwarfSection(Sec);
@@ -1097,7 +1097,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
           // This is a '$' reference, which references the current PC.  Emit a
           // temporary label to the streamer and refer to it.
           MCSymbol *Sym = Ctx.createTempSymbol();
-          Out.EmitLabel(Sym);
+          Out.emitLabel(Sym);
           Res = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None,
                                         getContext());
           EndLoc = FirstTokenLoc;
@@ -1223,7 +1223,7 @@ bool AsmParser::parsePrimaryExpr(const MCExpr *&Res, SMLoc &EndLoc) {
     // This is a '.' reference, which references the current PC.  Emit a
     // temporary label to the streamer and refer to it.
     MCSymbol *Sym = Ctx.createTempSymbol();
-    Out.EmitLabel(Sym);
+    Out.emitLabel(Sym);
     Res = MCSymbolRefExpr::create(Sym, MCSymbolRefExpr::VK_None, getContext());
     EndLoc = Lexer.getTok().getEndLoc();
     Lex(); // Eat identifier.
@@ -1854,7 +1854,7 @@ bool AsmParser::parseStatement(ParseStatementInfo &Info,
 
     // Emit the label.
     if (!getTargetParser().isParsingInlineAsm())
-      Out.EmitLabel(Sym, IDLoc);
+      Out.emitLabel(Sym, IDLoc);
 
     // If we are generating dwarf for assembly source files then gather the
     // info to make a dwarf label entry for this label if needed.
@@ -2831,9 +2831,9 @@ bool AsmParser::parseAssignment(StringRef Name, bool allow_redef,
   }
 
   // Do the assignment.
-  Out.EmitAssignment(Sym, Value);
+  Out.emitAssignment(Sym, Value);
   if (NoDeadStrip)
-    Out.EmitSymbolAttribute(Sym, MCSA_NoDeadStrip);
+    Out.emitSymbolAttribute(Sym, MCSA_NoDeadStrip);
 
   return false;
 }
@@ -2976,9 +2976,9 @@ bool AsmParser::parseDirectiveAscii(StringRef IDVal, bool ZeroTerminated) {
     std::string Data;
     if (checkForValidSection() || parseEscapedString(Data))
       return true;
-    getStreamer().EmitBytes(Data);
+    getStreamer().emitBytes(Data);
     if (ZeroTerminated)
-      getStreamer().EmitBytes(StringRef("\0", 1));
+      getStreamer().emitBytes(StringRef("\0", 1));
     return false;
   };
 
@@ -3335,10 +3335,10 @@ bool AsmParser::parseDirectiveAlign(bool IsPow2, unsigned ValueSize) {
   bool UseCodeAlign = Section->UseCodeAlign();
   if ((!HasFillExpr || Lexer.getMAI().getTextAlignFillValue() == FillExpr) &&
       ValueSize == 1 && UseCodeAlign) {
-    getStreamer().EmitCodeAlignment(Alignment, MaxBytesToFill);
+    getStreamer().emitCodeAlignment(Alignment, MaxBytesToFill);
   } else {
     // FIXME: Target specific behavior about how the "extra" bytes are filled.
-    getStreamer().EmitValueToAlignment(Alignment, FillExpr, ValueSize,
+    getStreamer().emitValueToAlignment(Alignment, FillExpr, ValueSize,
                                        MaxBytesToFill);
   }
 
@@ -4857,7 +4857,7 @@ bool AsmParser::parseDirectiveSymbolAttribute(MCSymbolAttr Attr) {
     if (Sym->isTemporary())
       return Error(Loc, "non-local symbol required");
 
-    if (!getStreamer().EmitSymbolAttribute(Sym, Attr))
+    if (!getStreamer().emitSymbolAttribute(Sym, Attr))
       return Error(Loc, "unable to emit symbol attribute");
     return false;
   };
@@ -4934,11 +4934,11 @@ bool AsmParser::parseDirectiveComm(bool IsLocal) {
 
   // Create the Symbol as a common or local common with Size and Pow2Alignment
   if (IsLocal) {
-    getStreamer().EmitLocalCommonSymbol(Sym, Size, 1 << Pow2Alignment);
+    getStreamer().emitLocalCommonSymbol(Sym, Size, 1 << Pow2Alignment);
     return false;
   }
 
-  getStreamer().EmitCommonSymbol(Sym, Size, 1 << Pow2Alignment);
+  getStreamer().emitCommonSymbol(Sym, Size, 1 << Pow2Alignment);
   return false;
 }
 

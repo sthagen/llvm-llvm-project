@@ -138,7 +138,7 @@ void MCStreamer::EmitIntValue(uint64_t Value, unsigned Size) {
     unsigned index = isLittleEndian ? i : (Size - i - 1);
     buf[i] = uint8_t(Value >> (index * 8));
   }
-  EmitBytes(StringRef(buf, Size));
+  emitBytes(StringRef(buf, Size));
 }
 
 /// EmitULEB128IntValue - Special case of EmitULEB128Value that avoids the
@@ -147,7 +147,7 @@ void MCStreamer::emitULEB128IntValue(uint64_t Value, unsigned PadTo) {
   SmallString<128> Tmp;
   raw_svector_ostream OSE(Tmp);
   encodeULEB128(Value, OSE, PadTo);
-  EmitBytes(OSE.str());
+  emitBytes(OSE.str());
 }
 
 /// EmitSLEB128IntValue - Special case of EmitSLEB128Value that avoids the
@@ -156,45 +156,45 @@ void MCStreamer::emitSLEB128IntValue(int64_t Value) {
   SmallString<128> Tmp;
   raw_svector_ostream OSE(Tmp);
   encodeSLEB128(Value, OSE);
-  EmitBytes(OSE.str());
+  emitBytes(OSE.str());
 }
 
 void MCStreamer::EmitValue(const MCExpr *Value, unsigned Size, SMLoc Loc) {
-  EmitValueImpl(Value, Size, Loc);
+  emitValueImpl(Value, Size, Loc);
 }
 
-void MCStreamer::EmitSymbolValue(const MCSymbol *Sym, unsigned Size,
+void MCStreamer::emitSymbolValue(const MCSymbol *Sym, unsigned Size,
                                  bool IsSectionRelative) {
   assert((!IsSectionRelative || Size == 4) &&
          "SectionRelative value requires 4-bytes");
 
   if (!IsSectionRelative)
-    EmitValueImpl(MCSymbolRefExpr::create(Sym, getContext()), Size);
+    emitValueImpl(MCSymbolRefExpr::create(Sym, getContext()), Size);
   else
     EmitCOFFSecRel32(Sym, /*Offset=*/0);
 }
 
-void MCStreamer::EmitDTPRel64Value(const MCExpr *Value) {
+void MCStreamer::emitDTPRel64Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
-void MCStreamer::EmitDTPRel32Value(const MCExpr *Value) {
+void MCStreamer::emitDTPRel32Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
-void MCStreamer::EmitTPRel64Value(const MCExpr *Value) {
+void MCStreamer::emitTPRel64Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
-void MCStreamer::EmitTPRel32Value(const MCExpr *Value) {
+void MCStreamer::emitTPRel32Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
-void MCStreamer::EmitGPRel64Value(const MCExpr *Value) {
+void MCStreamer::emitGPRel64Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
-void MCStreamer::EmitGPRel32Value(const MCExpr *Value) {
+void MCStreamer::emitGPRel32Value(const MCExpr *Value) {
   report_fatal_error("unsupported directive in streamer");
 }
 
@@ -379,7 +379,7 @@ void MCStreamer::EmitCVDefRangeDirective(
   EmitCVDefRangeDirective(Ranges, BytePrefix);
 }
 
-void MCStreamer::EmitEHSymAttributes(const MCSymbol *Symbol,
+void MCStreamer::emitEHSymAttributes(const MCSymbol *Symbol,
                                      MCSymbol *EHSymbol) {
 }
 
@@ -396,7 +396,7 @@ void MCStreamer::AssignFragment(MCSymbol *Symbol, MCFragment *Fragment) {
   SymbolOrdering[Symbol] = 1 + SymbolOrdering.size();
 }
 
-void MCStreamer::EmitLabel(MCSymbol *Symbol, SMLoc Loc) {
+void MCStreamer::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
   Symbol->redefineIfPossible();
 
   if (!Symbol->isUndefined() || Symbol->isVariable())
@@ -966,7 +966,7 @@ void MCStreamer::Finish() {
   FinishImpl();
 }
 
-void MCStreamer::EmitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
+void MCStreamer::emitAssignment(MCSymbol *Symbol, const MCExpr *Value) {
   visitUsedExpr(*Value);
   Symbol->setVariableValue(Value);
 
@@ -1033,8 +1033,8 @@ void MCStreamer::emitAbsoluteSymbolDiff(const MCSymbol *Hi, const MCSymbol *Lo,
 
   // Otherwise, emit with .set (aka assignment).
   MCSymbol *SetLabel = Context.createTempSymbol("set", true);
-  EmitAssignment(SetLabel, Diff);
-  EmitSymbolValue(SetLabel, Size);
+  emitAssignment(SetLabel, Diff);
+  emitSymbolValue(SetLabel, Size);
 }
 
 void MCStreamer::emitAbsoluteSymbolDiffAsULEB128(const MCSymbol *Hi,
@@ -1047,9 +1047,9 @@ void MCStreamer::emitAbsoluteSymbolDiffAsULEB128(const MCSymbol *Hi,
   emitULEB128Value(Diff);
 }
 
-void MCStreamer::EmitAssemblerFlag(MCAssemblerFlag Flag) {}
-void MCStreamer::EmitThumbFunc(MCSymbol *Func) {}
-void MCStreamer::EmitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) {}
+void MCStreamer::emitAssemblerFlag(MCAssemblerFlag Flag) {}
+void MCStreamer::emitThumbFunc(MCSymbol *Func) {}
+void MCStreamer::emitSymbolDesc(MCSymbol *Symbol, unsigned DescValue) {}
 void MCStreamer::BeginCOFFSymbolDef(const MCSymbol *Symbol) {
   llvm_unreachable("this directive only supported on COFF targets");
 }
@@ -1071,15 +1071,15 @@ void MCStreamer::EmitXCOFFLocalCommonSymbol(MCSymbol *LabelSym, uint64_t Size,
 void MCStreamer::emitELFSize(MCSymbol *Symbol, const MCExpr *Value) {}
 void MCStreamer::emitELFSymverDirective(StringRef AliasName,
                                         const MCSymbol *Aliasee) {}
-void MCStreamer::EmitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
+void MCStreamer::emitLocalCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                        unsigned ByteAlignment) {}
 void MCStreamer::EmitTBSSSymbol(MCSection *Section, MCSymbol *Symbol,
                                 uint64_t Size, unsigned ByteAlignment) {}
 void MCStreamer::ChangeSection(MCSection *, const MCExpr *) {}
-void MCStreamer::EmitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {}
-void MCStreamer::EmitBytes(StringRef Data) {}
-void MCStreamer::EmitBinaryData(StringRef Data) { EmitBytes(Data); }
-void MCStreamer::EmitValueImpl(const MCExpr *Value, unsigned Size, SMLoc Loc) {
+void MCStreamer::emitWeakReference(MCSymbol *Alias, const MCSymbol *Symbol) {}
+void MCStreamer::emitBytes(StringRef Data) {}
+void MCStreamer::emitBinaryData(StringRef Data) { emitBytes(Data); }
+void MCStreamer::emitValueImpl(const MCExpr *Value, unsigned Size, SMLoc Loc) {
   visitUsedExpr(*Value);
 }
 void MCStreamer::emitULEB128Value(const MCExpr *Value) {}
@@ -1087,10 +1087,10 @@ void MCStreamer::emitSLEB128Value(const MCExpr *Value) {}
 void MCStreamer::emitFill(const MCExpr &NumBytes, uint64_t Value, SMLoc Loc) {}
 void MCStreamer::emitFill(const MCExpr &NumValues, int64_t Size, int64_t Expr,
                           SMLoc Loc) {}
-void MCStreamer::EmitValueToAlignment(unsigned ByteAlignment, int64_t Value,
+void MCStreamer::emitValueToAlignment(unsigned ByteAlignment, int64_t Value,
                                       unsigned ValueSize,
                                       unsigned MaxBytesToEmit) {}
-void MCStreamer::EmitCodeAlignment(unsigned ByteAlignment,
+void MCStreamer::emitCodeAlignment(unsigned ByteAlignment,
                                    unsigned MaxBytesToEmit) {}
 void MCStreamer::emitValueToOffset(const MCExpr *Offset, unsigned char Value,
                                    SMLoc Loc) {}
@@ -1109,7 +1109,7 @@ void MCStreamer::SwitchSection(MCSection *Section, const MCExpr *Subsection) {
     assert(!Section->hasEnded() && "Section already ended");
     MCSymbol *Sym = Section->getBeginSymbol();
     if (Sym && !Sym->isInSection())
-      EmitLabel(Sym);
+      emitLabel(Sym);
   }
 }
 
@@ -1121,11 +1121,11 @@ MCSymbol *MCStreamer::endSection(MCSection *Section) {
     return Sym;
 
   SwitchSection(Section);
-  EmitLabel(Sym);
+  emitLabel(Sym);
   return Sym;
 }
 
-void MCStreamer::EmitVersionForTarget(const Triple &Target,
+void MCStreamer::emitVersionForTarget(const Triple &Target,
                                       const VersionTuple &SDKVersion) {
   if (!Target.isOSBinFormatMachO() || !Target.isOSDarwin())
     return;
@@ -1140,7 +1140,7 @@ void MCStreamer::EmitVersionForTarget(const Triple &Target,
     // Mac Catalyst always uses the build version load command.
     Target.getiOSVersion(Major, Minor, Update);
     assert(Major && "A non-zero major version is expected");
-    EmitBuildVersion(MachO::PLATFORM_MACCATALYST, Major, Minor, Update,
+    emitBuildVersion(MachO::PLATFORM_MACCATALYST, Major, Minor, Update,
                      SDKVersion);
     return;
   }
@@ -1161,5 +1161,5 @@ void MCStreamer::EmitVersionForTarget(const Triple &Target,
     Target.getiOSVersion(Major, Minor, Update);
   }
   if (Major != 0)
-    EmitVersionMin(VersionType, Major, Minor, Update, SDKVersion);
+    emitVersionMin(VersionType, Major, Minor, Update, SDKVersion);
 }
