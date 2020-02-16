@@ -513,7 +513,6 @@ namespace {
     bool shrinkAndImmediate(SDNode *N);
     bool isMaskZeroExtended(SDNode *N) const;
     bool tryShiftAmountMod(SDNode *N);
-    bool combineIncDecVector(SDNode *Node);
     bool tryShrinkShlLogicImm(SDNode *N);
     bool tryVPTESTM(SDNode *Root, SDValue Setcc, SDValue Mask);
     bool tryMatchBitSelect(SDNode *N);
@@ -807,6 +806,38 @@ void X86DAGToDAGISel::PreprocessISelDAG() {
       ++I;
       CurDAG->DeleteNode(N);
       continue;
+    }
+
+    /// Convert vector increment or decrement to sub/add with an all-ones
+    /// constant:
+    /// add X, <1, 1...> --> sub X, <-1, -1...>
+    /// sub X, <1, 1...> --> add X, <-1, -1...>
+    /// The all-ones vector constant can be materialized using a pcmpeq
+    /// instruction that is commonly recognized as an idiom (has no register
+    /// dependency), so that's better/smaller than loading a splat 1 constant.
+    if ((N->getOpcode() == ISD::ADD || N->getOpcode() == ISD::SUB) &&
+        N->getSimpleValueType(0).isVector()) {
+
+      APInt SplatVal;
+      if (X86::isConstantSplat(N->getOperand(1), SplatVal) &&
+          SplatVal.isOneValue()) {
+        SDLoc DL(N);
+
+        MVT VT = N->getSimpleValueType(0);
+        unsigned NumElts = VT.getSizeInBits() / 32;
+        SDValue AllOnes =
+            CurDAG->getAllOnesConstant(DL, MVT::getVectorVT(MVT::i32, NumElts));
+        AllOnes = CurDAG->getBitcast(VT, AllOnes);
+
+        unsigned NewOpcode = N->getOpcode() == ISD::ADD ? ISD::SUB : ISD::ADD;
+        SDValue Res =
+            CurDAG->getNode(NewOpcode, DL, VT, N->getOperand(0), AllOnes);
+        --I;
+        CurDAG->ReplaceAllUsesWith(N, Res.getNode());
+        ++I;
+        CurDAG->DeleteNode(N);
+        continue;
+      }
     }
 
     switch (N->getOpcode()) {
@@ -3899,52 +3930,6 @@ bool X86DAGToDAGISel::tryShrinkShlLogicImm(SDNode *N) {
   return true;
 }
 
-/// Convert vector increment or decrement to sub/add with an all-ones constant:
-/// add X, <1, 1...> --> sub X, <-1, -1...>
-/// sub X, <1, 1...> --> add X, <-1, -1...>
-/// The all-ones vector constant can be materialized using a pcmpeq instruction
-/// that is commonly recognized as an idiom (has no register dependency), so
-/// that's better/smaller than loading a splat 1 constant.
-bool X86DAGToDAGISel::combineIncDecVector(SDNode *Node) {
-  assert((Node->getOpcode() == ISD::ADD || Node->getOpcode() == ISD::SUB) &&
-         "Unexpected opcode for increment/decrement transform");
-
-  EVT VT = Node->getValueType(0);
-  assert(VT.isVector() && "Should only be called for vectors.");
-
-  SDValue X = Node->getOperand(0);
-  SDValue OneVec = Node->getOperand(1);
-
-  APInt SplatVal;
-  if (!X86::isConstantSplat(OneVec, SplatVal) || !SplatVal.isOneValue())
-    return false;
-
-  SDLoc DL(Node);
-  SDValue OneConstant, AllOnesVec;
-
-  APInt Ones = APInt::getAllOnesValue(32);
-  assert(VT.getSizeInBits() % 32 == 0 &&
-         "Expected bit count to be a multiple of 32");
-  OneConstant = CurDAG->getConstant(Ones, DL, MVT::i32);
-  insertDAGNode(*CurDAG, X, OneConstant);
-
-  unsigned NumElts = VT.getSizeInBits() / 32;
-  assert(NumElts > 0 && "Expected to get non-empty vector.");
-  AllOnesVec = CurDAG->getSplatBuildVector(MVT::getVectorVT(MVT::i32, NumElts),
-                                           DL, OneConstant);
-  insertDAGNode(*CurDAG, X, AllOnesVec);
-
-  AllOnesVec = CurDAG->getBitcast(VT, AllOnesVec);
-  insertDAGNode(*CurDAG, X, AllOnesVec);
-
-  unsigned NewOpcode = Node->getOpcode() == ISD::ADD ? ISD::SUB : ISD::ADD;
-  SDValue NewNode = CurDAG->getNode(NewOpcode, DL, VT, X, AllOnesVec);
-
-  ReplaceNode(Node, NewNode.getNode());
-  SelectCode(NewNode.getNode());
-  return true;
-}
-
 /// If the high bits of an 'and' operand are known zero, try setting the
 /// high bits of an 'and' constant operand to produce a smaller encoding by
 /// creating a small, sign-extended negative immediate rather than a large
@@ -4579,10 +4564,6 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
     LLVM_FALLTHROUGH;
   case ISD::ADD:
   case ISD::SUB: {
-    if ((Opcode == ISD::ADD || Opcode == ISD::SUB) && NVT.isVector() &&
-        combineIncDecVector(Node))
-      return;
-
     // Try to avoid folding immediates with multiple uses for optsize.
     // This code tries to select to register form directly to avoid going
     // through the isel table which might fold the immediate. We can't change
@@ -4775,31 +4756,19 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
     SDValue N1 = Node->getOperand(1);
 
     unsigned Opc, MOpc;
-    bool isSigned = Opcode == ISD::SMUL_LOHI;
-    if (!isSigned) {
-      switch (NVT.SimpleTy) {
-      default: llvm_unreachable("Unsupported VT!");
-      case MVT::i32: Opc = X86::MUL32r; MOpc = X86::MUL32m; break;
-      case MVT::i64: Opc = X86::MUL64r; MOpc = X86::MUL64m; break;
-      }
-    } else {
-      switch (NVT.SimpleTy) {
-      default: llvm_unreachable("Unsupported VT!");
-      case MVT::i32: Opc = X86::IMUL32r; MOpc = X86::IMUL32m; break;
-      case MVT::i64: Opc = X86::IMUL64r; MOpc = X86::IMUL64m; break;
-      }
-    }
-
-    unsigned SrcReg, LoReg, HiReg;
-    switch (Opc) {
-    default: llvm_unreachable("Unknown MUL opcode!");
-    case X86::IMUL32r:
-    case X86::MUL32r:
-      SrcReg = LoReg = X86::EAX; HiReg = X86::EDX;
+    unsigned LoReg, HiReg;
+    bool IsSigned = Opcode == ISD::SMUL_LOHI;
+    switch (NVT.SimpleTy) {
+    default: llvm_unreachable("Unsupported VT!");
+    case MVT::i32:
+      Opc  = IsSigned ? X86::IMUL32r : X86::MUL32r;
+      MOpc = IsSigned ? X86::IMUL32m : X86::MUL32m;
+      LoReg = X86::EAX; HiReg = X86::EDX;
       break;
-    case X86::IMUL64r:
-    case X86::MUL64r:
-      SrcReg = LoReg = X86::RAX; HiReg = X86::RDX;
+    case MVT::i64:
+      Opc  = IsSigned ? X86::IMUL64r : X86::MUL64r;
+      MOpc = IsSigned ? X86::IMUL64m : X86::MUL64m;
+      LoReg = X86::RAX; HiReg = X86::RDX;
       break;
     }
 
@@ -4812,7 +4781,7 @@ void X86DAGToDAGISel::Select(SDNode *Node) {
         std::swap(N0, N1);
     }
 
-    SDValue InFlag = CurDAG->getCopyToReg(CurDAG->getEntryNode(), dl, SrcReg,
+    SDValue InFlag = CurDAG->getCopyToReg(CurDAG->getEntryNode(), dl, LoReg,
                                           N0, SDValue()).getValue(1);
     if (foldedLoad) {
       SDValue Chain;
