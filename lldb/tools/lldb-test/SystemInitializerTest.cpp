@@ -27,6 +27,7 @@ LLDB_PLUGIN_DECLARE(ABISystemZ)
 LLDB_PLUGIN_DECLARE(ABIX86)
 LLDB_PLUGIN_DECLARE(ObjectFileBreakpad)
 LLDB_PLUGIN_DECLARE(ObjectFileELF)
+LLDB_PLUGIN_DECLARE(ObjectFileJIT)
 LLDB_PLUGIN_DECLARE(ObjectFileMachO)
 LLDB_PLUGIN_DECLARE(ObjectFilePECOFF)
 LLDB_PLUGIN_DECLARE(ObjectFileWasm)
@@ -83,11 +84,12 @@ LLDB_PLUGIN_DECLARE(ProcessFreeBSD)
 #if defined(__APPLE__)
 LLDB_PLUGIN_DECLARE(SymbolVendorMacOSX)
 LLDB_PLUGIN_DECLARE(ProcessMacOSXKernel)
-LLDB_PLUGIN_DECLARE(DynamicLoaderDarwinKernel)
 #endif
 LLDB_PLUGIN_DECLARE(StructuredDataDarwinLog)
 LLDB_PLUGIN_DECLARE(PlatformGDB)
 LLDB_PLUGIN_DECLARE(ProcessGDBRemote)
+LLDB_PLUGIN_DECLARE(DynamicLoaderDarwinKernel)
+LLDB_PLUGIN_DECLARE(DynamicLoaderHexagonDYLD)
 LLDB_PLUGIN_DECLARE(DynamicLoaderMacOSXDYLD)
 LLDB_PLUGIN_DECLARE(DynamicLoaderPosixDYLD)
 LLDB_PLUGIN_DECLARE(DynamicLoaderStatic)
@@ -126,6 +128,7 @@ llvm::Error SystemInitializerTest::Initialize() {
 
   LLDB_PLUGIN_INITIALIZE(ObjectFileBreakpad);
   LLDB_PLUGIN_INITIALIZE(ObjectFileELF);
+  LLDB_PLUGIN_INITIALIZE(ObjectFileJIT);
   LLDB_PLUGIN_INITIALIZE(ObjectFileMachO);
   LLDB_PLUGIN_INITIALIZE(ObjectFilePECOFF);
   LLDB_PLUGIN_INITIALIZE(ObjectFileWasm);
@@ -203,7 +206,6 @@ llvm::Error SystemInitializerTest::Initialize() {
 #if defined(__APPLE__)
   LLDB_PLUGIN_INITIALIZE(SymbolVendorMacOSX);
   LLDB_PLUGIN_INITIALIZE(ProcessMacOSXKernel);
-  LLDB_PLUGIN_INITIALIZE(DynamicLoaderDarwinKernel);
 #endif
 
   // This plugin is valid on any host that talks to a Darwin remote. It
@@ -212,13 +214,15 @@ llvm::Error SystemInitializerTest::Initialize() {
 
   // Platform agnostic plugins
   LLDB_PLUGIN_INITIALIZE(PlatformGDB);
-
   LLDB_PLUGIN_INITIALIZE(ProcessGDBRemote);
+
+  LLDB_PLUGIN_INITIALIZE(DynamicLoaderDarwinKernel);
+  LLDB_PLUGIN_INITIALIZE(DynamicLoaderHexagonDYLD);
   LLDB_PLUGIN_INITIALIZE(DynamicLoaderMacOSXDYLD);
   LLDB_PLUGIN_INITIALIZE(DynamicLoaderPosixDYLD);
   LLDB_PLUGIN_INITIALIZE(DynamicLoaderWasmDYLD); // Before DynamicLoaderStatic.
-  LLDB_PLUGIN_INITIALIZE(DynamicLoaderStatic);
   LLDB_PLUGIN_INITIALIZE(DynamicLoaderWindowsDYLD);
+  LLDB_PLUGIN_INITIALIZE(DynamicLoaderStatic);
 
   // Scan for any system or user LLDB plug-ins
   PluginManager::Initialize();
@@ -288,7 +292,6 @@ void SystemInitializerTest::Terminate() {
   LLDB_PLUGIN_TERMINATE(ObjCPlusPlusLanguage);
 
 #if defined(__APPLE__)
-  LLDB_PLUGIN_TERMINATE(DynamicLoaderDarwinKernel);
   LLDB_PLUGIN_TERMINATE(ProcessMacOSXKernel);
   LLDB_PLUGIN_TERMINATE(SymbolVendorMacOSX);
 #endif
@@ -302,11 +305,13 @@ void SystemInitializerTest::Terminate() {
   LLDB_PLUGIN_TERMINATE(ProcessGDBRemote);
   LLDB_PLUGIN_TERMINATE(StructuredDataDarwinLog);
 
+  LLDB_PLUGIN_TERMINATE(DynamicLoaderDarwinKernel);
+  LLDB_PLUGIN_TERMINATE(DynamicLoaderHexagonDYLD);
   LLDB_PLUGIN_TERMINATE(DynamicLoaderMacOSXDYLD);
   LLDB_PLUGIN_TERMINATE(DynamicLoaderPosixDYLD);
   LLDB_PLUGIN_TERMINATE(DynamicLoaderWasmDYLD);
-  LLDB_PLUGIN_TERMINATE(DynamicLoaderStatic);
   LLDB_PLUGIN_TERMINATE(DynamicLoaderWindowsDYLD);
+  LLDB_PLUGIN_TERMINATE(DynamicLoaderStatic);
 
   LLDB_PLUGIN_TERMINATE(PlatformFreeBSD);
   LLDB_PLUGIN_TERMINATE(PlatformLinux);
@@ -318,6 +323,7 @@ void SystemInitializerTest::Terminate() {
 
   LLDB_PLUGIN_TERMINATE(ObjectFileBreakpad);
   LLDB_PLUGIN_TERMINATE(ObjectFileELF);
+  LLDB_PLUGIN_TERMINATE(ObjectFileJIT);
   LLDB_PLUGIN_TERMINATE(ObjectFileMachO);
   LLDB_PLUGIN_TERMINATE(ObjectFilePECOFF);
   LLDB_PLUGIN_TERMINATE(ObjectFileWasm);
