@@ -4020,7 +4020,7 @@ X86TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     } else if (VA.isRegLoc()) {
       RegsToPass.push_back(std::make_pair(VA.getLocReg(), Arg));
       const TargetOptions &Options = DAG.getTarget().Options;
-      if (Options.EnableDebugEntryValues)
+      if (Options.SupportsDebugEntryValues)
         CSInfo.emplace_back(VA.getLocReg(), I);
       if (isVarArg && IsWin64) {
         // Win64 ABI requires argument XMM reg to be copied to the corresponding
@@ -5168,7 +5168,8 @@ bool X86TargetLowering::shouldScalarizeBinop(SDValue VecOp) const {
   return isOperationLegalOrCustomOrPromote(Opc, ScalarVT);
 }
 
-bool X86TargetLowering::shouldFormOverflowOp(unsigned Opcode, EVT VT) const {
+bool X86TargetLowering::shouldFormOverflowOp(unsigned Opcode, EVT VT,
+                                             bool) const {
   // TODO: Allow vectors?
   if (VT.isVector())
     return false;
@@ -8777,20 +8778,6 @@ static SDValue buildFromShuffleMostly(SDValue Op, SelectionDAG &DAG) {
   return NV;
 }
 
-static SDValue ConvertI1VectorToInteger(SDValue Op, SelectionDAG &DAG) {
-  assert(ISD::isBuildVectorOfConstantSDNodes(Op.getNode()) &&
-         Op.getScalarValueSizeInBits() == 1 &&
-         "Can not convert non-constant vector");
-  uint64_t Immediate = 0;
-  for (unsigned idx = 0, e = Op.getNumOperands(); idx < e; ++idx) {
-    SDValue In = Op.getOperand(idx);
-    if (!In.isUndef())
-      Immediate |= (cast<ConstantSDNode>(In)->getZExtValue() & 0x1) << idx;
-  }
-  SDLoc dl(Op);
-  MVT VT = MVT::getIntegerVT(std::max((int)Op.getValueSizeInBits(), 8));
-  return DAG.getConstant(Immediate, dl, VT);
-}
 // Lower BUILD_VECTOR operation for v8i1 and v16i1 types.
 static SDValue LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG,
                                      const X86Subtarget &Subtarget) {
@@ -8836,9 +8823,24 @@ static SDValue LowerBUILD_VECTORvXi1(SDValue Op, SelectionDAG &DAG,
     if (Cond.getOpcode() != ISD::SETCC)
       Cond = DAG.getNode(ISD::AND, dl, MVT::i8, Cond,
                          DAG.getConstant(1, dl, MVT::i8));
-    return DAG.getSelect(dl, VT, Cond,
-                         DAG.getConstant(1, dl, VT),
-                         DAG.getConstant(0, dl, VT));
+
+    // Perform the select in the scalar domain so we can use cmov.
+    if (VT == MVT::v64i1 && !Subtarget.is64Bit()) {
+      SDValue Select = DAG.getSelect(dl, MVT::i32, Cond,
+                                     DAG.getAllOnesConstant(dl, MVT::i32),
+                                     DAG.getConstant(0, dl, MVT::i32));
+      Select = DAG.getBitcast(MVT::v32i1, Select);
+      return DAG.getNode(ISD::CONCAT_VECTORS, dl, MVT::v64i1, Select, Select);
+    } else {
+      MVT ImmVT = MVT::getIntegerVT(std::max((unsigned)VT.getSizeInBits(), 8U));
+      SDValue Select = DAG.getSelect(dl, ImmVT, Cond,
+                                     DAG.getAllOnesConstant(dl, ImmVT),
+                                     DAG.getConstant(0, dl, ImmVT));
+      MVT VecVT = VT.getSizeInBits() >= 8 ? VT : MVT::v8i1;
+      Select = DAG.getBitcast(VecVT, Select);
+      return DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VT, Select,
+                         DAG.getIntPtrConstant(0, dl));
+    }
   }
 
   // insert elements one by one
@@ -22450,40 +22452,6 @@ SDValue X86TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
   if (isScalarFPTypeInSSEReg(VT) && Subtarget.hasAVX512()) {
     SDValue Cmp = DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, MVT::v1i1, Cond);
     return DAG.getNode(X86ISD::SELECTS, DL, VT, Cmp, Op1, Op2);
-  }
-
-  // For v64i1 without 64-bit support we need to split and rejoin.
-  if (VT == MVT::v64i1 && !Subtarget.is64Bit()) {
-    assert(Subtarget.hasBWI() && "Expected BWI to be legal");
-    SDValue Op1Lo = extractSubVector(Op1, 0, DAG, DL, 32);
-    SDValue Op2Lo = extractSubVector(Op2, 0, DAG, DL, 32);
-    SDValue Op1Hi = extractSubVector(Op1, 32, DAG, DL, 32);
-    SDValue Op2Hi = extractSubVector(Op2, 32, DAG, DL, 32);
-    SDValue Lo = DAG.getSelect(DL, MVT::v32i1, Cond, Op1Lo, Op2Lo);
-    SDValue Hi = DAG.getSelect(DL, MVT::v32i1, Cond, Op1Hi, Op2Hi);
-    return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, Lo, Hi);
-  }
-
-  if (VT.isVector() && VT.getVectorElementType() == MVT::i1) {
-    SDValue Op1Scalar;
-    if (ISD::isBuildVectorOfConstantSDNodes(Op1.getNode()))
-      Op1Scalar = ConvertI1VectorToInteger(Op1, DAG);
-    else if (Op1.getOpcode() == ISD::BITCAST && Op1.getOperand(0))
-      Op1Scalar = Op1.getOperand(0);
-    SDValue Op2Scalar;
-    if (ISD::isBuildVectorOfConstantSDNodes(Op2.getNode()))
-      Op2Scalar = ConvertI1VectorToInteger(Op2, DAG);
-    else if (Op2.getOpcode() == ISD::BITCAST && Op2.getOperand(0))
-      Op2Scalar = Op2.getOperand(0);
-    if (Op1Scalar.getNode() && Op2Scalar.getNode()) {
-      SDValue newSelect = DAG.getSelect(DL, Op1Scalar.getValueType(), Cond,
-                                        Op1Scalar, Op2Scalar);
-      if (newSelect.getValueSizeInBits() == VT.getSizeInBits())
-        return DAG.getBitcast(VT, newSelect);
-      SDValue ExtVec = DAG.getBitcast(MVT::v8i1, newSelect);
-      return DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, VT, ExtVec,
-                         DAG.getIntPtrConstant(0, DL));
-    }
   }
 
   if (Cond.getOpcode() == ISD::SETCC) {
@@ -38953,6 +38921,39 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
     return DAG.getBitcast(VT, newSelect);
   }
 
+  // Try to optimize vXi1 selects if both operands are either all constants or
+  // bitcasts from scalar integer type. In that case we can convert the operands
+  // to integer and use an integer select which will be converted to a CMOV.
+  // We need to take a little bit of care to avoid creating an i64 type after
+  // type legalization.
+  if (N->getOpcode() == ISD::SELECT && VT.isVector() &&
+      VT.getVectorElementType() == MVT::i1 &&
+      (DCI.isBeforeLegalize() || (VT != MVT::v64i1 || Subtarget.is64Bit()))) {
+    MVT IntVT = MVT::getIntegerVT(VT.getVectorNumElements());
+    bool LHSIsConst = ISD::isBuildVectorOfConstantSDNodes(LHS.getNode());
+    bool RHSIsConst = ISD::isBuildVectorOfConstantSDNodes(RHS.getNode());
+
+    if ((LHSIsConst ||
+         (LHS.getOpcode() == ISD::BITCAST &&
+          LHS.getOperand(0).getValueType() == IntVT)) &&
+        (RHSIsConst ||
+         (RHS.getOpcode() == ISD::BITCAST &&
+          RHS.getOperand(0).getValueType() == IntVT))) {
+      if (LHSIsConst)
+        LHS = combinevXi1ConstantToInteger(LHS, DAG);
+      else
+        LHS = LHS.getOperand(0);
+
+      if (RHSIsConst)
+        RHS = combinevXi1ConstantToInteger(RHS, DAG);
+      else
+        RHS = RHS.getOperand(0);
+
+      SDValue Select = DAG.getSelect(DL, IntVT, Cond, LHS, RHS);
+      return DAG.getBitcast(VT, Select);
+    }
+  }
+
   return SDValue();
 }
 
@@ -42250,7 +42251,7 @@ static SDValue combineStore(SDNode *N, SelectionDAG &DAG,
        VT == MVT::v64i1) && VT == StVT && TLI.isTypeLegal(VT) &&
       ISD::isBuildVectorOfConstantSDNodes(StoredVal.getNode())) {
     // If its a v64i1 store without 64-bit support, we need two stores.
-    if (VT == MVT::v64i1 && !Subtarget.is64Bit()) {
+    if (!DCI.isBeforeLegalize() && VT == MVT::v64i1 && !Subtarget.is64Bit()) {
       SDValue Lo = DAG.getBuildVector(MVT::v32i1, dl,
                                       StoredVal->ops().slice(0, 32));
       Lo = combinevXi1ConstantToInteger(Lo, DAG);
