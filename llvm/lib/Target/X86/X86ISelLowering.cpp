@@ -1441,19 +1441,23 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       setOperationAction(ISD::ANY_EXTEND,  VT, Custom);
     }
 
-    for (auto VT : { MVT::v2i1, MVT::v4i1, MVT::v8i1, MVT::v16i1 }) {
+    for (auto VT : { MVT::v1i1, MVT::v2i1, MVT::v4i1, MVT::v8i1, MVT::v16i1 }) {
       setOperationAction(ISD::ADD,              VT, Custom);
       setOperationAction(ISD::SUB,              VT, Custom);
       setOperationAction(ISD::MUL,              VT, Custom);
+      setOperationAction(ISD::UADDSAT,          VT, Custom);
+      setOperationAction(ISD::SADDSAT,          VT, Custom);
+      setOperationAction(ISD::USUBSAT,          VT, Custom);
+      setOperationAction(ISD::SSUBSAT,          VT, Custom);
+      setOperationAction(ISD::VSELECT,          VT,  Expand);
+    }
+
+    for (auto VT : { MVT::v2i1, MVT::v4i1, MVT::v8i1, MVT::v16i1 }) {
       setOperationAction(ISD::SETCC,            VT, Custom);
       setOperationAction(ISD::STRICT_FSETCC,    VT, Custom);
       setOperationAction(ISD::STRICT_FSETCCS,   VT, Custom);
       setOperationAction(ISD::SELECT,           VT, Custom);
       setOperationAction(ISD::TRUNCATE,         VT, Custom);
-      setOperationAction(ISD::UADDSAT,          VT, Custom);
-      setOperationAction(ISD::SADDSAT,          VT, Custom);
-      setOperationAction(ISD::USUBSAT,          VT, Custom);
-      setOperationAction(ISD::SSUBSAT,          VT, Custom);
 
       setOperationAction(ISD::BUILD_VECTOR,     VT, Custom);
       setOperationAction(ISD::CONCAT_VECTORS,   VT, Custom);
@@ -1461,7 +1465,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       setOperationAction(ISD::INSERT_SUBVECTOR, VT, Custom);
       setOperationAction(ISD::INSERT_VECTOR_ELT, VT, Custom);
       setOperationAction(ISD::VECTOR_SHUFFLE,   VT,  Custom);
-      setOperationAction(ISD::VSELECT,          VT,  Expand);
     }
 
     for (auto VT : { MVT::v1i1, MVT::v2i1, MVT::v4i1, MVT::v8i1 })
@@ -12867,6 +12870,8 @@ static SDValue lowerShuffleAsBroadcast(const SDLoc &DL, MVT VT, SDValue V1,
 
   // Go up the chain of (vector) values to find a scalar load that we can
   // combine with the broadcast.
+  // TODO: Combine this logic with findEltLoadSrc() used by
+  //       EltsFromConsecutiveLoads().
   int BitOffset = BroadcastIdx * NumEltBits;
   SDValue V = V1;
   for (;;) {
@@ -12880,6 +12885,19 @@ static SDValue lowerShuffleAsBroadcast(const SDLoc &DL, MVT VT, SDValue V1,
       int OpIdx = BitOffset / OpBitWidth;
       V = V.getOperand(OpIdx);
       BitOffset %= OpBitWidth;
+      continue;
+    }
+    case ISD::EXTRACT_SUBVECTOR: {
+      auto *ConstantIdx = dyn_cast<ConstantSDNode>(V.getOperand(1));
+      if (!ConstantIdx)
+        break;
+
+      // The extraction index adds to the existing offset.
+      unsigned EltBitWidth = V.getScalarValueSizeInBits();
+      unsigned Idx = ConstantIdx->getZExtValue();
+      unsigned BeginOffset = Idx * EltBitWidth;
+      BitOffset += BeginOffset;
+      V = V.getOperand(0);
       continue;
     }
     case ISD::INSERT_SUBVECTOR: {
@@ -22508,9 +22526,7 @@ SDValue X86TargetLowering::LowerSELECT(SDValue Op, SelectionDAG &DAG) const {
       if (isAllOnesConstant(Op1) != (CondCode == X86::COND_E))
         Res = DAG.getNOT(DL, Res, Res.getValueType());
 
-      if (!isNullConstant(Op2))
-        Res = DAG.getNode(ISD::OR, DL, Res.getValueType(), Res, Y);
-      return Res;
+      return DAG.getNode(ISD::OR, DL, Res.getValueType(), Res, Y);
     } else if (!Subtarget.hasCMov() && CondCode == X86::COND_E &&
                Cmp.getOperand(0).getOpcode() == ISD::AND &&
                isOneConstant(Cmp.getOperand(0).getOperand(1))) {
@@ -23124,7 +23140,7 @@ SDValue X86TargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
       X86::CondCode X86Cond;
       std::tie(Value, Overflow) = getX86XALUOOp(X86Cond, LHS.getValue(0), DAG);
 
-      if (CC == ISD::SETEQ == isNullConstant(RHS))
+      if ((CC == ISD::SETEQ) == isNullConstant(RHS))
         X86Cond = X86::GetOppositeBranchCondition(X86Cond);
 
       SDValue CCVal = DAG.getTargetConstant(X86Cond, dl, MVT::i8);
@@ -30926,11 +30942,13 @@ static bool isCMOVPseudo(MachineInstr &MI) {
   case X86::CMOV_RFP32:
   case X86::CMOV_RFP64:
   case X86::CMOV_RFP80:
+  case X86::CMOV_VR64:
   case X86::CMOV_VR128:
   case X86::CMOV_VR128X:
   case X86::CMOV_VR256:
   case X86::CMOV_VR256X:
   case X86::CMOV_VR512:
+  case X86::CMOV_VK1:
   case X86::CMOV_VK2:
   case X86::CMOV_VK4:
   case X86::CMOV_VK8:
@@ -32567,11 +32585,13 @@ X86TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   case X86::CMOV_RFP32:
   case X86::CMOV_RFP64:
   case X86::CMOV_RFP80:
+  case X86::CMOV_VR64:
   case X86::CMOV_VR128:
   case X86::CMOV_VR128X:
   case X86::CMOV_VR256:
   case X86::CMOV_VR256X:
   case X86::CMOV_VR512:
+  case X86::CMOV_VK1:
   case X86::CMOV_VK2:
   case X86::CMOV_VK4:
   case X86::CMOV_VK8:
@@ -38841,14 +38861,6 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
       return DAG.getNode(N->getOpcode(), DL, VT,
                          DAG.getBitcast(CondVT, CondNot), RHS, LHS);
 
-  // Custom action for SELECT MMX
-  if (VT == MVT::x86mmx) {
-    LHS = DAG.getBitcast(MVT::i64, LHS);
-    RHS = DAG.getBitcast(MVT::i64, RHS);
-    SDValue newSelect = DAG.getNode(ISD::SELECT, DL, MVT::i64, Cond, LHS, RHS);
-    return DAG.getBitcast(VT, newSelect);
-  }
-
   // Try to optimize vXi1 selects if both operands are either all constants or
   // bitcasts from scalar integer type. In that case we can convert the operands
   // to integer and use an integer select which will be converted to a CMOV.
@@ -39547,7 +39559,7 @@ static SDValue reduceVMULWidth(SDNode *N, SelectionDAG &DAG,
                                                    : ISD::SIGN_EXTEND,
                        DL, VT, MulLo);
 
-  MVT ResVT = MVT::getVectorVT(MVT::i32, NumElts / 2);
+  EVT ResVT = EVT::getVectorVT(*DAG.getContext(), MVT::i32, NumElts / 2);
   // Generate the higher part of mul: pmulhw/pmulhuw. For MULU16/MULS16,
   // the higher part is also needed.
   SDValue MulHi =
