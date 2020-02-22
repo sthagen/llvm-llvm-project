@@ -162,6 +162,24 @@ public:
     return false;
   }
 
+  bool SelectDupZero(SDValue N) {
+    switch(N->getOpcode()) {
+    case AArch64ISD::DUP:
+    case ISD::SPLAT_VECTOR: {
+      auto Opnd0 = N->getOperand(0);
+      if (auto CN = dyn_cast<ConstantSDNode>(Opnd0))
+        if (CN->isNullValue())
+          return true;
+      if (auto CN = dyn_cast<ConstantFPSDNode>(Opnd0))
+        if (CN->isZero())
+          return true;
+      break;
+    }
+    }
+
+    return false;
+  }
+
   template<MVT::SimpleValueType VT>
   bool SelectSVEAddSubImm(SDValue N, SDValue &Imm, SDValue &Shift) {
     return SelectSVEAddSubImm(N, VT, Imm, Shift);
@@ -4439,6 +4457,46 @@ FunctionPass *llvm::createAArch64ISelDag(AArch64TargetMachine &TM,
   return new AArch64DAGToDAGISel(TM, OptLevel);
 }
 
+/// When \p PredVT is a scalable vector predicate in the form
+/// MVT::nx<M>xi1, it builds the correspondent scalable vector of
+/// integers MVT::nx<M>xi<bits> s.t. M x bits = 128. If the input
+/// PredVT is not in the form MVT::nx<M>xi1, it returns an invalid
+/// EVT.
+static EVT getPackedVectorTypeFromPredicateType(LLVMContext &Ctx, EVT PredVT) {
+  if (!PredVT.isScalableVector() || PredVT.getVectorElementType() != MVT::i1)
+    return EVT();
+
+  const unsigned NumElts = PredVT.getVectorNumElements();
+
+  if (NumElts != 2 && NumElts != 4 && NumElts != 8 && NumElts != 16)
+    return EVT();
+
+  EVT ScalarVT = EVT::getIntegerVT(Ctx, AArch64::SVEBitsPerBlock / NumElts);
+  EVT MemVT = EVT::getVectorVT(Ctx, ScalarVT, NumElts, /*IsScalable=*/true);
+  return MemVT;
+}
+
+/// Return the EVT of the data associated to a memory operation in \p
+/// Root. If such EVT cannot be retrived, it returns an invalid EVT.
+static EVT getMemVTFromNode(LLVMContext &Ctx, SDNode *Root) {
+  if (isa<MemSDNode>(Root))
+    return cast<MemSDNode>(Root)->getMemoryVT();
+
+  const unsigned Opcode = Root->getOpcode();
+  if (Opcode != ISD::INTRINSIC_VOID)
+    return EVT();
+
+  const unsigned IntNo =
+      cast<ConstantSDNode>(Root->getOperand(1))->getZExtValue();
+  if (IntNo != Intrinsic::aarch64_sve_prf)
+    return EVT();
+
+  // We are using an SVE prefetch intrinsic. Type must be inferred
+  // from the width of the predicate.
+  return getPackedVectorTypeFromPredicateType(
+      Ctx, Root->getOperand(2)->getValueType(0));
+}
+
 /// SelectAddrModeIndexedSVE - Attempt selection of the addressing mode:
 /// Base + OffImm * sizeof(MemVT) for Min >= OffImm <= Max
 /// where Root is the memory access using N for its address.
@@ -4446,9 +4504,10 @@ template <int64_t Min, int64_t Max>
 bool AArch64DAGToDAGISel::SelectAddrModeIndexedSVE(SDNode *Root, SDValue N,
                                                    SDValue &Base,
                                                    SDValue &OffImm) {
-  assert(isa<MemSDNode>(Root) && "Invalid node.");
+  const EVT MemVT = getMemVTFromNode(*(CurDAG->getContext()), Root);
 
-  EVT MemVT = cast<MemSDNode>(Root)->getMemoryVT();
+  if (MemVT == EVT())
+    return false;
 
   if (N.getOpcode() != ISD::ADD)
     return false;
