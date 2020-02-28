@@ -5,18 +5,14 @@ add_mlir_dialect_library(MLIRAffineOps
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/AffineOps
+
+  LINK_LIBS
+  MLIREDSC
+  MLIRIR
+  MLIRStandardOps
+  LLVMSupport
   )
 add_dependencies(MLIRAffineOps
-
   MLIRAffineOpsIncGen
-  MLIREDSC
-  MLIRIR
   MLIRLoopLikeInterfaceIncGen
-  MLIRStandardOps
-  )
-target_link_libraries(MLIRAffineOps
-
-  MLIREDSC
-  MLIRIR
-  MLIRStandardOps
   )
