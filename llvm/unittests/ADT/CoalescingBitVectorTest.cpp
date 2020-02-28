@@ -95,20 +95,20 @@ TEST(CoalescingBitVectorTest, Iterators) {
   BV.set({0, 1, 2});
 
   auto It = BV.begin();
-  EXPECT_EQ(It, BV.begin());
+  EXPECT_TRUE(It == BV.begin());
   EXPECT_EQ(*It, 0u);
   ++It;
   EXPECT_EQ(*It, 1u);
   ++It;
   EXPECT_EQ(*It, 2u);
   ++It;
-  EXPECT_EQ(It, BV.end());
-  EXPECT_EQ(BV.end(), BV.end());
+  EXPECT_TRUE(It == BV.end());
+  EXPECT_TRUE(BV.end() == BV.end());
 
   It = BV.begin();
-  EXPECT_EQ(It, BV.begin());
+  EXPECT_TRUE(It == BV.begin());
   auto ItCopy = It++;
-  EXPECT_EQ(ItCopy, BV.begin());
+  EXPECT_TRUE(ItCopy == BV.begin());
   EXPECT_EQ(*ItCopy, 0u);
   EXPECT_EQ(*It, 1u);
 
@@ -131,10 +131,10 @@ TEST(CoalescingBitVectorTest, Iterators) {
   EXPECT_TRUE(elementsMatch(BV, {0, 1, 2, 4, 5, 6, 10, 1000, 1001, 1002}));
 
   auto It1 = BV.begin();
-  EXPECT_EQ(It1, BV.begin());
-  EXPECT_EQ(++It1, ++BV.begin());
-  EXPECT_NE(It1, BV.begin());
-  EXPECT_NE(It1, BV.end());
+  EXPECT_TRUE(It1 == BV.begin());
+  EXPECT_TRUE(++It1 == ++BV.begin());
+  EXPECT_TRUE(It1 != BV.begin());
+  EXPECT_TRUE(It1 != BV.end());
 }
 
 TEST(CoalescingBitVectorTest, Reset) {
@@ -445,7 +445,7 @@ TEST(CoalescingBitVectorTest, FindLowerBound) {
   U64BitVec BV(Alloc);
   uint64_t BigNum1 = uint64_t(1) << 32;
   uint64_t BigNum2 = (uint64_t(1) << 33) + 1;
-  EXPECT_EQ(BV.find(BigNum1), BV.end());
+  EXPECT_TRUE(BV.find(BigNum1) == BV.end());
   BV.set(BigNum1);
   auto Find1 = BV.find(BigNum1);
   EXPECT_EQ(*Find1, BigNum1);
