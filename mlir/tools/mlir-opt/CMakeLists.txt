@@ -4,17 +4,19 @@ set(LLVM_OPTIONAL_SOURCES
 
 set(LIB_LIBS
   MLIRAnalysis
+  MLIRIR
   MLIRLLVMIR
   MLIROptLib
   MLIRParser
   MLIRPass
   MLIRTransforms
   MLIRSupport
-)
+  LLVMSupport
+  )
 add_llvm_library(MLIRMlirOptMain
   mlir-opt.cpp
-)
-target_link_libraries(MLIRMlirOptMain
+
+  LINK_LIBS
   ${LIB_LIBS}
 )
 

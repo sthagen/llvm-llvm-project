@@ -5,17 +5,12 @@ add_mlir_dialect_library(MLIRLoopOps
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/LoopOps
-  )
-add_dependencies(MLIRLoopOps
 
-  MLIREDSC
+  DEPENDS
   MLIRLoopLikeInterfaceIncGen
   MLIRLoopOpsIncGen
-  MLIRStandardOps
-  LLVMSupport
-  )
-target_link_libraries(MLIRLoopOps
 
+  LINK_LIBS
   MLIREDSC
   MLIRIR
   MLIRStandardOps

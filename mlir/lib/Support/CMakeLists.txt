@@ -7,43 +7,54 @@ set(LLVM_OPTIONAL_SOURCES
   TranslateClParser.cpp
 )
 
-add_llvm_library(MLIRSupport
+add_mlir_library(MLIRSupport
   FileUtilities.cpp
   StorageUniquer.cpp
   ToolUtilities.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Support
-  )
-target_link_libraries(MLIRSupport LLVMSupport ${LLVM_PTHREAD_LIB})
 
-add_llvm_library(MLIROptLib
+  LINK_LIBS
+  LLVMSupport
+  ${LLVM_PTHREAD_LIB}
+  )
+
+add_mlir_library(MLIROptLib
   MlirOptMain.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Support
-  )
-target_link_libraries(MLIROptLib
+
+  LINK_LIBS
+  MLIRIR
   MLIRPass
   MLIRParser
-  LLVMSupport
   MLIRSupport
+  LLVMSupport
   )
 
-add_llvm_library(MLIRTranslateClParser
+add_mlir_library(MLIRTranslateClParser
   TranslateClParser.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Support
+
+  LINK_LIBS
+  LLVMSupport
+  MLIRAnalysis
+  MLIRIR
+  MLIRTranslation
+  MLIRParser
   )
-target_link_libraries(MLIRTranslateClParser LLVMSupport MLIRIR MLIRTranslation MLIRParser)
 
 add_llvm_library(MLIRJitRunner
   JitRunner.cpp
-)
-target_link_libraries(MLIRJitRunner PRIVATE
+
+  LINK_LIBS
   MLIRExecutionEngine
   MLIRIR
+  MLIRLLVMIR
   MLIRParser
   MLIRStandardOps
   MLIRTargetLLVMIR
@@ -51,5 +62,9 @@ target_link_libraries(MLIRJitRunner PRIVATE
   MLIRStandardToLLVM
   MLIRSupport
   LLVMCore
+  LLVMOrcJIT
   LLVMSupport
-)
+  LLVMX86CodeGen
+  LLVMX86Desc
+  LLVMX86Info
+  )
