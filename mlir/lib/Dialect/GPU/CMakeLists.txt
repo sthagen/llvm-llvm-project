@@ -7,11 +7,17 @@ add_mlir_dialect_library(MLIRGPU
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/GPU
-
-  DEPENDS
+)
+add_dependencies(MLIRGPU
   MLIRGPUOpsIncGen
-
-  LINK_LIBS
+  MLIREDSC
+  MLIRIR
+  MLIRLLVMIR
+  MLIRLoopOps
+  MLIRSupport
+  MLIRTransformUtils
+  LLVMSupport)
+target_link_libraries(MLIRGPU
   MLIREDSC
   MLIRIR
   MLIRLLVMIR
@@ -20,5 +26,4 @@ add_mlir_dialect_library(MLIRGPU
   MLIRStandardOps
   MLIRSupport
   MLIRTransformUtils
-  LLVMSupport
-  )
+  LLVMSupport)
