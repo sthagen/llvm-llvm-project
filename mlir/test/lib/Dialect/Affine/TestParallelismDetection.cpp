@@ -10,7 +10,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Analysis/Passes.h"
 #include "mlir/Analysis/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/IR/Builders.h"
@@ -26,7 +25,6 @@ struct TestParallelismDetection
 };
 
 } // end anonymous namespace
-
 
 // Walks the function and emits a note for all 'affine.for' ops detected as
 // parallel.

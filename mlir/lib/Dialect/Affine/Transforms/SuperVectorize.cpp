@@ -1,4 +1,4 @@
-//===- Vectorize.cpp - Vectorize Pass Impl --------------------------------===//
+//===- SuperVectorize.cpp - Vectorize Pass Impl ---------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -16,6 +16,7 @@
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Analysis/Utils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/StandardOps/IR/Ops.h"
 #include "mlir/Dialect/Vector/VectorOps.h"
 #include "mlir/Dialect/Vector/VectorUtils.h"
@@ -27,7 +28,6 @@
 #include "mlir/Support/Functional.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/FoldUtils.h"
-#include "mlir/Transforms/Passes.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -414,7 +414,7 @@ using namespace mlir;
 ///
 /// The -affine-vectorize pass with the following arguments:
 /// ```
-/// -affine-vectorize -virtual-vector-size 256 --test-fastest-varying=0
+/// -affine-vectorize="virtual-vector-size=256 test-fastest-varying=0"
 /// ```
 ///
 /// produces this standard innermost-loop vectorized code:
@@ -468,8 +468,7 @@ using namespace mlir;
 ///
 /// The -affine-vectorize pass with the following arguments:
 /// ```
-/// -affine-vectorize -virtual-vector-size 32 -virtual-vector-size 256
-/// --test-fastest-varying=1 --test-fastest-varying=0
+/// -affine-vectorize="virtual-vector-size=32,256 test-fastest-varying=1,0"
 /// ```
 ///
 /// produces this more interesting mixed outer-innermost-loop vectorized code:
@@ -531,21 +530,6 @@ using functional::map;
 using llvm::dbgs;
 using llvm::SetVector;
 
-static llvm::cl::OptionCategory clOptionsCategory("vectorize options");
-
-static llvm::cl::list<int> clVirtualVectorSize(
-    "virtual-vector-size",
-    llvm::cl::desc("Specify an n-D virtual vector size for vectorization"),
-    llvm::cl::ZeroOrMore, llvm::cl::cat(clOptionsCategory));
-
-static llvm::cl::list<int> clFastestVaryingPattern(
-    "test-fastest-varying",
-    llvm::cl::desc(
-        "Specify a 1-D, 2-D or 3-D pattern of fastest varying memory"
-        " dimensions to match. See defaultPatterns in Vectorize.cpp for a"
-        " description and examples. This is used for testing purposes"),
-    llvm::cl::ZeroOrMore, llvm::cl::cat(clOptionsCategory));
-
 /// Forward declaration.
 static FilterFunctionType
 isVectorizableLoopPtrFactory(const DenseSet<Operation *> &parallelLoops,
@@ -590,33 +574,35 @@ namespace {
 /// Base state for the vectorize pass.
 /// Command line arguments are preempted by non-empty pass arguments.
 struct Vectorize : public FunctionPass<Vectorize> {
-  Vectorize();
+  Vectorize() = default;
+  Vectorize(const Vectorize &) {}
   Vectorize(ArrayRef<int64_t> virtualVectorSize);
   void runOnFunction() override;
 
-  // The virtual vector size that we vectorize to.
-  SmallVector<int64_t, 4> vectorSizes;
-  // Optionally, the fixed mapping from loop to fastest varying MemRef dimension
-  // for all the MemRefs within a loop pattern:
-  //   the index represents the loop depth, the value represents the k^th
-  //   fastest varying memory dimension.
-  // This is voluntarily restrictive and is meant to precisely target a
-  // particular loop/op pair, for testing purposes.
-  SmallVector<int64_t, 4> fastestVaryingPattern;
+  /// The virtual vector size that we vectorize to.
+  ListOption<int64_t> vectorSizes{
+      *this, "virtual-vector-size",
+      llvm::cl::desc("Specify an n-D virtual vector size for vectorization"),
+      llvm::cl::ZeroOrMore, llvm::cl::CommaSeparated};
+  /// Optionally, the fixed mapping from loop to fastest varying MemRef
+  /// dimension for all the MemRefs within a loop pattern:
+  ///   the index represents the loop depth, the value represents the k^th
+  ///   fastest varying memory dimension.
+  /// This is voluntarily restrictive and is meant to precisely target a
+  /// particular loop/op pair, for testing purposes.
+  ListOption<int64_t> fastestVaryingPattern{
+      *this, "test-fastest-varying",
+      llvm::cl::desc(
+          "Specify a 1-D, 2-D or 3-D pattern of fastest varying memory"
+          " dimensions to match. See defaultPatterns in Vectorize.cpp for a"
+          " description and examples. This is used for testing purposes"),
+      llvm::cl::ZeroOrMore, llvm::cl::CommaSeparated};
 };
 
 } // end anonymous namespace
 
-Vectorize::Vectorize()
-    : vectorSizes(clVirtualVectorSize.begin(), clVirtualVectorSize.end()),
-      fastestVaryingPattern(clFastestVaryingPattern.begin(),
-                            clFastestVaryingPattern.end()) {}
-
-Vectorize::Vectorize(ArrayRef<int64_t> virtualVectorSize) : Vectorize() {
-  if (!virtualVectorSize.empty()) {
-    this->vectorSizes.assign(virtualVectorSize.begin(),
-                             virtualVectorSize.end());
-  }
+Vectorize::Vectorize(ArrayRef<int64_t> virtualVectorSize) {
+  vectorSizes->assign(virtualVectorSize.begin(), virtualVectorSize.end());
 }
 
 /////// TODO(ntv): Hoist to a VectorizationStrategy.cpp when appropriate.
@@ -1282,10 +1268,10 @@ void Vectorize::runOnFunction() {
 }
 
 std::unique_ptr<OpPassBase<FuncOp>>
-mlir::createVectorizePass(ArrayRef<int64_t> virtualVectorSize) {
+mlir::createSuperVectorizePass(ArrayRef<int64_t> virtualVectorSize) {
   return std::make_unique<Vectorize>(virtualVectorSize);
 }
 
 static PassRegistration<Vectorize>
-    pass("affine-vectorize",
+    pass("affine-super-vectorize",
          "Vectorize to a target independent n-D vector abstraction");
