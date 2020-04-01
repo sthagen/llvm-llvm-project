@@ -12,6 +12,7 @@ add_mlir_dialect_library(MLIRAffineTransforms
 
   DEPENDS
   MLIRAffineOpsIncGen
+  MLIRAffinePassIncGen
   MLIRLoopLikeInterfaceIncGen
   )
 target_link_libraries(MLIRAffineTransforms
@@ -19,7 +20,11 @@ target_link_libraries(MLIRAffineTransforms
   MLIRAffine
   MLIREDSC
   MLIRIR
+  MLIRPass
   MLIRSideEffects
   MLIRStandardOps
+  MLIRTransformUtils
+  MLIRVector
+  MLIRVectorToLLVM
   )
 

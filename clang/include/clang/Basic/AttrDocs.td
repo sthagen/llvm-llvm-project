@@ -4624,6 +4624,28 @@ the initializer on host side.
   }];
 }
 
+def CUDADeviceBuiltinSurfaceTypeDocs : Documentation {
+  let Category = DocCatType;
+  let Content = [{
+The ``device_builtin_surface_type`` attribute can be applied to a class
+template when declaring the surface reference. A surface reference variable
+could be accessed on the host side and, on the device side, might be translated
+into an internal surface object, which is established through surface bind and
+unbind runtime APIs.
+  }];
+}
+
+def CUDADeviceBuiltinTextureTypeDocs : Documentation {
+  let Category = DocCatType;
+  let Content = [{
+The ``device_builtin_texture_type`` attribute can be applied to a class
+template when declaring the texture reference. A texture reference variable
+could be accessed on the host side and, on the device side, might be translated
+into an internal texture object, which is established through texture bind and
+unbind runtime APIs.
+  }];
+}
+
 def LifetimeOwnerDocs : Documentation {
   let Category = DocCatDecl;
   let Content = [{
@@ -4852,4 +4874,29 @@ other than overloading.
   int32x4_t result = function();
 
     }];
+}
+
+def ArmCmseNSCallDocs : Documentation {
+  let Category = DocCatType;
+  let Content = [{
+This attribute declares a non-secure function type.  When compiling for secure
+state, a call to such a function would switch from secure to non-secure state.
+All non-secure function calls must happen only through a function pointer, and
+a non-secure function type should only be used as a base type of a pointer.
+See `ARMv8-M Security Extensions: Requirements on Development
+Tools - Engineering Specification Documentation
+<https://developer.arm.com/docs/ecm0359818/latest/>`_ for more information.
+  }];
+}
+
+def ArmCmseNSEntryDocs : Documentation {
+  let Category = DocCatFunction;
+  let Content = [{
+This attribute declares a function that can be called from non-secure state, or
+from secure state. Entering from and returning to non-secure state would switch
+to and from secure state, respectively, and prevent flow of information
+to non-secure state, except via return values. See `ARMv8-M Security Extensions:
+Requirements on Development Tools - Engineering Specification Documentation
+<https://developer.arm.com/docs/ecm0359818/latest/>`_ for more information.
+  }];
 }

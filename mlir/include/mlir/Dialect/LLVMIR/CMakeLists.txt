@@ -6,8 +6,10 @@ mlir_tablegen(LLVMOpsEnums.h.inc -gen-enum-decls)
 mlir_tablegen(LLVMOpsEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(MLIRLLVMOpsIncGen)
 
-add_mlir_dialect(NVVMOps nvvm NVVMOps)
-add_mlir_dialect(ROCDLOps rocdl ROCDLOps)
+add_mlir_dialect(NVVMOps nvvm)
+add_mlir_doc(NVVMOps -gen-dialect-doc NVVMDialect Dialects/)
+add_mlir_dialect(ROCDLOps rocdl)
+add_mlir_doc(ROCDLOps -gen-dialect-doc ROCDLDialect Dialects/)
 
 set(LLVM_TARGET_DEFINITIONS LLVMOps.td)
 mlir_tablegen(LLVMConversions.inc -gen-llvmir-conversions)
@@ -26,3 +28,9 @@ add_mlir_dialect(LLVMAVX512 llvm_avx512 LLVMAVX512)
 set(LLVM_TARGET_DEFINITIONS LLVMAVX512.td)
 mlir_tablegen(LLVMAVX512Conversions.inc -gen-llvmir-conversions)
 add_public_tablegen_target(MLIRLLVMAVX512ConversionsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS Transforms/Passes.td)
+mlir_tablegen(Transforms/Passes.h.inc -gen-pass-decls)
+add_public_tablegen_target(MLIRLLVMPassIncGen)
+
+add_mlir_doc(Transforms/Passes -gen-pass-doc LLVMPasses ./)
