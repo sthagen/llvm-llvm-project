@@ -1178,7 +1178,7 @@ static unsigned enforceKnownAlignment(Value *V, unsigned Alignment,
     // then don't round up. This avoids dynamic stack realignment.
     if (DL.exceedsNaturalStackAlignment(Align(PrefAlign)))
       return Alignment;
-    AI->setAlignment(MaybeAlign(PrefAlign));
+    AI->setAlignment(Align(PrefAlign));
     return PrefAlign;
   }
 
@@ -1195,7 +1195,7 @@ static unsigned enforceKnownAlignment(Value *V, unsigned Alignment,
     if (!GO->canIncreaseAlignment())
       return Alignment;
 
-    GO->setAlignment(MaybeAlign(PrefAlign));
+    GO->setAlignment(Align(PrefAlign));
     return PrefAlign;
   }
 
@@ -1215,12 +1215,10 @@ unsigned llvm::getOrEnforceKnownAlignment(Value *V, unsigned PrefAlign,
 
   // Avoid trouble with ridiculously large TrailZ values, such as
   // those computed from a null pointer.
-  TrailZ = std::min(TrailZ, unsigned(sizeof(unsigned) * CHAR_BIT - 1));
+  // LLVM doesn't support alignments larger than (1 << MaxAlignmentExponent).
+  TrailZ = std::min(TrailZ, +Value::MaxAlignmentExponent);
 
   unsigned Align = 1u << std::min(Known.getBitWidth() - 1, TrailZ);
-
-  // LLVM doesn't support alignments larger than this currently.
-  Align = std::min(Align, +Value::MaximumAlignment);
 
   if (PrefAlign > Align)
     Align = enforceKnownAlignment(V, Align, PrefAlign, DL);
@@ -2555,7 +2553,7 @@ bool llvm::callsGCLeafFunction(const CallBase *Call,
   // marked as 'gc-leaf-function.' All available Libcalls are
   // GC-leaf.
   LibFunc LF;
-  if (TLI.getLibFunc(ImmutableCallSite(Call), LF)) {
+  if (TLI.getLibFunc(*Call, LF)) {
     return TLI.has(LF);
   }
 

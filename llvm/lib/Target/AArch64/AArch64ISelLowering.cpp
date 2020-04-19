@@ -99,11 +99,6 @@ STATISTIC(NumTailCalls, "Number of tail calls");
 STATISTIC(NumShiftInserts, "Number of vector shift inserts");
 STATISTIC(NumOptimizedImms, "Number of times immediates were optimized");
 
-static cl::opt<bool>
-EnableAArch64SlrGeneration("aarch64-shift-insert-generation", cl::Hidden,
-                           cl::desc("Allow AArch64 SLI/SRI formation"),
-                           cl::init(false));
-
 // FIXME: The necessary dtprel relocations don't seem to be supported
 // well in the GNU bfd and gold linkers at the moment. Therefore, by
 // default, for now, fall back to GeneralDynamic code generation.
@@ -1323,6 +1318,8 @@ const char *AArch64TargetLowering::getTargetNodeName(unsigned Opcode) const {
   case AArch64ISD::VSHL:              return "AArch64ISD::VSHL";
   case AArch64ISD::VLSHR:             return "AArch64ISD::VLSHR";
   case AArch64ISD::VASHR:             return "AArch64ISD::VASHR";
+  case AArch64ISD::VSLI:              return "AArch64ISD::VSLI";
+  case AArch64ISD::VSRI:              return "AArch64ISD::VSRI";
   case AArch64ISD::CMEQ:              return "AArch64ISD::CMEQ";
   case AArch64ISD::CMGE:              return "AArch64ISD::CMGE";
   case AArch64ISD::CMGT:              return "AArch64ISD::CMGT";
@@ -3145,6 +3142,21 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
           "llvm.eh.recoverfp must take a function as the first argument");
     return IncomingFPOp;
   }
+
+  case Intrinsic::aarch64_neon_vsri:
+  case Intrinsic::aarch64_neon_vsli: {
+    EVT Ty = Op.getValueType();
+
+    if (!Ty.isVector())
+      report_fatal_error("Unexpected type for aarch64_neon_vsli");
+
+    assert(Op.getConstantOperandVal(3) <= Ty.getScalarSizeInBits());
+
+    bool IsShiftRight = IntNo == Intrinsic::aarch64_neon_vsri;
+    unsigned Opcode = IsShiftRight ? AArch64ISD::VSRI : AArch64ISD::VSLI;
+    return DAG.getNode(Opcode, dl, Ty, Op.getOperand(1), Op.getOperand(2),
+                       Op.getOperand(3));
+  }
   }
 }
 
@@ -4069,7 +4081,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
     // Check if it's really possible to do a tail call.
     IsTailCall = isEligibleForTailCallOptimization(
         Callee, CallConv, IsVarArg, Outs, OutVals, Ins, DAG);
-    if (!IsTailCall && CLI.CS && CLI.CS.isMustTailCall())
+    if (!IsTailCall && CLI.CB && CLI.CB->isMustTailCall())
       report_fatal_error("failed to perform tail call elimination on a call "
                          "site marked musttail");
 
@@ -4179,7 +4191,7 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   SmallVector<SDValue, 8> MemOpChains;
   auto PtrVT = getPointerTy(DAG.getDataLayout());
 
-  if (IsVarArg && CLI.CS && CLI.CS.isMustTailCall()) {
+  if (IsVarArg && CLI.CB && CLI.CB->isMustTailCall()) {
     const auto &Forwards = FuncInfo->getForwardedMustTailRegParms();
     for (const auto &F : Forwards) {
       SDValue Val = DAG.getCopyFromReg(Chain, DL, F.VReg, F.VT);
@@ -7893,8 +7905,9 @@ static unsigned getIntrinsicID(const SDNode *N) {
 
 // Attempt to form a vector S[LR]I from (or (and X, BvecC1), (lsl Y, C2)),
 // to (SLI X, Y, C2), where X and Y have matching vector types, BvecC1 is a
-// BUILD_VECTORs with constant element C1, C2 is a constant, and C1 == ~C2.
-// Also, logical shift right -> sri, with the same structure.
+// BUILD_VECTORs with constant element C1, C2 is a constant, and:
+//   - for the SLI case: C1 == Ones(ElemSizeInBits) >> (ElemSizeInBits - C2)
+//   - for the SRI case: C1 == Ones(ElemSizeInBits) << (ElemSizeInBits - C2)
 static SDValue tryLowerToSLI(SDNode *N, SelectionDAG &DAG) {
   EVT VT = N->getValueType(0);
 
@@ -7927,25 +7940,27 @@ static SDValue tryLowerToSLI(SDNode *N, SelectionDAG &DAG) {
   if (!isAllConstantBuildVector(And.getOperand(1), C1))
     return SDValue();
 
-  // Is C1 == ~C2, taking into account how much one can shift elements of a
-  // particular size?
+  // Is C1 == Ones(ElemSizeInBits) << (ElemSizeInBits - C2) or
+  // C1 == Ones(ElemSizeInBits) >> (ElemSizeInBits - C2), taking into account
+  // how much one can shift elements of a particular size?
   uint64_t C2 = C2node->getZExtValue();
   unsigned ElemSizeInBits = VT.getScalarSizeInBits();
   if (C2 > ElemSizeInBits)
     return SDValue();
   unsigned ElemMask = (1 << ElemSizeInBits) - 1;
-  if ((C1 & ElemMask) != (~C2 & ElemMask))
-    return SDValue();
+  if (IsShiftRight) {
+    if ((C1 & ElemMask) != ((ElemMask << (ElemSizeInBits - C2)) & ElemMask))
+      return SDValue();
+  } else {
+    if ((C1 & ElemMask) != ((ElemMask >> (ElemSizeInBits - C2)) & ElemMask))
+      return SDValue();
+  }
 
   SDValue X = And.getOperand(0);
   SDValue Y = Shift.getOperand(0);
 
-  unsigned Intrin =
-      IsShiftRight ? Intrinsic::aarch64_neon_vsri : Intrinsic::aarch64_neon_vsli;
-  SDValue ResultSLI =
-      DAG.getNode(ISD::INTRINSIC_WO_CHAIN, DL, VT,
-                  DAG.getConstant(Intrin, DL, MVT::i32), X, Y,
-                  Shift.getOperand(1));
+  unsigned Inst = IsShiftRight ? AArch64ISD::VSRI : AArch64ISD::VSLI;
+  SDValue ResultSLI = DAG.getNode(Inst, DL, VT, X, Y, Shift.getOperand(1));
 
   LLVM_DEBUG(dbgs() << "aarch64-lower: transformed: \n");
   LLVM_DEBUG(N->dump(&DAG));
@@ -7959,10 +7974,8 @@ static SDValue tryLowerToSLI(SDNode *N, SelectionDAG &DAG) {
 SDValue AArch64TargetLowering::LowerVectorOR(SDValue Op,
                                              SelectionDAG &DAG) const {
   // Attempt to form a vector S[LR]I from (or (and X, C1), (lsl Y, C2))
-  if (EnableAArch64SlrGeneration) {
-    if (SDValue Res = tryLowerToSLI(Op.getNode(), DAG))
-      return Res;
-  }
+  if (SDValue Res = tryLowerToSLI(Op.getNode(), DAG))
+    return Res;
 
   EVT VT = Op.getValueType();
 
@@ -8900,6 +8913,30 @@ SDValue AArch64TargetLowering::LowerVSCALE(SDValue Op,
                             DL, VT);
 }
 
+/// Set the IntrinsicInfo for the `aarch64_sve_st<N>` intrinsics.
+template <unsigned NumVecs>
+static bool setInfoSVEStN(AArch64TargetLowering::IntrinsicInfo &Info,
+                          const CallInst &CI) {
+  Info.opc = ISD::INTRINSIC_VOID;
+  // Retrieve EC from first vector argument.
+  const EVT VT = EVT::getEVT(CI.getArgOperand(0)->getType());
+  ElementCount EC = VT.getVectorElementCount();
+#ifndef NDEBUG
+  // Check the assumption that all input vectors are the same type.
+  for (unsigned I = 0; I < NumVecs; ++I)
+    assert(VT == EVT::getEVT(CI.getArgOperand(I)->getType()) &&
+           "Invalid type.");
+#endif
+  // memVT is `NumVecs * VT`.
+  Info.memVT = EVT::getVectorVT(CI.getType()->getContext(), VT.getScalarType(),
+                                EC * NumVecs);
+  Info.ptrVal = CI.getArgOperand(CI.getNumArgOperands() - 1);
+  Info.offset = 0;
+  Info.align.reset();
+  Info.flags = MachineMemOperand::MOStore;
+  return true;
+}
+
 /// getTgtMemIntrinsic - Represent NEON load and store intrinsics as
 /// MemIntrinsicNodes.  The associated MachineMemOperands record the alignment
 /// specified in the intrinsic calls.
@@ -8909,6 +8946,12 @@ bool AArch64TargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
                                                unsigned Intrinsic) const {
   auto &DL = I.getModule()->getDataLayout();
   switch (Intrinsic) {
+  case Intrinsic::aarch64_sve_st2:
+    return setInfoSVEStN<2>(Info, I);
+  case Intrinsic::aarch64_sve_st3:
+    return setInfoSVEStN<3>(Info, I);
+  case Intrinsic::aarch64_sve_st4:
+    return setInfoSVEStN<4>(Info, I);
   case Intrinsic::aarch64_neon_ld2:
   case Intrinsic::aarch64_neon_ld3:
   case Intrinsic::aarch64_neon_ld4:
@@ -9196,9 +9239,10 @@ bool AArch64TargetLowering::isExtFreeImpl(const Instruction *Ext) const {
 /// or upper half of the vector elements.
 static bool areExtractShuffleVectors(Value *Op1, Value *Op2) {
   auto areTypesHalfed = [](Value *FullV, Value *HalfV) {
-    auto *FullVT = cast<VectorType>(FullV->getType());
-    auto *HalfVT = cast<VectorType>(HalfV->getType());
-    return FullVT->getBitWidth() == 2 * HalfVT->getBitWidth();
+    auto *FullTy = FullV->getType();
+    auto *HalfTy = HalfV->getType();
+    return FullTy->getPrimitiveSizeInBits().getFixedSize() ==
+           2 * HalfTy->getPrimitiveSizeInBits().getFixedSize();
   };
 
   auto extractHalf = [](Value *FullV, Value *HalfV) {
@@ -9376,10 +9420,9 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
 
   // A pointer vector can not be the return type of the ldN intrinsics. Need to
   // load integer vectors first and then convert to pointer vectors.
-  Type *EltTy = VecTy->getVectorElementType();
+  Type *EltTy = VecTy->getElementType();
   if (EltTy->isPointerTy())
-    VecTy =
-        VectorType::get(DL.getIntPtrType(EltTy), VecTy->getVectorNumElements());
+    VecTy = VectorType::get(DL.getIntPtrType(EltTy), VecTy->getNumElements());
 
   IRBuilder<> Builder(LI);
 
@@ -9389,15 +9432,15 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
   if (NumLoads > 1) {
     // If we're going to generate more than one load, reset the sub-vector type
     // to something legal.
-    VecTy = VectorType::get(VecTy->getVectorElementType(),
-                            VecTy->getVectorNumElements() / NumLoads);
+    VecTy = VectorType::get(VecTy->getElementType(),
+                            VecTy->getNumElements() / NumLoads);
 
     // We will compute the pointer operand of each load from the original base
     // address using GEPs. Cast the base address to a pointer to the scalar
     // element type.
     BaseAddr = Builder.CreateBitCast(
-        BaseAddr, VecTy->getVectorElementType()->getPointerTo(
-                      LI->getPointerAddressSpace()));
+        BaseAddr,
+        VecTy->getElementType()->getPointerTo(LI->getPointerAddressSpace()));
   }
 
   Type *PtrTy = VecTy->getPointerTo(LI->getPointerAddressSpace());
@@ -9418,9 +9461,8 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
     // If we're generating more than one load, compute the base address of
     // subsequent loads as an offset from the previous.
     if (LoadCount > 0)
-      BaseAddr =
-          Builder.CreateConstGEP1_32(VecTy->getVectorElementType(), BaseAddr,
-                                     VecTy->getVectorNumElements() * Factor);
+      BaseAddr = Builder.CreateConstGEP1_32(VecTy->getElementType(), BaseAddr,
+                                            VecTy->getNumElements() * Factor);
 
     CallInst *LdN = Builder.CreateCall(
         LdNFunc, Builder.CreateBitCast(BaseAddr, PtrTy), "ldN");
@@ -9435,8 +9477,8 @@ bool AArch64TargetLowering::lowerInterleavedLoad(
       // Convert the integer vector to pointer vector if the element is pointer.
       if (EltTy->isPointerTy())
         SubVec = Builder.CreateIntToPtr(
-            SubVec, VectorType::get(SVI->getType()->getVectorElementType(),
-                                    VecTy->getVectorNumElements()));
+            SubVec, VectorType::get(SVI->getType()->getElementType(),
+                                    VecTy->getNumElements()));
       SubVecs[SVI].push_back(SubVec);
     }
   }
@@ -9488,11 +9530,10 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
          "Invalid interleave factor");
 
   VectorType *VecTy = SVI->getType();
-  assert(VecTy->getVectorNumElements() % Factor == 0 &&
-         "Invalid interleaved store");
+  assert(VecTy->getNumElements() % Factor == 0 && "Invalid interleaved store");
 
-  unsigned LaneLen = VecTy->getVectorNumElements() / Factor;
-  Type *EltTy = VecTy->getVectorElementType();
+  unsigned LaneLen = VecTy->getNumElements() / Factor;
+  Type *EltTy = VecTy->getElementType();
   VectorType *SubVecTy = VectorType::get(EltTy, LaneLen);
 
   const DataLayout &DL = SI->getModule()->getDataLayout();
@@ -9513,7 +9554,7 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
   // vectors to integer vectors.
   if (EltTy->isPointerTy()) {
     Type *IntTy = DL.getIntPtrType(EltTy);
-    unsigned NumOpElts = Op0->getType()->getVectorNumElements();
+    unsigned NumOpElts = cast<VectorType>(Op0->getType())->getNumElements();
 
     // Convert to the corresponding integer vector.
     Type *IntVecTy = VectorType::get(IntTy, NumOpElts);
@@ -9530,14 +9571,14 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
     // If we're going to generate more than one store, reset the lane length
     // and sub-vector type to something legal.
     LaneLen /= NumStores;
-    SubVecTy = VectorType::get(SubVecTy->getVectorElementType(), LaneLen);
+    SubVecTy = VectorType::get(SubVecTy->getElementType(), LaneLen);
 
     // We will compute the pointer operand of each store from the original base
     // address using GEPs. Cast the base address to a pointer to the scalar
     // element type.
     BaseAddr = Builder.CreateBitCast(
-        BaseAddr, SubVecTy->getVectorElementType()->getPointerTo(
-                      SI->getPointerAddressSpace()));
+        BaseAddr,
+        SubVecTy->getElementType()->getPointerTo(SI->getPointerAddressSpace()));
   }
 
   auto Mask = SVI->getShuffleMask();
@@ -9559,7 +9600,7 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
       unsigned IdxI = StoreCount * LaneLen * Factor + i;
       if (Mask[IdxI] >= 0) {
         Ops.push_back(Builder.CreateShuffleVector(
-            Op0, Op1, createSequentialMask(Builder, Mask[IdxI], LaneLen, 0)));
+            Op0, Op1, createSequentialMask(Mask[IdxI], LaneLen, 0)));
       } else {
         unsigned StartMask = 0;
         for (unsigned j = 1; j < LaneLen; j++) {
@@ -9575,14 +9616,14 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
         // Note: StartMask cannot be negative, it's checked in
         // isReInterleaveMask
         Ops.push_back(Builder.CreateShuffleVector(
-            Op0, Op1, createSequentialMask(Builder, StartMask, LaneLen, 0)));
+            Op0, Op1, createSequentialMask(StartMask, LaneLen, 0)));
       }
     }
 
     // If we generating more than one store, we compute the base address of
     // subsequent stores as an offset from the previous.
     if (StoreCount > 0)
-      BaseAddr = Builder.CreateConstGEP1_32(SubVecTy->getVectorElementType(),
+      BaseAddr = Builder.CreateConstGEP1_32(SubVecTy->getElementType(),
                                             BaseAddr, LaneLen * Factor);
 
     Ops.push_back(Builder.CreateBitCast(BaseAddr, PtrTy));
@@ -9697,7 +9738,7 @@ bool AArch64TargetLowering::isLegalAddressingMode(const DataLayout &DL,
     return false;
 
   // FIXME: Update this method to support scalable addressing modes.
-  if (Ty->isVectorTy() && Ty->getVectorIsScalable())
+  if (Ty->isVectorTy() && cast<VectorType>(Ty)->isScalable())
     return AM.HasBaseReg && !AM.BaseOffs && !AM.Scale;
 
   // check reg + imm case:
@@ -13021,13 +13062,12 @@ static SDValue legalizeSVEGatherPrefetchOffsVec(SDNode *N, SelectionDAG &DAG) {
   return DAG.getNode(N->getOpcode(), DL, DAG.getVTList(MVT::Other), Ops);
 }
 
-/// Combines a node carrying the intrinsic `aarch64_sve_prf_gather<T>` into a
-/// node that uses `aarch64_sve_prf_gather<T>_scaled_uxtw` when the scalar
-/// offset passed to `aarch64_sve_prf_gather<T>` is not a valid immediate for
-/// the sve gather prefetch instruction with vector plus immediate addressing
-/// mode.
+/// Combines a node carrying the intrinsic
+/// `aarch64_sve_prf<T>_gather_scalar_offset` into a node that uses
+/// `aarch64_sve_prfb_gather_uxtw_index` when the scalar offset passed to
+/// `aarch64_sve_prf<T>_gather_scalar_offset` is not a valid immediate for the
+/// sve gather prefetch instruction with vector plus immediate addressing mode.
 static SDValue combineSVEPrefetchVecBaseImmOff(SDNode *N, SelectionDAG &DAG,
-                                               unsigned NewIID,
                                                unsigned ScalarSizeInBytes) {
   const unsigned ImmPos = 4, OffsetPos = 3;
   // No need to combine the node if the immediate is valid...
@@ -13037,10 +13077,11 @@ static SDValue combineSVEPrefetchVecBaseImmOff(SDNode *N, SelectionDAG &DAG,
   // ...otherwise swap the offset base with the offset...
   SmallVector<SDValue, 5> Ops(N->op_begin(), N->op_end());
   std::swap(Ops[ImmPos], Ops[OffsetPos]);
-  // ...and remap the intrinsic `aarch64_sve_prf_gather<T>` to
-  // `aarch64_sve_prf_gather<T>_scaled_uxtw`.
+  // ...and remap the intrinsic `aarch64_sve_prf<T>_gather_scalar_offset` to
+  // `aarch64_sve_prfb_gather_uxtw_index`.
   SDLoc DL(N);
-  Ops[1] = DAG.getConstant(NewIID, DL, MVT::i64);
+  Ops[1] = DAG.getConstant(Intrinsic::aarch64_sve_prfb_gather_uxtw_index, DL,
+                           MVT::i64);
 
   return DAG.getNode(N->getOpcode(), DL, DAG.getVTList(MVT::Other), Ops);
 }
@@ -13109,30 +13150,22 @@ SDValue AArch64TargetLowering::PerformDAGCombine(SDNode *N,
   case ISD::INTRINSIC_VOID:
   case ISD::INTRINSIC_W_CHAIN:
     switch (cast<ConstantSDNode>(N->getOperand(1))->getZExtValue()) {
-    case Intrinsic::aarch64_sve_prfb_gather:
-      return combineSVEPrefetchVecBaseImmOff(
-          N, DAG, Intrinsic::aarch64_sve_prfb_gather_scaled_uxtw,
-          1 /*=ScalarSizeInBytes*/);
-    case Intrinsic::aarch64_sve_prfh_gather:
-      return combineSVEPrefetchVecBaseImmOff(
-          N, DAG, Intrinsic::aarch64_sve_prfh_gather_scaled_uxtw,
-          2 /*=ScalarSizeInBytes*/);
-    case Intrinsic::aarch64_sve_prfw_gather:
-      return combineSVEPrefetchVecBaseImmOff(
-          N, DAG, Intrinsic::aarch64_sve_prfw_gather_scaled_uxtw,
-          4 /*=ScalarSizeInBytes*/);
-    case Intrinsic::aarch64_sve_prfd_gather:
-      return combineSVEPrefetchVecBaseImmOff(
-          N, DAG, Intrinsic::aarch64_sve_prfd_gather_scaled_uxtw,
-          8 /*=ScalarSizeInBytes*/);
-    case Intrinsic::aarch64_sve_prfb_gather_scaled_uxtw:
-    case Intrinsic::aarch64_sve_prfb_gather_scaled_sxtw:
-    case Intrinsic::aarch64_sve_prfh_gather_scaled_uxtw:
-    case Intrinsic::aarch64_sve_prfh_gather_scaled_sxtw:
-    case Intrinsic::aarch64_sve_prfw_gather_scaled_uxtw:
-    case Intrinsic::aarch64_sve_prfw_gather_scaled_sxtw:
-    case Intrinsic::aarch64_sve_prfd_gather_scaled_uxtw:
-    case Intrinsic::aarch64_sve_prfd_gather_scaled_sxtw:
+    case Intrinsic::aarch64_sve_prfb_gather_scalar_offset:
+      return combineSVEPrefetchVecBaseImmOff(N, DAG, 1 /*=ScalarSizeInBytes*/);
+    case Intrinsic::aarch64_sve_prfh_gather_scalar_offset:
+      return combineSVEPrefetchVecBaseImmOff(N, DAG, 2 /*=ScalarSizeInBytes*/);
+    case Intrinsic::aarch64_sve_prfw_gather_scalar_offset:
+      return combineSVEPrefetchVecBaseImmOff(N, DAG, 4 /*=ScalarSizeInBytes*/);
+    case Intrinsic::aarch64_sve_prfd_gather_scalar_offset:
+      return combineSVEPrefetchVecBaseImmOff(N, DAG, 8 /*=ScalarSizeInBytes*/);
+    case Intrinsic::aarch64_sve_prfb_gather_uxtw_index:
+    case Intrinsic::aarch64_sve_prfb_gather_sxtw_index:
+    case Intrinsic::aarch64_sve_prfh_gather_uxtw_index:
+    case Intrinsic::aarch64_sve_prfh_gather_sxtw_index:
+    case Intrinsic::aarch64_sve_prfw_gather_uxtw_index:
+    case Intrinsic::aarch64_sve_prfw_gather_sxtw_index:
+    case Intrinsic::aarch64_sve_prfd_gather_uxtw_index:
+    case Intrinsic::aarch64_sve_prfd_gather_sxtw_index:
       return legalizeSVEGatherPrefetchOffsVec(N, DAG);
     case Intrinsic::aarch64_neon_ld2:
     case Intrinsic::aarch64_neon_ld3:

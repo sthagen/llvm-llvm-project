@@ -5443,6 +5443,15 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
   // subobjects.
   bool VisitVirtualBases = !ClassDecl->isAbstract();
 
+  // If the destructor exists and has already been marked used in the MS ABI,
+  // then virtual base destructors have already been checked and marked used.
+  // Skip checking them again to avoid duplicate diagnostics.
+  if (Context.getTargetInfo().getCXXABI().isMicrosoft()) {
+    CXXDestructorDecl *Dtor = ClassDecl->getDestructor();
+    if (Dtor && Dtor->isUsed())
+      VisitVirtualBases = false;
+  }
+
   llvm::SmallPtrSet<const RecordType *, 8> DirectVirtualBases;
 
   // Bases.
@@ -5477,16 +5486,21 @@ Sema::MarkBaseAndMemberDestructorsReferenced(SourceLocation Location,
     DiagnoseUseOfDecl(Dtor, Location);
   }
 
-  if (!VisitVirtualBases)
-    return;
+  if (VisitVirtualBases)
+    MarkVirtualBaseDestructorsReferenced(Location, ClassDecl,
+                                         &DirectVirtualBases);
+}
 
+void Sema::MarkVirtualBaseDestructorsReferenced(
+    SourceLocation Location, CXXRecordDecl *ClassDecl,
+    llvm::SmallPtrSetImpl<const RecordType *> *DirectVirtualBases) {
   // Virtual bases.
   for (const auto &VBase : ClassDecl->vbases()) {
     // Bases are always records in a well-formed non-dependent class.
     const RecordType *RT = VBase.getType()->castAs<RecordType>();
 
-    // Ignore direct virtual bases.
-    if (DirectVirtualBases.count(RT))
+    // Ignore already visited direct virtual bases.
+    if (DirectVirtualBases && DirectVirtualBases->count(RT))
       continue;
 
     CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(RT->getDecl());
@@ -13202,6 +13216,25 @@ void Sema::DefineImplicitDestructor(SourceLocation CurrentLocation,
   }
 }
 
+void Sema::CheckCompleteDestructorVariant(SourceLocation CurrentLocation,
+                                          CXXDestructorDecl *Destructor) {
+  if (Destructor->isInvalidDecl())
+    return;
+
+  CXXRecordDecl *ClassDecl = Destructor->getParent();
+  assert(Context.getTargetInfo().getCXXABI().isMicrosoft() &&
+         "implicit complete dtors unneeded outside MS ABI");
+  assert(ClassDecl->getNumVBases() > 0 &&
+         "complete dtor only exists for classes with vbases");
+
+  SynthesizedFunctionScope Scope(*this, Destructor);
+
+  // Add a context note for diagnostics produced after this point.
+  Scope.addContextNote(CurrentLocation);
+
+  MarkVirtualBaseDestructorsReferenced(Destructor->getLocation(), ClassDecl);
+}
+
 /// Perform any semantic analysis which needs to be delayed until all
 /// pending class member declarations have been parsed.
 void Sema::ActOnFinishCXXMemberDecls() {
@@ -13662,11 +13695,10 @@ buildSingleCopyAssignRecursively(Sema &S, SourceLocation Loc, QualType T,
   // Create the comparison against the array bound.
   llvm::APInt Upper
     = ArrayTy->getSize().zextOrTrunc(S.Context.getTypeSize(SizeType));
-  Expr *Comparison
-    = new (S.Context) BinaryOperator(IterationVarRefRVal.build(S, Loc),
-                     IntegerLiteral::Create(S.Context, Upper, SizeType, Loc),
-                                     BO_NE, S.Context.BoolTy,
-                                     VK_RValue, OK_Ordinary, Loc, FPOptions());
+  Expr *Comparison = BinaryOperator::Create(
+      S.Context, IterationVarRefRVal.build(S, Loc),
+      IntegerLiteral::Create(S.Context, Upper, SizeType, Loc), BO_NE,
+      S.Context.BoolTy, VK_RValue, OK_Ordinary, Loc, S.CurFPFeatures);
 
   // Create the pre-increment of the iteration variable. We can determine
   // whether the increment will overflow based on the value of the array

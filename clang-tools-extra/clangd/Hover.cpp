@@ -279,7 +279,7 @@ void enhanceFromIndex(HoverInfo &Hover, const NamedDecl &ND,
 // arguments for example. This function returns the default argument if it is
 // available.
 const Expr *getDefaultArg(const ParmVarDecl *PVD) {
-  // Default argument can be unparsed or uninstatiated. For the former we
+  // Default argument can be unparsed or uninstantiated. For the former we
   // can't do much, as token information is only stored in Sema and not
   // attached to the AST node. For the latter though, it is safe to proceed as
   // the expression is still valid.
@@ -550,7 +550,7 @@ HoverInfo getHoverContents(const DefinedMacro &Macro, ParsedAST &AST) {
   HI.Name = std::string(Macro.Name);
   HI.Kind = index::SymbolKind::Macro;
   // FIXME: Populate documentation
-  // FIXME: Pupulate parameters
+  // FIXME: Populate parameters
 
   // Try to get the full definition, not just the name
   SourceLocation StartLoc = Macro.Info->getDefinitionLoc();
@@ -651,6 +651,28 @@ bool isHardLineBreakAfter(llvm::StringRef Line, llvm::StringRef Rest) {
   return punctuationIndicatesLineBreak(Line) || isHardLineBreakIndicator(Rest);
 }
 
+void addLayoutInfo(const NamedDecl &ND, HoverInfo &HI) {
+  const auto &Ctx = ND.getASTContext();
+
+  if (auto *RD = llvm::dyn_cast<RecordDecl>(&ND)) {
+    if (auto Size = Ctx.getTypeSizeInCharsIfKnown(RD->getTypeForDecl()))
+      HI.Size = Size->getQuantity();
+    return;
+  }
+
+  if (const auto *FD = llvm::dyn_cast<FieldDecl>(&ND)) {
+    const auto *Record = FD->getParent()->getDefinition();
+    if (Record && !Record->isDependentType()) {
+      uint64_t OffsetBits = Ctx.getFieldOffset(FD);
+      if (auto Size = Ctx.getTypeSizeInCharsIfKnown(FD->getType())) {
+        HI.Size = Size->getQuantity();
+        HI.Offset = OffsetBits / 8;
+      }
+    }
+    return;
+  }
+}
+
 } // namespace
 
 llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
@@ -707,6 +729,9 @@ llvm::Optional<HoverInfo> getHover(ParsedAST &AST, Position Pos,
       auto Decls = explicitReferenceTargets(N->ASTNode, DeclRelation::Alias);
       if (!Decls.empty()) {
         HI = getHoverContents(Decls.front(), Index);
+        // Layout info only shown when hovering on the field/class itself.
+        if (Decls.front() == N->ASTNode.get<Decl>())
+          addLayoutInfo(*Decls.front(), *HI);
         // Look for a close enclosing expression to show the value of.
         if (!HI->Value)
           HI->Value = printExprValue(N, AST.getASTContext());
@@ -782,6 +807,13 @@ markup::Document HoverInfo::present() const {
     P.appendCode(*Value);
   }
 
+  if (Offset)
+    Output.addParagraph().appendText(
+        llvm::formatv("Offset: {0} byte{1}", *Offset, *Offset == 1 ? "" : "s"));
+  if (Size)
+    Output.addParagraph().appendText(
+        llvm::formatv("Size: {0} byte{1}", *Size, *Size == 1 ? "" : "s"));
+
   if (!Documentation.empty())
     parseDocumentation(Documentation, Output);
 
@@ -791,7 +823,7 @@ markup::Document HoverInfo::present() const {
     // Drop trailing "::".
     if (!LocalScope.empty()) {
       // Container name, e.g. class, method, function.
-      // We might want to propogate some info about container type to print
+      // We might want to propagate some info about container type to print
       // function foo, class X, method X::bar, etc.
       ScopeComment =
           "// In " + llvm::StringRef(LocalScope).rtrim(':').str() + '\n';

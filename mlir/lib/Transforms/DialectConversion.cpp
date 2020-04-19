@@ -895,6 +895,10 @@ void ConversionPatternRewriter::eraseOp(Operation *op) {
   impl->replaceOp(op, nullRepls);
 }
 
+void ConversionPatternRewriter::eraseBlock(Block *block) {
+  llvm_unreachable("erasing blocks for dialect conversion not implemented");
+}
+
 /// Apply a signature conversion to the entry block of the given region.
 Block *ConversionPatternRewriter::applySignatureConversion(
     Region *region, TypeConverter::SignatureConversion &conversion) {
@@ -1246,16 +1250,15 @@ OperationLegalizer::legalizePattern(Operation *op, RewritePattern *pattern,
     auto &os = rewriterImpl.logger;
     os.getOStream() << "\n";
     os.startLine() << "* Pattern : '" << pattern->getRootKind() << " -> (";
-    interleaveComma(pattern->getGeneratedOps(), llvm::dbgs());
+    llvm::interleaveComma(pattern->getGeneratedOps(), llvm::dbgs());
     os.getOStream() << ")' {\n";
     os.indent();
   });
 
   // Ensure that we don't cycle by not allowing the same pattern to be
-  // applied twice in the same recursion stack.
-  // TODO(riverriddle) We could eventually converge, but that requires more
-  // complicated analysis.
-  if (!appliedPatterns.insert(pattern).second) {
+  // applied twice in the same recursion stack if it is not known to be safe.
+  if (!pattern->hasBoundedRewriteRecursion() &&
+      !appliedPatterns.insert(pattern).second) {
     LLVM_DEBUG(logFailure(rewriterImpl.logger, "pattern was already applied"));
     return failure();
   }

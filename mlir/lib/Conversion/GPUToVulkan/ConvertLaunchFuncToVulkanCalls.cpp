@@ -14,14 +14,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../PassDetail.h"
 #include "mlir/Conversion/GPUToVulkan/ConvertGPUToVulkanPass.h"
-#include "mlir/Dialect/GPU/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Function.h"
 #include "mlir/IR/Module.h"
-#include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -58,12 +57,9 @@ namespace {
 /// * deinitVulkan         -- deinitializes vulkan runtime
 ///
 class VulkanLaunchFuncToVulkanCallsPass
-    : public ModulePass<VulkanLaunchFuncToVulkanCallsPass> {
+    : public ConvertVulkanLaunchFuncToVulkanCallsBase<
+          VulkanLaunchFuncToVulkanCallsPass> {
 private:
-/// Include the generated pass utilities.
-#define GEN_PASS_ConvertVulkanLaunchFuncToVulkanCalls
-#include "mlir/Conversion/Passes.h.inc"
-
   LLVM::LLVMDialect *getLLVMDialect() { return llvmDialect; }
 
   llvm::LLVMContext &getLLVMContext() {
@@ -124,7 +120,7 @@ private:
   /// Checks whether the given LLVM::CallOp is a vulkan launch call op.
   bool isVulkanLaunchCallOp(LLVM::CallOp callOp) {
     return (callOp.callee() && callOp.callee().getValue() == kVulkanLaunch &&
-            callOp.getNumOperands() >= gpu::LaunchOp::kNumConfigOperands);
+            callOp.getNumOperands() >= kVulkanLaunchNumConfigOperands);
   }
 
   /// Checks whether the given LLVM::CallOp is a "ci_face" vulkan launch call
@@ -132,7 +128,7 @@ private:
   bool isCInterfaceVulkanLaunchCallOp(LLVM::CallOp callOp) {
     return (callOp.callee() &&
             callOp.callee().getValue() == kCInterfaceVulkanLaunch &&
-            callOp.getNumOperands() >= gpu::LaunchOp::kNumConfigOperands);
+            callOp.getNumOperands() >= kVulkanLaunchNumConfigOperands);
   }
 
   /// Translates the given `vulkanLaunchCallOp` to the sequence of Vulkan
@@ -150,7 +146,7 @@ private:
   LogicalResult deduceMemRefRank(Value ptrToMemRefDescriptor, uint32_t &rank);
 
 public:
-  void runOnModule() override;
+  void runOnOperation() override;
 
 private:
   LLVM::LLVMDialect *llvmDialect;
@@ -165,22 +161,25 @@ private:
 
   // TODO: Use an associative array to support multiple vulkan launch calls.
   std::pair<StringAttr, StringAttr> spirvAttributes;
+  /// The number of vulkan launch configuration operands, placed at the leading
+  /// positions of the operand list.
+  static constexpr unsigned kVulkanLaunchNumConfigOperands = 3;
 };
 
 } // anonymous namespace
 
-void VulkanLaunchFuncToVulkanCallsPass::runOnModule() {
+void VulkanLaunchFuncToVulkanCallsPass::runOnOperation() {
   initializeCachedTypes();
 
   // Collect SPIR-V attributes such as `spirv_blob` and
   // `spirv_entry_point_name`.
-  getModule().walk([this](LLVM::CallOp op) {
+  getOperation().walk([this](LLVM::CallOp op) {
     if (isVulkanLaunchCallOp(op))
       collectSPIRVAttributes(op);
   });
 
   // Convert vulkan launch call op into a sequence of Vulkan runtime calls.
-  getModule().walk([this](LLVM::CallOp op) {
+  getOperation().walk([this](LLVM::CallOp op) {
     if (isCInterfaceVulkanLaunchCallOp(op))
       translateVulkanLaunchCall(op);
   });
@@ -212,7 +211,7 @@ void VulkanLaunchFuncToVulkanCallsPass::collectSPIRVAttributes(
 void VulkanLaunchFuncToVulkanCallsPass::createBindMemRefCalls(
     LLVM::CallOp cInterfaceVulkanLaunchCallOp, Value vulkanRuntime) {
   if (cInterfaceVulkanLaunchCallOp.getNumOperands() ==
-      gpu::LaunchOp::kNumConfigOperands)
+      kVulkanLaunchNumConfigOperands)
     return;
   OpBuilder builder(cInterfaceVulkanLaunchCallOp);
   Location loc = cInterfaceVulkanLaunchCallOp.getLoc();
@@ -225,7 +224,7 @@ void VulkanLaunchFuncToVulkanCallsPass::createBindMemRefCalls(
 
   for (auto en :
        llvm::enumerate(cInterfaceVulkanLaunchCallOp.getOperands().drop_front(
-           gpu::LaunchOp::kNumConfigOperands))) {
+           kVulkanLaunchNumConfigOperands))) {
     // Create LLVM constant for the descriptor binding index.
     Value descriptorBinding = builder.create<LLVM::ConstantOp>(
         loc, getInt32Type(), builder.getI32IntegerAttr(en.index()));
@@ -278,7 +277,7 @@ VulkanLaunchFuncToVulkanCallsPass::deduceMemRefRank(Value ptrToMemRefDescriptor,
 }
 
 void VulkanLaunchFuncToVulkanCallsPass::declareVulkanFunctions(Location loc) {
-  ModuleOp module = getModule();
+  ModuleOp module = getOperation();
   OpBuilder builder(module.getBody()->getTerminator());
 
   if (!module.lookupSymbol(kSetEntryPoint)) {
@@ -436,7 +435,7 @@ void VulkanLaunchFuncToVulkanCallsPass::translateVulkanLaunchCall(
   cInterfaceVulkanLaunchCallOp.erase();
 }
 
-std::unique_ptr<mlir::OpPassBase<mlir::ModuleOp>>
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>>
 mlir::createConvertVulkanLaunchFuncToVulkanCallsPass() {
   return std::make_unique<VulkanLaunchFuncToVulkanCallsPass>();
 }

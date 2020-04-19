@@ -3588,16 +3588,17 @@ bool LLParser::ParseValID(ValID &ID, PerFunctionState *PFS) {
             ExplicitTypeLoc,
             "explicit pointee type doesn't match operand's pointee type");
 
-      unsigned GEPWidth =
-          BaseType->isVectorTy() ? BaseType->getVectorNumElements() : 0;
+      unsigned GEPWidth = BaseType->isVectorTy()
+                              ? cast<VectorType>(BaseType)->getNumElements()
+                              : 0;
 
       ArrayRef<Constant *> Indices(Elts.begin() + 1, Elts.end());
       for (Constant *Val : Indices) {
         Type *ValTy = Val->getType();
         if (!ValTy->isIntOrIntVectorTy())
           return Error(ID.Loc, "getelementptr index must be an integer");
-        if (ValTy->isVectorTy()) {
-          unsigned ValNumEl = ValTy->getVectorNumElements();
+        if (auto *ValVTy = dyn_cast<VectorType>(ValTy)) {
+          unsigned ValNumEl = ValVTy->getNumElements();
           if (GEPWidth && (ValNumEl != GEPWidth))
             return Error(
                 ID.Loc,
@@ -3871,6 +3872,10 @@ struct DISPFlagField : public MDFieldImpl<DISubprogram::DISPFlags> {
   DISPFlagField() : MDFieldImpl(DISubprogram::SPFlagZero) {}
 };
 
+struct MDAPSIntField : public MDFieldImpl<APSInt> {
+  MDAPSIntField() : ImplTy(APSInt()) {}
+};
+
 struct MDSignedField : public MDFieldImpl<int64_t> {
   int64_t Min;
   int64_t Max;
@@ -3948,6 +3953,16 @@ struct MDSignedOrUnsignedField
 } // end anonymous namespace
 
 namespace llvm {
+
+template <>
+bool LLParser::ParseMDField(LocTy Loc, StringRef Name, MDAPSIntField &Result) {
+  if (Lex.getKind() != lltok::APSInt)
+    return TokError("expected integer");
+
+  Result.assign(Lex.getAPSIntVal());
+  Lex.Lex();
+  return false;
+}
 
 template <>
 bool LLParser::ParseMDField(LocTy Loc, StringRef Name,
@@ -4281,27 +4296,6 @@ bool LLParser::ParseMDField(LocTy Loc, StringRef Name,
 }
 
 template <>
-bool LLParser::ParseMDField(LocTy Loc, StringRef Name,
-                            MDSignedOrUnsignedField &Result) {
-  if (Lex.getKind() != lltok::APSInt)
-    return false;
-
-  if (Lex.getAPSIntVal().isSigned()) {
-    MDSignedField Res = Result.A;
-    if (ParseMDField(Loc, Name, Res))
-      return true;
-    Result.assign(Res);
-    return false;
-  }
-
-  MDUnsignedField Res = Result.B;
-  if (ParseMDField(Loc, Name, Res))
-    return true;
-  Result.assign(Res);
-  return false;
-}
-
-template <>
 bool LLParser::ParseMDField(LocTy Loc, StringRef Name, MDStringField &Result) {
   LocTy ValueLoc = Lex.getLoc();
   std::string S;
@@ -4474,17 +4468,20 @@ bool LLParser::ParseDISubrange(MDNode *&Result, bool IsDistinct) {
 bool LLParser::ParseDIEnumerator(MDNode *&Result, bool IsDistinct) {
 #define VISIT_MD_FIELDS(OPTIONAL, REQUIRED)                                    \
   REQUIRED(name, MDStringField, );                                             \
-  REQUIRED(value, MDSignedOrUnsignedField, );                                  \
+  REQUIRED(value, MDAPSIntField, );                                            \
   OPTIONAL(isUnsigned, MDBoolField, (false));
   PARSE_MD_FIELDS();
 #undef VISIT_MD_FIELDS
 
-  if (isUnsigned.Val && value.isMDSignedField())
+  if (isUnsigned.Val && value.Val.isNegative())
     return TokError("unsigned enumerator with negative value");
 
-  int64_t Value = value.isMDSignedField()
-                      ? value.getMDSignedValue()
-                      : static_cast<int64_t>(value.getMDUnsignedValue());
+  APSInt Value(value.Val);
+  // Add a leading zero so that unsigned values with the msb set are not
+  // mistaken for negative values when used for signed enumerators.
+  if (!isUnsigned.Val && value.Val.isUnsigned() && value.Val.isSignBitSet())
+    Value = Value.zext(Value.getBitWidth() + 1);
+
   Result =
       GET_OR_DISTINCT(DIEnumerator, (Context, Value, isUnsigned.Val, name.Val));
 
@@ -7233,8 +7230,9 @@ int LLParser::ParseGetElementPtr(Instruction *&Inst, PerFunctionState &PFS) {
   bool AteExtraComma = false;
   // GEP returns a vector of pointers if at least one of parameters is a vector.
   // All vector parameters should have the same vector width.
-  ElementCount GEPWidth = BaseType->isVectorTy() ?
-    BaseType->getVectorElementCount() : ElementCount(0, false);
+  ElementCount GEPWidth = BaseType->isVectorTy()
+                              ? cast<VectorType>(BaseType)->getElementCount()
+                              : ElementCount(0, false);
 
   while (EatIfPresent(lltok::comma)) {
     if (Lex.getKind() == lltok::MetadataVar) {
@@ -7245,8 +7243,8 @@ int LLParser::ParseGetElementPtr(Instruction *&Inst, PerFunctionState &PFS) {
     if (!Val->getType()->isIntOrIntVectorTy())
       return Error(EltLoc, "getelementptr index must be an integer");
 
-    if (Val->getType()->isVectorTy()) {
-      ElementCount ValNumEl = Val->getType()->getVectorElementCount();
+    if (auto *ValVTy = dyn_cast<VectorType>(Val->getType())) {
+      ElementCount ValNumEl = ValVTy->getElementCount();
       if (GEPWidth != ElementCount(0, false) && GEPWidth != ValNumEl)
         return Error(EltLoc,
           "getelementptr vector index has a wrong number of elements");

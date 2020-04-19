@@ -1793,6 +1793,8 @@ DEFAULT_TYPELOC_IMPL(Enum, TagType)
 DEFAULT_TYPELOC_IMPL(SubstTemplateTypeParm, Type)
 DEFAULT_TYPELOC_IMPL(SubstTemplateTypeParmPack, Type)
 DEFAULT_TYPELOC_IMPL(Auto, Type)
+DEFAULT_TYPELOC_IMPL(ExtInt, Type)
+DEFAULT_TYPELOC_IMPL(DependentExtInt, Type)
 
 bool CursorVisitor::VisitCXXRecordDecl(CXXRecordDecl *D) {
   // Visit the nested-name-specifier, if present.
@@ -2153,8 +2155,8 @@ class OMPClauseEnqueue : public ConstOMPClauseVisitor<OMPClauseEnqueue> {
 
 public:
   OMPClauseEnqueue(EnqueueVisitor *Visitor) : Visitor(Visitor) {}
-#define OPENMP_CLAUSE(Name, Class) void Visit##Class(const Class *C);
-#include "clang/Basic/OpenMPKinds.def"
+#define OMP_CLAUSE_CLASS(Enum, Str, Class) void Visit##Class(const Class *C);
+#include "llvm/Frontend/OpenMP/OMPKinds.def"
   void VisitOMPClauseWithPreInit(const OMPClauseWithPreInit *C);
   void VisitOMPClauseWithPostUpdate(const OMPClauseWithPostUpdate *C);
 };
@@ -6322,6 +6324,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::Field:
   case Decl::Binding:
   case Decl::MSProperty:
+  case Decl::MSGuid:
   case Decl::IndirectField:
   case Decl::ObjCIvar:
   case Decl::ObjCAtDefsField:

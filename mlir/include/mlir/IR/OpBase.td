@@ -297,10 +297,14 @@ class DialectType<Dialect d, Pred condition, string descr = ""> :
 }
 
 // A variadic type constraint. It expands to zero or more of the base type. This
-// class is used for supporting variadic operands/results. An op can declare no
-// more than one variadic operand/result, and that operand/result must be the
-// last one in the operand/result list.
+// class is used for supporting variadic operands/results.
 class Variadic<Type type> : TypeConstraint<type.predicate, type.description> {
+  Type baseType = type;
+}
+
+// An optional type constraint. It expands to either zero or one of the base
+// type. This class is used for supporting optional operands/results.
+class Optional<Type type> : TypeConstraint<type.predicate, type.description> {
   Type baseType = type;
 }
 
@@ -578,6 +582,7 @@ def I8Tensor   : TensorOf<[I8]>;
 def I16Tensor  : TensorOf<[I16]>;
 def I32Tensor  : TensorOf<[I32]>;
 def I64Tensor  : TensorOf<[I64]>;
+def IndexTensor: TensorOf<[Index]>;
 
 def BF16Tensor : TensorOf<[BF16]>;
 def F16Tensor  : TensorOf<[F16]>;
@@ -838,6 +843,16 @@ def BoolAttr : Attr<CPred<"$_self.isa<BoolAttr>()">, "bool attribute"> {
   let returnType = [{ bool }];
   let valueType = I1;
   let constBuilderCall = "$_builder.getBoolAttr($0)";
+}
+
+// Index attribute.
+def IndexAttr :
+    TypedAttrBase<
+      Index, "IntegerAttr",
+      And<[CPred<"$_self.isa<IntegerAttr>()">,
+           CPred<"$_self.cast<IntegerAttr>().getType().isa<IndexType>()">]>,
+      "index attribute"> {
+  let returnType = [{ APInt }];
 }
 
 // Base class for any integer (regardless of signedness semantics) attributes
@@ -1533,6 +1548,10 @@ class SizedRegion<int numBlocks> : Region<
   CPred<"$_self.getBlocks().size() == " # numBlocks>,
   "region with " # numBlocks # " blocks">;
 
+// A variadic region constraint. It expands to zero or more of the base region.
+class VariadicRegion<Region region>
+  : Region<region.predicate, region.description>;
+
 //===----------------------------------------------------------------------===//
 // Successor definitions
 //===----------------------------------------------------------------------===//
@@ -1583,6 +1602,8 @@ class PredOpTrait<string descr, Pred pred> : OpTrait {
   Pred predicate = pred;
 }
 
+// Op defines an automatic allocation scope.
+def AutomaticAllocationScope : NativeOpTrait<"AutomaticAllocationScope">;
 // Op supports operand broadcast behavior.
 def ResultsBroadcastableShape :
   NativeOpTrait<"ResultsBroadcastableShape">;
@@ -1631,6 +1652,10 @@ class HasParent<string op>
 // attribute content is used.
 def FirstAttrDerivedResultType :
   GenInternalOpTrait<"FirstAttrDerivedResultType">;
+
+// Op has a resizable operand list. Auto-generated build and parse functions
+// should construct it as such.
+def ResizableOperandList : GenInternalOpTrait<"ResizableOperandList">;
 
 // TODO(antiagainst): Turn the following into normal traits and generate
 // verification for them.
@@ -2054,9 +2079,10 @@ class TCOpIsBroadcastableToRes<int opId, int resId> : And<[
 // 1) all operands involved are of shaped type and
 // 2) the indices are not out of range.
 class TCopVTEtAreSameAt<list<int> indices> : CPred<
-  "llvm::is_splat(mlir::functional::map("
-    "[this](unsigned i) { return getElementTypeOrSelf(this->getOperand(i)); }, "
-    "llvm::ArrayRef<unsigned>({" # StrJoinInt<indices>.result # "})))">;
+  "llvm::is_splat(llvm::map_range("
+    "llvm::ArrayRef<unsigned>({" # StrJoinInt<indices>.result # "}), "
+    "[this](unsigned i) { return getElementTypeOrSelf(this->getOperand(i)); "
+    "}))">;
 
 //===----------------------------------------------------------------------===//
 // Pattern definitions
@@ -2175,8 +2201,13 @@ class NativeCodeCall<string expr> {
 }
 
 //===----------------------------------------------------------------------===//
-// Common directives
+// Rewrite directives
 //===----------------------------------------------------------------------===//
+
+// Directive used in result pattern to specify the location of the generated
+// op. This directive must be used as the last argument to the op creation
+// DAG construct. The arguments to location must be previously captured symbol.
+def location;
 
 // Directive used in result pattern to indicate that no new op are generated,
 // so to replace the matched DAG with an existing SSA value.

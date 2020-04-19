@@ -275,7 +275,9 @@ def err_bad_parameter_name : Error<
   "%0 cannot be the name of a parameter">;
 def err_bad_parameter_name_template_id : Error<
   "parameter name cannot have template arguments">;
-def err_parameter_name_omitted : Error<"parameter name omitted">;
+def ext_parameter_name_omitted_c2x : ExtWarn<
+  "omitting the parameter name in a function definition is a C2x extension">,
+  InGroup<C2x>;
 def err_anyx86_interrupt_attribute : Error<
   "%select{x86|x86-64}0 'interrupt' attribute only applies to functions that "
   "have %select{a 'void' return type|"
@@ -3952,6 +3954,8 @@ def err_use_of_default_argument_to_function_declared_later : Error<
 def note_default_argument_declared_here : Note<
   "default argument declared here">;
 def err_recursive_default_argument : Error<"recursive evaluation of default argument">;
+def note_recursive_default_argument_used_here : Note<
+  "default argument used here">;
 
 def ext_param_promoted_not_compatible_with_prototype : ExtWarn<
   "%diff{promoted type $ of K&R function parameter is not compatible with the "
@@ -5943,10 +5947,12 @@ def err_block_return_missing_expr : Error<
   "non-void block should return a value">;
 def err_func_def_incomplete_result : Error<
   "incomplete result type %0 in function definition">;
-def err_atomic_specifier_bad_type : Error<
-  "_Atomic cannot be applied to "
-  "%select{incomplete |array |function |reference |atomic |qualified |sizeless |}0type "
-  "%1 %select{|||||||which is not trivially copyable}0">;
+def err_atomic_specifier_bad_type
+    : Error<"_Atomic cannot be applied to "
+            "%select{incomplete |array |function |reference |atomic |qualified "
+            "|sizeless ||integer |integer }0type "
+            "%1 %select{|||||||which is not trivially copyable|with less than "
+            "1 byte of precision|with a non power of 2 precision}0">;
 
 // Expressions.
 def select_unary_expr_or_type_trait_kind : TextSubstitution<
@@ -10707,4 +10713,8 @@ def warn_sycl_kernel_return_type : Warning<
   "function template with 'sycl_kernel' attribute must have a 'void' return type">,
   InGroup<IgnoredAttributes>;
 
+def err_ext_int_bad_size : Error<"%select{signed|unsigned}0 _ExtInt must "
+                                 "have a bit size of at least %select{2|1}0">;
+def err_ext_int_max_size : Error<"%select{signed|unsigned}0 _ExtInt of bit "
+                                 "sizes greater than %1 not supported">;
 } // end of sema component.

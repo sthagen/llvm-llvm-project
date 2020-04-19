@@ -10,7 +10,7 @@ equivalent `mlir::Op` C++ template specialization at compiler build time.
 This manual explains in detail all the available mechanisms for defining
 operations in such a table-driven manner. It aims to be a specification instead
 of a tutorial. Please refer to [Quickstart tutorial to adding MLIR graph
-rewrite](QuickstartRewrites.md) for the latter.
+rewrite](Tutorials/QuickstartRewrites.md) for the latter.
 
 In addition to detailing each mechanism, this manual also tries to capture
 best practices. They are rendered as quoted bullet points.
@@ -221,11 +221,28 @@ To declare a variadic operand, wrap the `TypeConstraint` for the operand with
 
 Normally operations have no variadic operands or just one variadic operand. For
 the latter case, it is easy to deduce which dynamic operands are for the static
-variadic operand definition. But if an operation has more than one variadic
-operands, it would be impossible to attribute dynamic operands to the
-corresponding static variadic operand definitions without further information
-from the operation. Therefore, the `SameVariadicOperandSize` trait is needed to
-indicate that all variadic operands have the same number of dynamic values.
+variadic operand definition. Though, if an operation has more than one variable
+length operands (either optional or variadic), it would be impossible to
+attribute dynamic operands to the corresponding static variadic operand
+definitions without further information from the operation. Therefore, either
+the `SameVariadicOperandSize` or `AttrSizedOperandSegments` trait is needed to
+indicate that all variable length operands have the same number of dynamic
+values.
+
+#### Optional operands
+
+To declare an optional operand, wrap the `TypeConstraint` for the operand with
+`Optional<...>`.
+
+Normally operations have no optional operands or just one optional operand. For
+the latter case, it is easy to deduce which dynamic operands are for the static
+operand definition. Though, if an operation has more than one variable length
+operands (either optional or variadic), it would be impossible to attribute
+dynamic operands to the corresponding static variadic operand definitions
+without further information from the operation. Therefore, either the
+`SameVariadicOperandSize` or `AttrSizedOperandSegments` trait is needed to
+indicate that all variable length operands have the same number of dynamic
+values.
 
 #### Optional attributes
 
@@ -264,6 +281,24 @@ Right now, the following primitive constraints are supported:
     `I`-th element to be greater than or equal to `N`
 
 TODO: Design and implement more primitive constraints
+
+### Operation regions
+
+The regions of an operation are specified inside of the `dag`-typed `regions`,
+led by `region`:
+
+```tablegen
+let regions = (region
+  <region-constraint>:$<region-name>,
+  ...
+);
+```
+
+#### Variadic regions
+
+Similar to the `Variadic` class used for variadic operands and results,
+`VariadicRegion<...>` can be used for regions. Variadic regions can currently
+only be specified as the last region in the regions list.
 
 ### Operation results
 
@@ -675,7 +710,7 @@ information. An optional group is defined by wrapping a set of elements within
     the group.
     -   Any attribute variable may be used, but only optional attributes can be
         marked as the anchor.
-    -   Only variadic, i.e. optional, operand arguments can be used.
+    -   Only variadic or optional operand arguments can be used.
     -   The operands to a type directive must be defined within the optional
         group.
 
@@ -1304,8 +1339,8 @@ requirements that were desirable:
 [TableGenIntro]: https://llvm.org/docs/TableGen/LangIntro.html
 [TableGenRef]: https://llvm.org/docs/TableGen/LangRef.html
 [TableGenBackend]: https://llvm.org/docs/TableGen/BackEnds.html#introduction
-[OpBase]: ../include/mlir/IR/OpBase.td
-[OpDefinitionsGen]: ../tools/mlir-tblgen/OpDefinitionsGen.cpp
-[EnumsGen]: ../tools/mlir-tblgen/EnumsGen.cpp
+[OpBase]: https://github.com/llvm/llvm-project/blob/master/mlir/include/mlir/IR/OpBase.td
+[OpDefinitionsGen]: https://github.com/llvm/llvm-project/blob/master/mlir/tools/mlir-tblgen/OpDefinitionsGen.cpp
+[EnumsGen]: https://github.com/llvm/llvm-project/blob/master/mlir/tools/mlir-tblgen/EnumsGen.cpp
 [StringAttr]: LangRef.md#string-attribute
 [IntegerAttr]: LangRef.md#integer-attribute

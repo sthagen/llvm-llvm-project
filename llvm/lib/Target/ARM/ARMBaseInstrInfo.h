@@ -152,9 +152,10 @@ public:
   bool isPredicated(const MachineInstr &MI) const override;
 
   // MIR printer helper function to annotate Operands with a comment.
-  std::string createMIROperandComment(const MachineInstr &MI,
-                                      const MachineOperand &Op,
-                                      unsigned OpIdx) const override;
+  std::string
+  createMIROperandComment(const MachineInstr &MI, const MachineOperand &Op,
+                          unsigned OpIdx,
+                          const TargetRegisterInfo *TRI) const override;
 
   ARMCC::CondCodes getPredicate(const MachineInstr &MI) const {
     int PIdx = MI.findFirstPredOperandIdx();
@@ -413,7 +414,7 @@ private:
 
   /// Identify instructions that can be folded into a MOVCC instruction, and
   /// return the defining instruction.
-  MachineInstr *canFoldIntoMOVCC(unsigned Reg, const MachineRegisterInfo &MRI,
+  MachineInstr *canFoldIntoMOVCC(Register Reg, const MachineRegisterInfo &MRI,
                                  const TargetInstrInfo *TII) const;
 
 private:
@@ -701,7 +702,7 @@ static inline bool isValidCoprocessorNumber(unsigned Num,
 /// getInstrPredicate - If instruction is predicated, returns its predicate
 /// condition, otherwise returns AL. It also returns the condition code
 /// register by reference.
-ARMCC::CondCodes getInstrPredicate(const MachineInstr &MI, unsigned &PredReg);
+ARMCC::CondCodes getInstrPredicate(const MachineInstr &MI, Register &PredReg);
 
 unsigned getMatchingCondBranchOpcode(unsigned Opc);
 
@@ -715,21 +716,21 @@ unsigned convertAddSubFlagsOpcode(unsigned OldOpc);
 /// code.
 void emitARMRegPlusImmediate(MachineBasicBlock &MBB,
                              MachineBasicBlock::iterator &MBBI,
-                             const DebugLoc &dl, unsigned DestReg,
-                             unsigned BaseReg, int NumBytes,
-                             ARMCC::CondCodes Pred, unsigned PredReg,
+                             const DebugLoc &dl, Register DestReg,
+                             Register BaseReg, int NumBytes,
+                             ARMCC::CondCodes Pred, Register PredReg,
                              const ARMBaseInstrInfo &TII, unsigned MIFlags = 0);
 
 void emitT2RegPlusImmediate(MachineBasicBlock &MBB,
                             MachineBasicBlock::iterator &MBBI,
-                            const DebugLoc &dl, unsigned DestReg,
-                            unsigned BaseReg, int NumBytes,
-                            ARMCC::CondCodes Pred, unsigned PredReg,
+                            const DebugLoc &dl, Register DestReg,
+                            Register BaseReg, int NumBytes,
+                            ARMCC::CondCodes Pred, Register PredReg,
                             const ARMBaseInstrInfo &TII, unsigned MIFlags = 0);
 void emitThumbRegPlusImmediate(MachineBasicBlock &MBB,
                                MachineBasicBlock::iterator &MBBI,
-                               const DebugLoc &dl, unsigned DestReg,
-                               unsigned BaseReg, int NumBytes,
+                               const DebugLoc &dl, Register DestReg,
+                               Register BaseReg, int NumBytes,
                                const TargetInstrInfo &TII,
                                const ARMBaseRegisterInfo &MRI,
                                unsigned MIFlags = 0);
@@ -748,11 +749,11 @@ bool tryFoldSPUpdateIntoPushPop(const ARMSubtarget &Subtarget,
 /// offset could not be handled directly in MI, and return the left-over
 /// portion by reference.
 bool rewriteARMFrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
-                          unsigned FrameReg, int &Offset,
+                          Register FrameReg, int &Offset,
                           const ARMBaseInstrInfo &TII);
 
 bool rewriteT2FrameIndex(MachineInstr &MI, unsigned FrameRegIdx,
-                         unsigned FrameReg, int &Offset,
+                         Register FrameReg, int &Offset,
                          const ARMBaseInstrInfo &TII,
                          const TargetRegisterInfo *TRI);
 
@@ -767,7 +768,7 @@ MachineInstr *findCMPToFoldIntoCBZ(MachineInstr *Br,
                                    const TargetRegisterInfo *TRI);
 
 void addUnpredicatedMveVpredNOp(MachineInstrBuilder &MIB);
-void addUnpredicatedMveVpredROp(MachineInstrBuilder &MIB, unsigned DestReg);
+void addUnpredicatedMveVpredROp(MachineInstrBuilder &MIB, Register DestReg);
 
 void addPredicatedMveVpredNOp(MachineInstrBuilder &MIB, unsigned Cond);
 void addPredicatedMveVpredROp(MachineInstrBuilder &MIB, unsigned Cond,

@@ -142,8 +142,8 @@ void ThreadPlanStack::PushPlan(lldb::ThreadPlanSP new_plan_sp) {
   // If the thread plan doesn't already have a tracer, give it its parent's
   // tracer:
   // The first plan has to be a base plan:
-  assert(m_plans.size() > 0 ||
-         new_plan_sp->IsBasePlan() && "Zeroth plan must be a base plan");
+  assert((m_plans.size() > 0 || new_plan_sp->IsBasePlan()) &&
+         "Zeroth plan must be a base plan");
 
   if (!new_plan_sp->GetThreadPlanTracer()) {
     assert(!m_plans.empty());
@@ -156,7 +156,7 @@ void ThreadPlanStack::PushPlan(lldb::ThreadPlanSP new_plan_sp) {
 lldb::ThreadPlanSP ThreadPlanStack::PopPlan() {
   assert(m_plans.size() > 1 && "Can't pop the base thread plan");
 
-  lldb::ThreadPlanSP &plan_sp = m_plans.back();
+  lldb::ThreadPlanSP plan_sp = std::move(m_plans.back());
   m_completed_plans.push_back(plan_sp);
   plan_sp->WillPop();
   m_plans.pop_back();
@@ -166,7 +166,7 @@ lldb::ThreadPlanSP ThreadPlanStack::PopPlan() {
 lldb::ThreadPlanSP ThreadPlanStack::DiscardPlan() {
   assert(m_plans.size() > 1 && "Can't discard the base thread plan");
 
-  lldb::ThreadPlanSP &plan_sp = m_plans.back();
+  lldb::ThreadPlanSP plan_sp = std::move(m_plans.back());
   m_discarded_plans.push_back(plan_sp);
   plan_sp->WillPop();
   m_plans.pop_back();

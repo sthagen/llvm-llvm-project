@@ -19,7 +19,6 @@
 #include "mlir/IR/StandardTypes.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/MathExtras.h"
-#include "mlir/Support/STLExtras.h"
 
 using namespace mlir;
 using namespace mlir::loop;
@@ -47,7 +46,9 @@ void ForOp::build(Builder *builder, OperationState &result, Value lb, Value ub,
   for (Value v : iterArgs)
     result.addTypes(v.getType());
   Region *bodyRegion = result.addRegion();
-  ForOp::ensureTerminator(*bodyRegion, *builder, result.location);
+  bodyRegion->push_back(new Block());
+  if (iterArgs.empty())
+    ForOp::ensureTerminator(*bodyRegion, *builder, result.location);
   bodyRegion->front().addArgument(builder->getIndexType());
   for (Value v : iterArgs)
     bodyRegion->front().addArgument(v.getType());
@@ -105,7 +106,7 @@ static void print(OpAsmPrinter &p, ForOp op) {
     auto regionArgs = op.getRegionIterArgs();
     auto operands = op.getIterOperands();
 
-    mlir::interleaveComma(llvm::zip(regionArgs, operands), p, [&](auto it) {
+    llvm::interleaveComma(llvm::zip(regionArgs, operands), p, [&](auto it) {
       p << std::get<0>(it) << " = " << std::get<1>(it);
     });
     p << ")";
@@ -201,7 +202,7 @@ ForOp mlir::loop::getForInductionVarOwner(Value val) {
 
 void IfOp::build(Builder *builder, OperationState &result, Value cond,
                  bool withElseRegion) {
-    build(builder, result, /*resultTypes=*/llvm::None, cond, withElseRegion);
+  build(builder, result, /*resultTypes=*/llvm::None, cond, withElseRegion);
 }
 
 void IfOp::build(Builder *builder, OperationState &result,

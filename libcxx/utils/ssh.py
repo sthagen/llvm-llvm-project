@@ -60,7 +60,8 @@ def main():
 
         # Ensure the test dependencies exist, tar them up and copy the tarball
         # over to the remote host.
-        with tempfile.NamedTemporaryFile(suffix='.tar') as tmpTar:
+        try:
+            tmpTar = tempfile.NamedTemporaryFile(suffix='.tar', delete=False)
             with tarfile.open(fileobj=tmpTar, mode='w') as tarball:
                 for dep in args.dependencies:
                     if not os.path.exists(dep):
@@ -68,9 +69,16 @@ def main():
                         return 1
                     tarball.add(dep, arcname=os.path.basename(dep))
 
+            # Make sure we close the file before we scp it, because accessing
+            # the temporary file while still open doesn't work on Windows.
+            tmpTar.close()
             remoteTarball = pathOnRemote(tmpTar.name)
-            tmpTar.flush()
             subprocess.check_call(scp(tmpTar.name, remoteTarball))
+        finally:
+            # Make sure we close the file in case an exception happens before
+            # we've closed it above -- otherwise close() is idempotent.
+            tmpTar.close()
+            os.remove(tmpTar.name)
 
         # Untar the dependencies in the temporary directory and remove the tarball.
         remoteCommands = [
@@ -89,10 +97,11 @@ def main():
         # host by transforming the path of test-executables to their path in the
         # temporary directory, where we know they have been copied when we handled
         # test dependencies above.
+        commandLine = (pathOnRemote(x) if isTestExe(x) else x for x in commandLine)
         remoteCommands += [
             'cd {}'.format(tmp),
             'export {}'.format(' '.join(args.env)),
-            ' '.join(pathOnRemote(x) if isTestExe(x) else x for x in commandLine)
+            subprocess.list2cmdline(commandLine)
         ]
 
         # Finally, SSH to the remote host and execute all the commands.

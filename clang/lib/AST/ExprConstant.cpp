@@ -54,6 +54,7 @@
 #include "clang/Basic/TargetInfo.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallBitVector.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstring>
@@ -1894,7 +1895,8 @@ static bool IsGlobalLValue(APValue::LValueBase B) {
     if (const VarDecl *VD = dyn_cast<VarDecl>(D))
       return VD->hasGlobalStorage();
     // ... the address of a function,
-    return isa<FunctionDecl>(D);
+    // ... the address of a GUID [MS extension],
+    return isa<FunctionDecl>(D) || isa<MSGuidDecl>(D);
   }
 
   if (B.is<TypeInfoLValue>() || B.is<DynamicAllocLValue>())
@@ -1917,7 +1919,6 @@ static bool IsGlobalLValue(APValue::LValueBase B) {
   case Expr::PredefinedExprClass:
   case Expr::ObjCStringLiteralClass:
   case Expr::ObjCEncodeExprClass:
-  case Expr::CXXUuidofExprClass:
     return true;
   case Expr::ObjCBoxedExprClass:
     return cast<ObjCBoxedExpr>(E)->isExpressibleAsConstantInitializer();
@@ -3614,6 +3615,22 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
     (void)CE;
     BaseVal = Info.EvaluatingDeclValue;
   } else if (const ValueDecl *D = LVal.Base.dyn_cast<const ValueDecl *>()) {
+    // Allow reading from a GUID declaration.
+    if (auto *GD = dyn_cast<MSGuidDecl>(D)) {
+      if (isModification(AK)) {
+        // All the remaining cases do not permit modification of the object.
+        Info.FFDiag(E, diag::note_constexpr_modify_global);
+        return CompleteObject();
+      }
+      APValue &V = GD->getAsAPValue();
+      if (V.isAbsent()) {
+        Info.FFDiag(E, diag::note_constexpr_unsupported_layout)
+            << GD->getType();
+        return CompleteObject();
+      }
+      return CompleteObject(LVal.Base, &V, GD->getType());
+    }
+
     // In C++98, const, non-volatile integers initialized with ICEs are ICEs.
     // In C++11, constexpr, non-volatile variables initialized with constant
     // expressions are constant expressions too. Inside constexpr functions,
@@ -4973,6 +4990,13 @@ static bool CheckConstexprFunction(EvalInfo &Info, SourceLocation CallLoc,
   if (Definition && Definition->isInvalidDecl()) {
     Info.FFDiag(CallLoc, diag::note_invalid_subexpr_in_const_expr);
     return false;
+  }
+
+  if (const auto *CtorDecl = dyn_cast_or_null<CXXConstructorDecl>(Definition)) {
+    for (const auto *InitExpr : CtorDecl->inits()) {
+      if (InitExpr->getInit() && InitExpr->getInit()->containsErrors())
+        return false;
+    }
   }
 
   // Can we evaluate this function call?
@@ -7532,6 +7556,8 @@ bool LValueExprEvaluator::VisitDeclRefExpr(const DeclRefExpr *E) {
     return VisitVarDecl(E, VD);
   if (const BindingDecl *BD = dyn_cast<BindingDecl>(E->getDecl()))
     return Visit(BD->getBinding());
+  if (const MSGuidDecl *GD = dyn_cast<MSGuidDecl>(E->getDecl()))
+    return Success(GD);
   return Error(E);
 }
 
@@ -7710,7 +7736,7 @@ bool LValueExprEvaluator::VisitCXXTypeidExpr(const CXXTypeidExpr *E) {
 }
 
 bool LValueExprEvaluator::VisitCXXUuidofExpr(const CXXUuidofExpr *E) {
-  return Success(E);
+  return Success(E->getGuidDecl());
 }
 
 bool LValueExprEvaluator::VisitMemberExpr(const MemberExpr *E) {
@@ -8319,6 +8345,12 @@ bool PointerExprEvaluator::VisitCallExpr(const CallExpr *E) {
   return visitNonBuiltinCallExpr(E);
 }
 
+// Determine if T is a character type for which we guarantee that
+// sizeof(T) == 1.
+static bool isOneByteCharacterType(QualType T) {
+  return T->isCharType() || T->isChar8Type();
+}
+
 bool PointerExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
                                                 unsigned BuiltinOp) {
   switch (BuiltinOp) {
@@ -8469,7 +8501,7 @@ bool PointerExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
     }
     // Give up on byte-oriented matching against multibyte elements.
     // FIXME: We can compare the bytes in the correct order.
-    if (IsRawByte && !CharTy->isCharType()) {
+    if (IsRawByte && !isOneByteCharacterType(CharTy)) {
       Info.FFDiag(E, diag::note_constexpr_memchr_unsupported)
           << (std::string("'") + Info.Ctx.BuiltinInfo.getName(BuiltinOp) + "'")
           << CharTy;
@@ -9306,24 +9338,30 @@ bool RecordExprEvaluator::VisitCXXStdInitializerListExpr(
   // Get a pointer to the first element of the array.
   Array.addArray(Info, E, ArrayType);
 
+  auto InvalidType = [&] {
+    Info.FFDiag(E, diag::note_constexpr_unsupported_layout)
+      << E->getType();
+    return false;
+  };
+
   // FIXME: Perform the checks on the field types in SemaInit.
   RecordDecl *Record = E->getType()->castAs<RecordType>()->getDecl();
   RecordDecl::field_iterator Field = Record->field_begin();
   if (Field == Record->field_end())
-    return Error(E);
+    return InvalidType();
 
   // Start pointer.
   if (!Field->getType()->isPointerType() ||
       !Info.Ctx.hasSameType(Field->getType()->getPointeeType(),
                             ArrayType->getElementType()))
-    return Error(E);
+    return InvalidType();
 
   // FIXME: What if the initializer_list type has base classes, etc?
   Result = APValue(APValue::UninitStruct(), 0, 2);
   Array.moveInto(Result.getStructField(0));
 
   if (++Field == Record->field_end())
-    return Error(E);
+    return InvalidType();
 
   if (Field->getType()->isPointerType() &&
       Info.Ctx.hasSameType(Field->getType()->getPointeeType(),
@@ -9338,10 +9376,10 @@ bool RecordExprEvaluator::VisitCXXStdInitializerListExpr(
     // Length.
     Result.getStructField(1) = APValue(APSInt(ArrayType->getSize()));
   else
-    return Error(E);
+    return InvalidType();
 
   if (++Field != Record->field_end())
-    return Error(E);
+    return InvalidType();
 
   return true;
 }
@@ -10316,6 +10354,7 @@ EvaluateBuiltinClassifyType(QualType T, const LangOptions &LangOpts) {
   case Type::ObjCInterface:
   case Type::ObjCObjectPointer:
   case Type::Pipe:
+  case Type::ExtInt:
     // GCC classifies vectors as None. We follow its lead and classify all
     // other types that don't fit into the regular classification the same way.
     return GCCTypeClass::None;
@@ -11154,9 +11193,10 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
                 CharTy1, E->getArg(0)->getType()->getPointeeType()) &&
             Info.Ctx.hasSameUnqualifiedType(CharTy1, CharTy2)));
 
-    // For memcmp, allow comparing any arrays of '[[un]signed] char',
-    // but no other types.
-    if (IsRawByte && !(CharTy1->isCharType() && CharTy2->isCharType())) {
+    // For memcmp, allow comparing any arrays of '[[un]signed] char' or
+    // 'char8_t', but no other types.
+    if (IsRawByte &&
+        !(isOneByteCharacterType(CharTy1) && isOneByteCharacterType(CharTy2))) {
       // FIXME: Consider using our bit_cast implementation to support this.
       Info.FFDiag(E, diag::note_constexpr_memcmp_unsupported)
           << (std::string("'") + Info.Ctx.BuiltinInfo.getName(BuiltinOp) + "'")
@@ -14701,6 +14741,15 @@ bool Expr::isPotentialConstantExpr(const FunctionDecl *FD,
   if (FD->isDependentContext())
     return true;
 
+  // Bail out if a constexpr constructor has an initializer that contains an
+  // error. We deliberately don't produce a diagnostic, as we have produced a
+  // relevant diagnostic when parsing the error initializer.
+  if (const auto *Ctor = dyn_cast<CXXConstructorDecl>(FD)) {
+    for (const auto *InitExpr : Ctor->inits()) {
+      if (InitExpr->getInit() && InitExpr->getInit()->containsErrors())
+        return false;
+    }
+  }
   Expr::EvalStatus Status;
   Status.Diag = &Diags;
 
