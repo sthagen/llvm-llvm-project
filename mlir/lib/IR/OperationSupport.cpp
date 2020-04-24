@@ -133,6 +133,22 @@ void detail::OperandStorage::grow(ResizableStorage &resizeUtil,
 }
 
 //===----------------------------------------------------------------------===//
+// ResultStorage
+//===----------------------------------------------------------------------===//
+
+/// Returns the parent operation of this trailing result.
+Operation *detail::TrailingOpResult::getOwner() {
+  // We need to do some arithmetic to get the operation pointer. Move the
+  // trailing owner to the start of the array.
+  TrailingOpResult *trailingIt = this - trailingResultNumber;
+
+  // Move the owner past the inline op results to get to the operation.
+  auto *inlineResultIt = reinterpret_cast<InLineOpResult *>(trailingIt) -
+                         OpResult::getMaxInlineResults();
+  return reinterpret_cast<Operation *>(inlineResultIt) - 1;
+}
+
+//===----------------------------------------------------------------------===//
 // Operation Value-Iterators
 //===----------------------------------------------------------------------===//
 
@@ -151,7 +167,7 @@ TypeRange::TypeRange(ArrayRef<Value> values)
 TypeRange::TypeRange(ValueRange values) : TypeRange(OwnerT(), values.size()) {
   detail::ValueRangeOwner owner = values.begin().getBase();
   if (auto *op = reinterpret_cast<Operation *>(owner.ptr.dyn_cast<void *>()))
-    this->base = &op->getResultTypes()[owner.startIndex];
+    this->base = op->getResultTypes().drop_front(owner.startIndex).data();
   else if (auto *operand = owner.ptr.dyn_cast<OpOperand *>())
     this->base = operand;
   else
@@ -195,7 +211,7 @@ ResultRange::ResultRange(Operation *op)
     : ResultRange(op, /*startIndex=*/0, op->getNumResults()) {}
 
 ArrayRef<Type> ResultRange::getTypes() const {
-  return getBase()->getResultTypes();
+  return getBase()->getResultTypes().slice(getStartIndex(), size());
 }
 
 /// See `llvm::indexed_accessor_range` for details.
