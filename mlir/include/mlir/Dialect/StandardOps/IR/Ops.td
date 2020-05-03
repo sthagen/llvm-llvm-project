@@ -47,7 +47,7 @@ class CastOp<string mnemonic, list<OpTrait> traits = []> :
   let results = (outs AnyType);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value source, Type destType", [{
+    "OpBuilder &builder, OperationState &result, Value source, Type destType", [{
        impl::buildCastOp(builder, result, source, destType);
   }]>];
 
@@ -130,18 +130,18 @@ class FloatArithmeticOp<string mnemonic, list<OpTrait> traits = []> :
 //   %0 = alloclike(%m)[%s] : memref<8x?xf32, (d0, d1)[s0] -> ((d0 + s0), d1)>
 //
 class AllocLikeOp<string mnemonic, list<OpTrait> traits = []> :
-    Std_Op<mnemonic, traits> {
+    Std_Op<mnemonic, !listconcat(traits, [MemoryEffects<[MemAlloc]>])> {
 
   let arguments = (ins Variadic<Index>:$value,
                    Confined<OptionalAttr<I64Attr>, [IntMinValue<0>]>:$alignment);
-  let results = (outs AnyMemRef);
+  let results = (outs Res<AnyMemRef, "", [MemAlloc]>);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, MemRefType memrefType", [{
+    "OpBuilder &builder, OperationState &result, MemRefType memrefType", [{
        result.types.push_back(memrefType);
      }]>,
     OpBuilder<
-    "Builder *builder, OperationState &result, MemRefType memrefType, " #
+    "OpBuilder &builder, OperationState &result, MemRefType memrefType, " #
     "ValueRange operands, IntegerAttr alignment = IntegerAttr()", [{
        result.addOperands(operands);
        result.types.push_back(memrefType);
@@ -526,16 +526,11 @@ def GenericAtomicRMWOp : Std_Op<"generic_atomic_rmw", [
 
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilder<"Builder *builder, OperationState &result, "
+    OpBuilder<"OpBuilder &builder, OperationState &result, "
               "Value memref, ValueRange ivs">
   ];
 
   let extraClassDeclaration = [{
-    OpBuilder getBodyBuilder() {
-      assert(!body().empty() && "Unexpected empty 'body' region.");
-      Block &block = body().front();
-      return OpBuilder(&block, block.end());
-    }
     // The value stored in memref[ivs].
     Value getCurrentValue() {
       return body().front().getArgument(0);
@@ -565,7 +560,8 @@ def AtomicYieldOp : Std_Op<"atomic_yield", [
 //===----------------------------------------------------------------------===//
 
 def BranchOp : Std_Op<"br",
-    [DeclareOpInterfaceMethods<BranchOpInterface>, NoSideEffect, Terminator]> {
+    [DeclareOpInterfaceMethods<BranchOpInterface, ["getSuccessorForOperands"]>,
+     NoSideEffect, Terminator]> {
   let summary = "branch operation";
   let description = [{
     The `br` operation represents a branch operation in a function.
@@ -586,7 +582,7 @@ def BranchOp : Std_Op<"br",
   let arguments = (ins Variadic<AnyType>:$destOperands);
   let successors = (successor AnySuccessor:$dest);
 
-  let builders = [OpBuilder<"Builder *, OperationState &result, Block *dest, "
+  let builders = [OpBuilder<"OpBuilder &, OperationState &result, Block *dest, "
                             "ValueRange destOperands = {}", [{
     result.addSuccessors(dest);
     result.addOperands(destOperands);
@@ -601,10 +597,6 @@ def BranchOp : Std_Op<"br",
 
     /// Erase the operand at 'index' from the operand list.
     void eraseOperand(unsigned index);
-
-    /// Returns the successor that would be chosen with the given constant
-    /// operands. Returns nullptr if a single successor could not be chosen.
-    Block *getSuccessorForOperands(ArrayRef<Attribute>);
   }];
 
   let hasCanonicalizer = 1;
@@ -636,21 +628,21 @@ def CallOp : Std_Op<"call", [CallOpInterface]> {
   let results = (outs Variadic<AnyType>);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, FuncOp callee,"
+    "OpBuilder &builder, OperationState &result, FuncOp callee,"
     "ValueRange operands = {}", [{
       result.addOperands(operands);
-      result.addAttribute("callee", builder->getSymbolRefAttr(callee));
+      result.addAttribute("callee", builder.getSymbolRefAttr(callee));
       result.addTypes(callee.getType().getResults());
   }]>, OpBuilder<
-    "Builder *builder, OperationState &result, SymbolRefAttr callee,"
+    "OpBuilder &builder, OperationState &result, SymbolRefAttr callee,"
     "ArrayRef<Type> results, ValueRange operands = {}", [{
       result.addOperands(operands);
       result.addAttribute("callee", callee);
       result.addTypes(results);
   }]>, OpBuilder<
-    "Builder *builder, OperationState &result, StringRef callee,"
+    "OpBuilder &builder, OperationState &result, StringRef callee,"
     "ArrayRef<Type> results, ValueRange operands = {}", [{
-      build(builder, result, builder->getSymbolRefAttr(callee), results,
+      build(builder, result, builder.getSymbolRefAttr(callee), results,
             operands);
   }]>];
 
@@ -712,7 +704,7 @@ def CallIndirectOp : Std_Op<"call_indirect", [
   let results = (outs Variadic<AnyType>:$results);
 
   let builders = [OpBuilder<
-    "Builder *, OperationState &result, Value callee,"
+    "OpBuilder &, OperationState &result, Value callee,"
     "ValueRange operands = {}", [{
       result.operands.push_back(callee);
       result.addOperands(operands);
@@ -845,7 +837,7 @@ def CmpFOp : Std_Op<"cmpf",
   let results = (outs BoolLike:$result);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, CmpFPredicate predicate,"
+    "OpBuilder &builder, OperationState &result, CmpFPredicate predicate,"
     "Value lhs, Value rhs", [{
       ::buildCmpFOp(builder, result, predicate, lhs, rhs);
   }]>];
@@ -967,7 +959,7 @@ def CmpIOp : Std_Op<"cmpi",
   let results = (outs BoolLike:$result);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, CmpIPredicate predicate,"
+    "OpBuilder &builder, OperationState &result, CmpIPredicate predicate,"
     "Value lhs, Value rhs", [{
       ::buildCmpIOp(builder, result, predicate, lhs, rhs);
   }]>];
@@ -994,7 +986,8 @@ def CmpIOp : Std_Op<"cmpi",
 //===----------------------------------------------------------------------===//
 
 def CondBranchOp : Std_Op<"cond_br",
-    [AttrSizedOperandSegments, DeclareOpInterfaceMethods<BranchOpInterface>,
+    [AttrSizedOperandSegments,
+     DeclareOpInterfaceMethods<BranchOpInterface, ["getSuccessorForOperands"]>,
      NoSideEffect, Terminator]> {
   let summary = "conditional branch operation";
   let description = [{
@@ -1030,13 +1023,13 @@ def CondBranchOp : Std_Op<"cond_br",
   let successors = (successor AnySuccessor:$trueDest, AnySuccessor:$falseDest);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value condition,"
+    "OpBuilder &builder, OperationState &result, Value condition,"
     "Block *trueDest, ValueRange trueOperands,"
     "Block *falseDest, ValueRange falseOperands", [{
       build(builder, result, condition, trueOperands, falseOperands, trueDest,
             falseDest);
   }]>, OpBuilder<
-    "Builder *builder, OperationState &result, Value condition,"
+    "OpBuilder &builder, OperationState &result, Value condition,"
     "Block *trueDest, Block *falseDest, ValueRange falseOperands = {}", [{
       build(builder, result, condition, trueDest, ValueRange(), falseDest,
             falseOperands);
@@ -1079,7 +1072,7 @@ def CondBranchOp : Std_Op<"cond_br",
 
     /// Erase the operand at 'index' from the true operand list.
     void eraseTrueOperand(unsigned index)  {
-      eraseSuccessorOperand(trueIndex, index);
+      trueDestOperandsMutable().erase(index);
     }
 
     // Accessors for operands to the 'false' destination.
@@ -1098,12 +1091,8 @@ def CondBranchOp : Std_Op<"cond_br",
 
     /// Erase the operand at 'index' from the false operand list.
     void eraseFalseOperand(unsigned index) {
-      eraseSuccessorOperand(falseIndex, index);
+      falseDestOperandsMutable().erase(index);
     }
-
-    /// Returns the successor that would be chosen with the given constant
-    /// operands. Returns nullptr if a single successor could not be chosen.
-    Block *getSuccessorForOperands(ArrayRef<Attribute> operands);
 
   private:
     /// Get the index of the first true destination operand.
@@ -1168,7 +1157,7 @@ def ConstantOp : Std_Op<"constant",
   let results = (outs AnyType);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Attribute value",
+    "OpBuilder &builder, OperationState &result, Attribute value",
     [{ build(builder, result, value.getType(), value); }]>];
 
   let extraClassDeclaration = [{
@@ -1249,11 +1238,41 @@ def CosOp : FloatUnaryOp<"cos"> {
   }];
 }
 
+def SinOp : FloatUnaryOp<"sin"> {
+  let summary = "sine of the specified value";
+  let description = [{
+    Syntax:
+
+    ```
+    operation ::= ssa-id `=` `std.sin` ssa-use `:` type
+    ```
+
+    The `sin` operation computes the sine of a given value. It takes one
+    operand and returns one result of the same type. This type may be a float
+    scalar type, a vector whose element type is float, or a tensor of floats.
+    It has no standard attributes.
+
+    Example:
+
+    ```mlir
+    // Scalar sine value.
+    %a = sin %b : f64
+
+    // SIMD vector element-wise sine value.
+    %f = sin %g : vector<4xf32>
+
+    // Tensor element-wise sine value.
+    %x = sin %y : tensor<4x?xf8>
+    ```
+  }];
+}
+
+
 //===----------------------------------------------------------------------===//
 // DeallocOp
 //===----------------------------------------------------------------------===//
 
-def DeallocOp : Std_Op<"dealloc"> {
+def DeallocOp : Std_Op<"dealloc", [MemoryEffects<[MemFree]>]> {
   let summary = "memory deallocation operation";
   let description = [{
     The `dealloc` operation frees the region of memory referenced by a memref
@@ -1269,7 +1288,7 @@ def DeallocOp : Std_Op<"dealloc"> {
     ```
   }];
 
-  let arguments = (ins AnyMemRef:$memref);
+  let arguments = (ins Arg<AnyMemRef, "", [MemFree]>:$memref);
 
   let hasCanonicalizer = 1;
   let hasFolder = 1;
@@ -1317,10 +1336,10 @@ def DimOp : Std_Op<"dim", [NoSideEffect]> {
   let results = (outs Index);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value memrefOrTensor,"
+    "OpBuilder &builder, OperationState &result, Value memrefOrTensor,"
     "unsigned index", [{
-      auto indexType = builder->getIndexType();
-      auto indexAttr = builder->getIntegerAttr(indexType, index);
+      auto indexType = builder.getIndexType();
+      auto indexAttr = builder.getIntegerAttr(indexType, index);
       build(builder, result, indexType, memrefOrTensor, indexAttr);
     }]>];
 
@@ -1413,7 +1432,7 @@ def ExtractElementOp : Std_Op<"extract_element",
   let results = (outs AnyType:$result);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value aggregate,"
+    "OpBuilder &builder, OperationState &result, Value aggregate,"
     "ValueRange indices = {}", [{
       auto resType = aggregate.getType().cast<ShapedType>()
                                          .getElementType();
@@ -1551,7 +1570,7 @@ def LoadOp : Std_Op<"load",
   let results = (outs AnyType:$result);
 
   let builders = [OpBuilder<
-    "Builder *, OperationState &result, Value memref,"
+    "OpBuilder &, OperationState &result, Value memref,"
     "ValueRange indices = {}", [{
       auto memrefType = memref.getType().cast<MemRefType>();
       result.addOperands(memref);
@@ -1803,12 +1822,12 @@ def PrefetchOp : Std_Op<"prefetch"> {
                    BoolAttr:$isDataCache);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value memref,"
+    "OpBuilder &builder, OperationState &result, Value memref,"
     "ArrayRef<Value> indices, bool isWrite, unsigned hint, bool isData",
     [{
-      auto hintAttr = builder->getI32IntegerAttr(hint);
-      auto isWriteAttr = builder->getBoolAttr(isWrite);
-      auto isDataCacheAttr = builder->getBoolAttr(isData);
+      auto hintAttr = builder.getI32IntegerAttr(hint);
+      auto isWriteAttr = builder.getBoolAttr(isWrite);
+      auto isDataCacheAttr = builder.getBoolAttr(isData);
       result.addOperands(memref);
       result.addOperands(indices);
       result.addAttribute("localityHint", hintAttr);
@@ -1849,8 +1868,8 @@ def RankOp : Std_Op<"rank", [NoSideEffect]> {
   let verifier = ?;
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value tensor", [{
-      auto indexType = builder->getIndexType();
+    "OpBuilder &builder, OperationState &result, Value tensor", [{
+      auto indexType = builder.getIndexType();
       build(builder, result, indexType, tensor);
     }]>];
 
@@ -1892,7 +1911,7 @@ def ReturnOp : Std_Op<"return", [NoSideEffect, HasParent<"FuncOp">, ReturnLike,
   let arguments = (ins Variadic<AnyType>:$operands);
 
   let builders = [OpBuilder<
-    "Builder *b, OperationState &result", [{ build(b, result, llvm::None); }]
+    "OpBuilder &b, OperationState &result", [{ build(b, result, llvm::None); }]
   >];
 
   let assemblyFormat = "attr-dict ($operands^ `:` type($operands))?";
@@ -1957,7 +1976,7 @@ def SelectOp : Std_Op<"select", [NoSideEffect,
   let results = (outs AnyType:$result);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value condition,"
+    "OpBuilder &builder, OperationState &result, Value condition,"
     "Value trueValue, Value falseValue", [{
       result.addOperands({condition, trueValue, falseValue});
       result.addTypes(trueValue.getType());
@@ -2116,7 +2135,7 @@ def SignExtendIOp : Std_Op<"sexti",
   let results = (outs SignlessIntegerLike);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value value, Type destType", [{
+    "OpBuilder &builder, OperationState &result, Value value, Type destType", [{
       result.addOperands(value);
       result.addTypes(destType);
   }]>];
@@ -2190,7 +2209,7 @@ def SplatOp : Std_Op<"splat", [NoSideEffect,
   let results = (outs AnyTypeOf<[AnyVector, AnyStaticShapeTensor]>:$aggregate);
 
   let builders =
-      [OpBuilder<"Builder *builder, OperationState &result, Value element, "
+      [OpBuilder<"OpBuilder &builder, OperationState &result, Value element, "
                   "Type aggregateType",
                   [{ build(builder, result, aggregateType, element); }]>];
 
@@ -2268,7 +2287,7 @@ def StoreOp : Std_Op<"store",
                        Variadic<Index>:$indices);
 
   let builders = [OpBuilder<
-    "Builder *, OperationState &result, Value valueToStore, Value memref", [{
+    "OpBuilder &, OperationState &result, Value valueToStore, Value memref", [{
       result.addOperands(valueToStore);
       result.addOperands(memref);
   }]>];
@@ -2448,12 +2467,12 @@ def SubViewOp : Std_Op<"subview", [
 
   let builders = [
     OpBuilder<
-      "Builder *b, OperationState &result, Value source, "
+      "OpBuilder &b, OperationState &result, Value source, "
       "ValueRange offsets, ValueRange sizes, "
       "ValueRange strides, Type resultType = Type(), "
       "ArrayRef<NamedAttribute> attrs = {}">,
     OpBuilder<
-      "Builder *builder, OperationState &result, "
+      "OpBuilder &builder, OperationState &result, "
       "Type resultType, Value source">
   ];
 
@@ -2606,7 +2625,7 @@ def TensorLoadOp : Std_Op<"tensor_load",
   let verifier = ?;
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value memref", [{
+    "OpBuilder &builder, OperationState &result, Value memref", [{
       auto memrefType = memref.getType().cast<MemRefType>();
       auto resultType = RankedTensorType::get(memrefType.getShape(),
                                               memrefType.getElementType());
@@ -2682,7 +2701,7 @@ def TruncateIOp : Std_Op<"trunci", [NoSideEffect, SameOperandsAndResultShape]> {
   let results = (outs SignlessIntegerLike);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value value, Type destType", [{
+    "OpBuilder &builder, OperationState &result, Value value, Type destType", [{
       result.addOperands(value);
       result.addTypes(destType);
   }]>];
@@ -2913,7 +2932,7 @@ def ZeroExtendIOp : Std_Op<"zexti", [NoSideEffect, SameOperandsAndResultShape]> 
   let results = (outs SignlessIntegerLike);
 
   let builders = [OpBuilder<
-    "Builder *builder, OperationState &result, Value value, Type destType", [{
+    "OpBuilder &builder, OperationState &result, Value value, Type destType", [{
       result.addOperands(value);
       result.addTypes(destType);
   }]>];

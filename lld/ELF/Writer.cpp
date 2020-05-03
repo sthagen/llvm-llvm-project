@@ -601,11 +601,13 @@ template <class ELFT> void Writer<ELFT>::run() {
     for (OutputSection *sec : outputSections)
       sec->addr = 0;
 
-  // Handle --print-map(-M)/--Map and --cref. Dump them before checkSections()
-  // because the files may be useful in case checkSections() or openFile()
-  // fails, for example, due to an erroneous file size.
+  // Handle --print-map(-M)/--Map, --cref and --print-archive-stats=. Dump them
+  // before checkSections() because the files may be useful in case
+  // checkSections() or openFile() fails, for example, due to an erroneous file
+  // size.
   writeMapFile();
   writeCrossReferenceTable();
+  writeArchiveStats();
 
   if (config->checkSections)
     checkSections();
@@ -680,6 +682,15 @@ static bool shouldKeepInSymtab(const Defined &sym) {
   // from live sections.
   if (config->copyRelocs && sym.used)
     return true;
+
+  // Exclude local symbols pointing to .ARM.exidx sections.
+  // They are probably mapping symbols "$d", which are optional for these
+  // sections. After merging the .ARM.exidx sections, some of these symbols
+  // may become dangling. The easiest way to avoid the issue is not to add
+  // them to the symbol table from the beginning.
+  if (config->emachine == EM_ARM && sym.section &&
+      sym.section->type == SHT_ARM_EXIDX)
+    return false;
 
   if (config->discard == DiscardPolicy::None)
     return true;
@@ -1922,6 +1933,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
   // we can correctly decide if a dynamic relocation is needed. This is called
   // after processSymbolAssignments() because it needs to know whether a
   // linker-script-defined symbol is absolute.
+  ppc64noTocRelax.clear();
   if (!config->relocatable) {
     forEachRelSec(scanRelocations<ELFT>);
     reportUndefinedSymbols<ELFT>();
