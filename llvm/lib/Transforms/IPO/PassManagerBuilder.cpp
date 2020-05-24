@@ -165,6 +165,8 @@ cl::opt<AttributorRunOption> AttributorRun(
                clEnumValN(AttributorRunOption::NONE, "none",
                           "disable attributor runs")));
 
+extern cl::opt<bool> EnableKnowledgeRetention;
+
 PassManagerBuilder::PassManagerBuilder() {
     OptLevel = 2;
     SizeLevel = 0;
@@ -359,6 +361,8 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   assert(OptLevel >= 1 && "Calling function optimizer with no optimization level!");
   MPM.add(createSROAPass());
   MPM.add(createEarlyCSEPass(true /* Enable mem-ssa. */)); // Catch trivial redundancies
+  if (EnableKnowledgeRetention)
+    MPM.add(createAssumeSimplifyPass());
 
   if (OptLevel > 1) {
     if (EnableGVNHoist)
@@ -737,8 +741,6 @@ void PassManagerBuilder::populateModulePassManager(
   MPM.add(createLoopDistributePass());
 
   MPM.add(createLoopVectorizePass(!LoopsInterleaved, !LoopVectorize));
-  MPM.add(createVectorCombinePass());
-  MPM.add(createEarlyCSEPass());
 
   // Eliminate loads by forwarding stores from the previous iteration to loads
   // of the current iteration.
@@ -778,6 +780,10 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createEarlyCSEPass());
     }
   }
+
+  // Enhance/cleanup vector code.
+  MPM.add(createVectorCombinePass());
+  MPM.add(createEarlyCSEPass());
 
   addExtensionsToPM(EP_Peephole, MPM);
   MPM.add(createInstructionCombiningPass());

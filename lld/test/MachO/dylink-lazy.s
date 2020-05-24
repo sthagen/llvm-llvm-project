@@ -1,4 +1,4 @@
-# REQUIRES: x86
+# REQUIRES: x86, shell
 # RUN: mkdir -p %t
 # RUN: llvm-mc -filetype=obj -triple=x86_64-apple-darwin %p/Inputs/libhello.s \
 # RUN:   -o %t/libhello.o
@@ -16,8 +16,8 @@
 ## symbol each entry points to. So we call objdump twice in order to get the
 ## disassembly of __text and the bind tables first, which allow us to check for
 ## matching entries in __stubs.
-# RUN: ( llvm-objdump -d --no-show-raw-insn --syms --bind --lazy-bind %t/dylink-lazy; \
-# RUN:  llvm-objdump -D --no-show-raw-insn %t/dylink-lazy ) | FileCheck %s
+# RUN: (llvm-objdump -d --no-show-raw-insn --syms --bind --lazy-bind %t/dylink-lazy; \
+# RUN:  llvm-objdump -D --no-show-raw-insn %t/dylink-lazy) | FileCheck %s
 
 # CHECK-LABEL: SYMBOL TABLE:
 # CHECK:       {{0*}}[[#%x, IMGLOADER:]] {{.*}} __DATA,__data __dyld_private

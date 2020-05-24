@@ -98,6 +98,21 @@ void mlir::linalg::LinalgMarker::replaceLinalgMarker(PatternRewriter &rewriter,
                                    rewriter.getContext()));
 }
 
+LinalgTilingOptions &
+mlir::linalg::LinalgTilingOptions::setTileSizes(ArrayRef<int64_t> ts) {
+  SmallVector<int64_t, 4> tileSizes(ts.begin(), ts.end());
+  tileSizeComputationFunction = [tileSizes](OpBuilder &b, Operation *op) {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(
+        &op->getParentOfType<FuncOp>().getBody().front());
+    return llvm::to_vector<4>(llvm::map_range(tileSizes, [&](int64_t s) {
+      Value v = b.create<ConstantIndexOp>(op->getLoc(), s);
+      return v;
+    }));
+  };
+  return *this;
+};
+
 /// Linalg base tiling pattern.
 mlir::linalg::LinalgBaseTilingPattern::LinalgBaseTilingPattern(
     StringRef opName, MLIRContext *context, LinalgTilingOptions options,
@@ -112,14 +127,7 @@ LogicalResult mlir::linalg::LinalgBaseTilingPattern::matchAndRewrite(
     return failure();
   if (failed(marker.checkAndNotify(rewriter, linalgOp)))
     return failure();
-  Optional<TiledLinalgOp> res;
-  if (options.loopType == LinalgTilingLoopType::Loops)
-    res = tileLinalgOp(rewriter, linalgOp, options.tileSizes,
-                       options.interchangeVector);
-  else if (options.loopType == LinalgTilingLoopType::ParallelLoops)
-    res = tileLinalgOpToParallelLoops(rewriter, linalgOp, options.tileSizes,
-                                      options.interchangeVector);
-  // TODO: Impl tiling to affine loops when it makes sense.
+  Optional<TiledLinalgOp> res = tileLinalgOp(rewriter, linalgOp, options);
 
   if (!res)
     return failure();
@@ -160,51 +168,23 @@ LogicalResult mlir::linalg::LinalgBaseInterchangePattern::matchAndRewrite(
 }
 
 mlir::linalg::LinalgBasePromotionPattern::LinalgBasePromotionPattern(
-    StringRef opName, MLIRContext *context,
-    ArrayRef<unsigned> operandsToPromote, unsigned alignment,
+    StringRef opName, MLIRContext *context, LinalgPromotionOptions options,
     LinalgMarker marker, PatternBenefit benefit)
     : RewritePattern(opName, {}, benefit, context), marker(marker),
-      operandsToPromote(operandsToPromote.begin(), operandsToPromote.end()),
-      alignment(alignment) {}
+      options(options) {}
 
 LogicalResult mlir::linalg::LinalgBasePromotionPattern::matchAndRewrite(
     Operation *op, PatternRewriter &rewriter) const {
-  LinalgOp linalgOp = dyn_cast<LinalgOp>(op);
-  if (!linalgOp)
+  if (failed(marker.checkAndNotify(rewriter, op)))
     return failure();
-  if (failed(marker.checkAndNotify(rewriter, linalgOp)))
+  if (failed(promoteSubviewsPrecondition(op, options)))
     return failure();
-  if (operandsToPromote.empty()) {
-    if (failed(promoteSubviewsLinalgOpPrecondition(op, llvm::None)))
-      return failure();
-  } else {
-    DenseSet<unsigned> set;
-    set.insert(operandsToPromote.begin(), operandsToPromote.end());
-    if (failed(promoteSubviewsLinalgOpPrecondition(op, set)))
-      return failure();
-  }
-
-  llvm::SetVector<Value> subViews;
-  if (!operandsToPromote.empty()) {
-    for (unsigned idx : operandsToPromote) {
-      auto *op = linalgOp.getBuffer(idx).getDefiningOp();
-      if (auto sv = dyn_cast_or_null<SubViewOp>(op))
-        subViews.insert(sv);
-    }
-  } else {
-    unsigned nBuffers = linalgOp.getNumInputsAndOutputBuffers();
-    for (unsigned idx = 0; idx < nBuffers; ++idx) {
-      auto *op = linalgOp.getBuffer(idx).getDefiningOp();
-      if (auto sv = dyn_cast_or_null<SubViewOp>(op))
-        subViews.insert(sv);
-    }
-  }
-
-  auto promotedOp =
-      promoteSubViewOperands(rewriter, op, subViews, /*dynamicBuffers=*/false,
-                             /*alignment=*/alignment);
-  marker.replaceLinalgMarker(rewriter, promotedOp.getOperation());
-  rewriter.eraseOp(op);
+  rewriter.updateRootInPlace(op, [&]() {
+    auto promotedOp = promoteSubViews(rewriter, op, options);
+    (void)promotedOp;
+    assert(promotedOp && "Unexpected pattern failure");
+    marker.replaceLinalgMarker(rewriter, op);
+  });
   return success();
 }
 
@@ -224,5 +204,26 @@ LogicalResult mlir::linalg::LinalgBaseVectorizationPattern::matchAndRewrite(
     return failure();
   vectorizeLinalgOp(rewriter, op);
   rewriter.eraseOp(op);
+  return success();
+}
+
+LogicalResult mlir::linalg::applyStagedPatterns(
+    Operation *op, ArrayRef<OwningRewritePatternList> stage1Patterns,
+    const OwningRewritePatternList &stage2Patterns,
+    llvm::function_ref<LogicalResult(Operation *)> stage3Lambda) {
+  for (const auto &patterns : stage1Patterns) {
+    if (!applyPatternsAndFoldGreedily(op, patterns)) {
+      llvm::dbgs() << "Underlying first stage rewrite did not converge";
+      return failure();
+    }
+    if (!applyPatternsAndFoldGreedily(op, stage2Patterns)) {
+      llvm::dbgs() << "Underlying second stage rewrite did not converge";
+      return failure();
+    }
+    if (stage3Lambda) {
+      if (failed(stage3Lambda(op)))
+        return failure();
+    }
+  }
   return success();
 }

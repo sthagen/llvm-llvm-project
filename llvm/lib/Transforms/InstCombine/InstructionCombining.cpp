@@ -3302,6 +3302,11 @@ static bool TryToSinkInstruction(Instruction *I, BasicBlock *DestBlock) {
   // We can only sink load instructions if there is nothing between the load and
   // the end of block that could change the value.
   if (I->mayReadFromMemory()) {
+    // We don't want to do any sophisticated alias analysis, so we only check
+    // the instructions after I in I's parent block if we try to sink to its
+    // successor block.
+    if (DestBlock->getUniquePredecessor() != I->getParent())
+      return false;
     for (BasicBlock::iterator Scan = I->getIterator(),
                               E = I->getParent()->end();
          Scan != E; ++Scan)
@@ -3419,7 +3424,8 @@ bool InstCombiner::run() {
       }
     }
 
-    // See if we can trivially sink this instruction to a successor basic block.
+    // See if we can trivially sink this instruction to its user if we can
+    // prove that the successor is not executed more frequently than our block.
     if (EnableCodeSinking)
       if (Use *SingleUse = I->getSingleUndroppableUse()) {
         BasicBlock *BB = I->getParent();
@@ -3433,19 +3439,22 @@ bool InstCombiner::run() {
           UserParent = UserInst->getParent();
 
         if (UserParent != BB) {
-          bool UserIsSuccessor = false;
-          // See if the user is one of our successors.
-          for (succ_iterator SI = succ_begin(BB), E = succ_end(BB); SI != E;
-               ++SI)
-            if (*SI == UserParent) {
-              UserIsSuccessor = true;
-              break;
-            }
-
-          // If the user is one of our immediate successors, and if that
-          // successor only has us as a predecessors (we'd have to split the
-          // critical edge otherwise), we can keep going.
-          if (UserIsSuccessor && UserParent->getUniquePredecessor()) {
+          // See if the user is one of our successors that has only one
+          // predecessor, so that we don't have to split the critical edge.
+          bool ShouldSink = UserParent->getUniquePredecessor() == BB;
+          // Another option where we can sink is a block that ends with a
+          // terminator that does not pass control to other block (such as
+          // return or unreachable). In this case:
+          //   - I dominates the User (by SSA form);
+          //   - the User will be executed at most once.
+          // So sinking I down to User is always profitable or neutral.
+          if (!ShouldSink) {
+            auto *Term = UserParent->getTerminator();
+            ShouldSink = isa<ReturnInst>(Term) || isa<UnreachableInst>(Term);
+          }
+          if (ShouldSink) {
+            assert(DT.dominates(BB, UserParent) &&
+                   "Dominance relation broken?");
             // Okay, the CFG is simple enough, try to sink this instruction.
             if (TryToSinkInstruction(I, UserParent)) {
               LLVM_DEBUG(dbgs() << "IC: Sink: " << *I << '\n');
@@ -3723,10 +3732,9 @@ PreservedAnalyses InstCombinePass::run(Function &F,
   auto *LI = AM.getCachedResult<LoopAnalysis>(F);
 
   auto *AA = &AM.getResult<AAManager>(F);
-  const ModuleAnalysisManager &MAM =
-      AM.getResult<ModuleAnalysisManagerFunctionProxy>(F).getManager();
+  auto &MAMProxy = AM.getResult<ModuleAnalysisManagerFunctionProxy>(F);
   ProfileSummaryInfo *PSI =
-      MAM.getCachedResult<ProfileSummaryAnalysis>(*F.getParent());
+      MAMProxy.getCachedResult<ProfileSummaryAnalysis>(*F.getParent());
   auto *BFI = (PSI && PSI->hasProfileSummary()) ?
       &AM.getResult<BlockFrequencyAnalysis>(F) : nullptr;
 
