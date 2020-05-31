@@ -220,6 +220,12 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setTruncStoreAction(MVT::v16i16, MVT::v16i8, Expand);
   setTruncStoreAction(MVT::v32i16, MVT::v32i8, Expand);
 
+  setTruncStoreAction(MVT::v4i64, MVT::v4i8, Expand);
+  setTruncStoreAction(MVT::v8i64, MVT::v8i8, Expand);
+  setTruncStoreAction(MVT::v8i64, MVT::v8i16, Expand);
+  setTruncStoreAction(MVT::v8i64, MVT::v8i32, Expand);
+  setTruncStoreAction(MVT::v16i64, MVT::v16i32, Expand);
+
   setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
   setOperationAction(ISD::GlobalAddress, MVT::i64, Custom);
 
@@ -8282,22 +8288,24 @@ SDValue SITargetLowering::LowerTrig(SDValue Op, SelectionDAG &DAG) const {
   SDValue Arg = Op.getOperand(0);
   SDValue TrigVal;
 
-  // TODO: Should this propagate fast-math-flags?
+  // Propagate fast-math flags so that the multiply we introduce can be folded
+  // if Arg is already the result of a multiply by constant.
+  auto Flags = Op->getFlags();
 
   SDValue OneOver2Pi = DAG.getConstantFP(0.5 * numbers::inv_pi, DL, VT);
 
   if (Subtarget->hasTrigReducedRange()) {
-    SDValue MulVal = DAG.getNode(ISD::FMUL, DL, VT, Arg, OneOver2Pi);
-    TrigVal = DAG.getNode(AMDGPUISD::FRACT, DL, VT, MulVal);
+    SDValue MulVal = DAG.getNode(ISD::FMUL, DL, VT, Arg, OneOver2Pi, Flags);
+    TrigVal = DAG.getNode(AMDGPUISD::FRACT, DL, VT, MulVal, Flags);
   } else {
-    TrigVal = DAG.getNode(ISD::FMUL, DL, VT, Arg, OneOver2Pi);
+    TrigVal = DAG.getNode(ISD::FMUL, DL, VT, Arg, OneOver2Pi, Flags);
   }
 
   switch (Op.getOpcode()) {
   case ISD::FCOS:
-    return DAG.getNode(AMDGPUISD::COS_HW, SDLoc(Op), VT, TrigVal);
+    return DAG.getNode(AMDGPUISD::COS_HW, SDLoc(Op), VT, TrigVal, Flags);
   case ISD::FSIN:
-    return DAG.getNode(AMDGPUISD::SIN_HW, SDLoc(Op), VT, TrigVal);
+    return DAG.getNode(AMDGPUISD::SIN_HW, SDLoc(Op), VT, TrigVal, Flags);
   default:
     llvm_unreachable("Wrong trig opcode");
   }

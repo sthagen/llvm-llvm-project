@@ -3546,7 +3546,7 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
         continue;
 
       SDValue SrcOp = Op.getOperand(i);
-      Tmp2 = ComputeNumSignBits(Op.getOperand(i), Depth + 1);
+      Tmp2 = ComputeNumSignBits(SrcOp, Depth + 1);
 
       // BUILD_VECTOR can implicitly truncate sources, we must handle this.
       if (SrcOp.getValueSizeInBits() != VTBits) {
@@ -3657,20 +3657,14 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
   case ISD::SRA:
     Tmp = ComputeNumSignBits(Op.getOperand(0), DemandedElts, Depth + 1);
     // SRA X, C -> adds C sign bits.
-    if (const APInt *ShAmt = getValidShiftAmountConstant(Op, DemandedElts))
-      Tmp = std::min<uint64_t>(Tmp + ShAmt->getZExtValue(), VTBits);
-    else if (const APInt *ShAmt =
-                 getValidMinimumShiftAmountConstant(Op, DemandedElts))
+    if (const APInt *ShAmt =
+            getValidMinimumShiftAmountConstant(Op, DemandedElts))
       Tmp = std::min<uint64_t>(Tmp + ShAmt->getZExtValue(), VTBits);
     return Tmp;
   case ISD::SHL:
-    if (const APInt *ShAmt = getValidShiftAmountConstant(Op, DemandedElts)) {
+    if (const APInt *ShAmt =
+            getValidMaximumShiftAmountConstant(Op, DemandedElts)) {
       // shl destroys sign bits, ensure it doesn't shift out all sign bits.
-      Tmp = ComputeNumSignBits(Op.getOperand(0), DemandedElts, Depth + 1);
-      if (ShAmt->ult(Tmp))
-        return Tmp - ShAmt->getZExtValue();
-    } else if (const APInt *ShAmt =
-                   getValidMaximumShiftAmountConstant(Op, DemandedElts)) {
       Tmp = ComputeNumSignBits(Op.getOperand(0), DemandedElts, Depth + 1);
       if (ShAmt->ult(Tmp))
         return Tmp - ShAmt->getZExtValue();
