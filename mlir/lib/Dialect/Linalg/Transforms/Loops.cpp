@@ -269,22 +269,6 @@ public:
 };
 
 template <typename IndexedValueType>
-class LinalgScopedEmitter<IndexedValueType, MatmulOp> {
-public:
-  static void emitScalarImplementation(ArrayRef<Value> allIvs,
-                                       MatmulOp matmulOp) {
-    assert(matmulOp.hasBufferSemantics() &&
-           "expected linalg op with buffer semantics");
-    assert(allIvs.size() == 3);
-    Value i(allIvs[0]), j(allIvs[1]), r_k(allIvs[2]);
-    IndexedValueType A(matmulOp.getInput(0)), B(matmulOp.getInput(1)),
-        C(matmulOp.getOutputBuffer(0));
-    // Emit scalar form.
-    C(i, j) = C(i, j) + A(i, r_k) * B(r_k, j);
-  }
-};
-
-template <typename IndexedValueType>
 class LinalgScopedEmitter<IndexedValueType, ConvOp> {
 public:
   /// Returns the input value of convOp. If the indices in `imIdx` is out of
@@ -337,6 +321,15 @@ public:
                          : (Value)std_select(conds.back(), zero, readInput);
   }
 
+  /// Returns true is `convOp` has a non-zero padding.
+  static bool hasPadding(ConvOp convOp) {
+    for (unsigned i = 0, e = convOp.getNumSpatialDimensions(); i < e; ++i) {
+      if (convOp.getLowPad(i) > 0 || convOp.getHighPad(i) > 0)
+        return true;
+    }
+    return false;
+  }
+
   static void emitScalarImplementation(ArrayRef<Value> allIvs, ConvOp convOp) {
     assert(convOp.hasBufferSemantics() &&
            "expected linalg op with buffer semantics");
@@ -352,14 +345,19 @@ public:
     SmallVector<Value, 8> oIdx(
         makeCanonicalAffineApplies(b, loc, maps[2], allIvs));
 
-    // Padded conv involves an affine.max in the memory access which is not
-    // allowed by affine.load. Override to always use an StdIndexedValue.
-    StdIndexedValue I(convOp.input());
     IndexedValueType F(convOp.filter()), O(convOp.output());
 
-    // Emit scalar form.
-    Value paddedInput = getConvOpInput(convOp, I, imIdx);
-    O(oIdx) += F(fIdx) * paddedInput;
+    // Emit scalar form. Padded conv involves an affine.max in the memory access
+    // which is not allowed by affine.load. Override to use an StdIndexedValue
+    // when there is non-zero padding.
+    if (hasPadding(convOp)) {
+      StdIndexedValue I(convOp.input());
+      Value paddedInput = getConvOpInput(convOp, I, imIdx);
+      O(oIdx) += F(fIdx) * paddedInput;
+    } else {
+      IndexedValueType I(convOp.input());
+      O(oIdx) += F(fIdx) * I(imIdx);
+    }
   }
 };
 
@@ -723,7 +721,6 @@ INSTANTIATE_LINALG_OP_TO_LOOPS(CopyOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(FillOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(DotOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(MatvecOp)
-INSTANTIATE_LINALG_OP_TO_LOOPS(MatmulOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(ConvOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(PoolingMaxOp)
 INSTANTIATE_LINALG_OP_TO_LOOPS(PoolingMinOp)

@@ -126,8 +126,8 @@ GCNSubtarget::initializeSubtargetDependencies(const Triple &TT,
   }
 
   // Don't crash on invalid devices.
-  if (WavefrontSize == 0)
-    WavefrontSize = 64;
+  if (WavefrontSizeLog2 == 0)
+    WavefrontSizeLog2 = 5;
 
   HasFminFmaxLegacy = getGeneration() < AMDGPUSubtarget::VOLCANIC_ISLANDS;
 
@@ -153,6 +153,8 @@ AMDGPUSubtarget::AMDGPUSubtarget(const Triple &TT) :
   TargetTriple(TT),
   Has16BitInsts(false),
   HasMadMixInsts(false),
+  HasMadMacF32Insts(false),
+  HasDsSrc2Insts(false),
   HasSDWA(false),
   HasVOP3PInsts(false),
   HasMulI24(true),
@@ -163,7 +165,7 @@ AMDGPUSubtarget::AMDGPUSubtarget(const Triple &TT) :
   HasTrigReducedRange(false),
   MaxWavesPerEU(10),
   LocalMemorySize(0),
-  WavefrontSize(0)
+  WavefrontSizeLog2(0)
   { }
 
 GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
@@ -205,6 +207,7 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
     GFX8Insts(false),
     GFX9Insts(false),
     GFX10Insts(false),
+    GFX10_3Insts(false),
     GFX7GFX8GFX9Insts(false),
     SGPRInitBug(false),
     HasSMemRealTime(false),
@@ -223,7 +226,9 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
     HasDPP8(false),
     HasR128A16(false),
     HasGFX10A16(false),
+    HasG16(false),
     HasNSAEncoding(false),
+    GFX10_BEncoding(false),
     HasDLInsts(false),
     HasDot1Insts(false),
     HasDot2Insts(false),
@@ -238,6 +243,8 @@ GCNSubtarget::GCNSubtarget(const Triple &TT, StringRef GPU, StringRef FS,
     DoesNotSupportSRAMECC(false),
     HasNoSdstCMPX(false),
     HasVscnt(false),
+    HasGetWaveIdInst(false),
+    HasSMemTimeInst(false),
     HasRegisterBanking(false),
     HasVOP3Literal(false),
     HasNoDataDepHazard(false),

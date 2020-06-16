@@ -1,9 +1,8 @@
 //===- InlineAdvisor.cpp - analysis pass implementation -------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -52,8 +51,8 @@ class DefaultInlineAdvice : public InlineAdvice {
 public:
   DefaultInlineAdvice(DefaultInlineAdvisor *Advisor, CallBase &CB,
                       Optional<InlineCost> OIC, OptimizationRemarkEmitter &ORE)
-      : InlineAdvice(Advisor, CB, OIC.hasValue()), OriginalCB(&CB), OIC(OIC),
-        ORE(ORE), DLoc(CB.getDebugLoc()), Block(CB.getParent()) {}
+      : InlineAdvice(Advisor, CB, ORE, OIC.hasValue()), OriginalCB(&CB),
+        OIC(OIC) {}
 
 private:
   void recordUnsuccessfulInliningImpl(const InlineResult &Result) override {
@@ -79,19 +78,11 @@ private:
 private:
   CallBase *const OriginalCB;
   Optional<InlineCost> OIC;
-  OptimizationRemarkEmitter &ORE;
-
-  // Capture the context of CB before inlining, as a successful inlining may
-  // change that context, and we want to report success or failure in the
-  // original context.
-  const DebugLoc DLoc;
-  const BasicBlock *const Block;
 };
 
 } // namespace
 
-std::unique_ptr<InlineAdvice>
-DefaultInlineAdvisor::getAdvice(CallBase &CB, FunctionAnalysisManager &FAM) {
+std::unique_ptr<InlineAdvice> DefaultInlineAdvisor::getAdvice(CallBase &CB) {
   Function &Caller = *CB.getCaller();
   ProfileSummaryInfo *PSI =
       FAM.getResult<ModuleAnalysisManagerFunctionProxy>(Caller)
@@ -118,13 +109,17 @@ DefaultInlineAdvisor::getAdvice(CallBase &CB, FunctionAnalysisManager &FAM) {
     return getInlineCost(CB, Params, CalleeTTI, GetAssumptionCache, GetTLI,
                          GetBFI, PSI, RemarksEnabled ? &ORE : nullptr);
   };
-  auto OIC = llvm::shouldInline(CB, GetInlineCost, ORE);
+  auto OIC = llvm::shouldInline(CB, GetInlineCost, ORE,
+                                Params.EnableDeferral.hasValue() &&
+                                    Params.EnableDeferral.getValue());
   return std::make_unique<DefaultInlineAdvice>(this, CB, OIC, ORE);
 }
 
 InlineAdvice::InlineAdvice(InlineAdvisor *Advisor, CallBase &CB,
+                           OptimizationRemarkEmitter &ORE,
                            bool IsInliningRecommended)
     : Advisor(Advisor), Caller(CB.getCaller()), Callee(CB.getCalledFunction()),
+      DLoc(CB.getDebugLoc()), Block(CB.getParent()), ORE(ORE),
       IsInliningRecommended(IsInliningRecommended) {}
 
 void InlineAdvisor::markFunctionAsDeleted(Function *F) {
@@ -149,9 +144,10 @@ AnalysisKey InlineAdvisorAnalysis::Key;
 
 bool InlineAdvisorAnalysis::Result::tryCreate(InlineParams Params,
                                               InliningAdvisorMode Mode) {
+  auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
   switch (Mode) {
   case InliningAdvisorMode::Default:
-    Advisor.reset(new DefaultInlineAdvisor(Params));
+    Advisor.reset(new DefaultInlineAdvisor(FAM, Params));
     break;
   case InliningAdvisorMode::Development:
     // To be added subsequently under conditional compilation.
@@ -298,7 +294,7 @@ void llvm::setInlineRemark(CallBase &CB, StringRef Message) {
 Optional<InlineCost>
 llvm::shouldInline(CallBase &CB,
                    function_ref<InlineCost(CallBase &CB)> GetInlineCost,
-                   OptimizationRemarkEmitter &ORE) {
+                   OptimizationRemarkEmitter &ORE, bool EnableDeferral) {
   using namespace ore;
 
   InlineCost IC = GetInlineCost(CB);
@@ -335,7 +331,8 @@ llvm::shouldInline(CallBase &CB,
   }
 
   int TotalSecondaryCost = 0;
-  if (shouldBeDeferred(Caller, IC, TotalSecondaryCost, GetInlineCost)) {
+  if (EnableDeferral &&
+      shouldBeDeferred(Caller, IC, TotalSecondaryCost, GetInlineCost)) {
     LLVM_DEBUG(dbgs() << "    NOT Inlining: " << CB
                       << " Cost = " << IC.getCost()
                       << ", outer Cost = " << TotalSecondaryCost << '\n');

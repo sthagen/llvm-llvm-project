@@ -551,6 +551,16 @@ getOrInsertBuiltinVariable(Block &body, Location loc, spirv::BuiltIn builtin,
         builder.create<spirv::GlobalVariableOp>(loc, ptrType, name, builtin);
     break;
   }
+  case spirv::BuiltIn::SubgroupId:
+  case spirv::BuiltIn::NumSubgroups:
+  case spirv::BuiltIn::SubgroupSize: {
+    auto ptrType = spirv::PointerType::get(builder.getIntegerType(32),
+                                           spirv::StorageClass::Input);
+    std::string name = getBuiltinVarName(builtin);
+    newVarOp =
+        builder.create<spirv::GlobalVariableOp>(loc, ptrType, name, builtin);
+    break;
+  }
   default:
     emitError(loc, "unimplemented builtin variable generation for ")
         << stringifyBuiltIn(builtin);
@@ -647,10 +657,9 @@ spirv::SPIRVConversionTarget::get(spirv::TargetEnvAttr targetAttr) {
       new SPIRVConversionTarget(targetAttr));
   SPIRVConversionTarget *targetPtr = target.get();
   target->addDynamicallyLegalDialect<SPIRVDialect>(
-      Optional<ConversionTarget::DynamicLegalityCallbackFn>(
-          // We need to capture the raw pointer here because it is stable:
-          // target will be destroyed once this function is returned.
-          [targetPtr](Operation *op) { return targetPtr->isLegalOp(op); }));
+      // We need to capture the raw pointer here because it is stable:
+      // target will be destroyed once this function is returned.
+      [targetPtr](Operation *op) { return targetPtr->isLegalOp(op); });
   return target;
 }
 

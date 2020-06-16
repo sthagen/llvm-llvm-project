@@ -111,6 +111,14 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     // This gets lowered to an instruction sequence which takes 16 bytes
     NumBytes = 16;
     break;
+  case AArch64::SpeculationBarrierISBDSBEndBB:
+    // This gets lowered to 2 4-byte instructions.
+    NumBytes = 8;
+    break;
+  case AArch64::SpeculationBarrierSBEndBB:
+    // This gets lowered to 1 4-byte instructions.
+    NumBytes = 4;
+    break;
   case AArch64::JumpTableDest32:
   case AArch64::JumpTableDest16:
   case AArch64::JumpTableDest8:
@@ -229,6 +237,12 @@ bool AArch64InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
   MachineBasicBlock::iterator I = MBB.getLastNonDebugInstr();
   if (I == MBB.end())
     return false;
+
+  // Skip over SpeculationBarrierEndBB terminators
+  if (I->getOpcode() == AArch64::SpeculationBarrierISBDSBEndBB ||
+      I->getOpcode() == AArch64::SpeculationBarrierSBEndBB) {
+    --I;
+  }
 
   if (!isUnpredicatedTerminator(*I))
     return false;
@@ -2033,15 +2047,14 @@ bool AArch64InstrInfo::isCandidateToMergeOrPair(const MachineInstr &MI) const {
   return true;
 }
 
-bool AArch64InstrInfo::getMemOperandsWithOffset(
+bool AArch64InstrInfo::getMemOperandsWithOffsetWidth(
     const MachineInstr &LdSt, SmallVectorImpl<const MachineOperand *> &BaseOps,
-    int64_t &Offset, bool &OffsetIsScalable, const TargetRegisterInfo *TRI)
-    const {
+    int64_t &Offset, bool &OffsetIsScalable, unsigned &Width,
+    const TargetRegisterInfo *TRI) const {
   if (!LdSt.mayLoadOrStore())
     return false;
 
   const MachineOperand *BaseOp;
-  unsigned Width;
   if (!getMemOperandWithOffsetWidth(LdSt, BaseOp, Offset, OffsetIsScalable,
                                     Width, TRI))
     return false;
@@ -2513,7 +2526,8 @@ static bool shouldClusterFI(const MachineFrameInfo &MFI, int FI1,
 /// Only called for LdSt for which getMemOperandWithOffset returns true.
 bool AArch64InstrInfo::shouldClusterMemOps(
     ArrayRef<const MachineOperand *> BaseOps1,
-    ArrayRef<const MachineOperand *> BaseOps2, unsigned NumLoads) const {
+    ArrayRef<const MachineOperand *> BaseOps2, unsigned NumLoads,
+    unsigned NumBytes) const {
   assert(BaseOps1.size() == 1 && BaseOps2.size() == 1);
   const MachineOperand &BaseOp1 = *BaseOps1.front();
   const MachineOperand &BaseOp2 = *BaseOps2.front();
@@ -3332,6 +3346,10 @@ static void emitFrameOffsetAdj(MachineBasicBlock &MBB,
   //  assert(Offset < (1 << 24) && "unimplemented reg plus immediate");
 
   const unsigned MaxEncodableValue = MaxEncoding << ShiftSize;
+  Register TmpReg = DestReg;
+  if (TmpReg == AArch64::XZR)
+    TmpReg = MBB.getParent()->getRegInfo().createVirtualRegister(
+        &AArch64::GPR64RegClass);
   do {
     uint64_t ThisVal = std::min<uint64_t>(Offset, MaxEncodableValue);
     unsigned LocalShiftSize = 0;
@@ -3341,7 +3359,11 @@ static void emitFrameOffsetAdj(MachineBasicBlock &MBB,
     }
     assert((ThisVal >> ShiftSize) <= MaxEncoding &&
            "Encoding cannot handle value that big");
-    auto MBI = BuildMI(MBB, MBBI, DL, TII->get(Opc), DestReg)
+
+    Offset -= ThisVal << LocalShiftSize;
+    if (Offset == 0)
+      TmpReg = DestReg;
+    auto MBI = BuildMI(MBB, MBBI, DL, TII->get(Opc), TmpReg)
                    .addReg(SrcReg)
                    .addImm(Sign * (int)ThisVal);
     if (ShiftSize)
@@ -3362,8 +3384,8 @@ static void emitFrameOffsetAdj(MachineBasicBlock &MBB,
           BuildMI(MBB, MBBI, DL, TII->get(AArch64::SEH_AddFP))
               .addImm(Imm)
               .setMIFlag(Flag);
-        assert((Offset - Imm) == 0 && "Expected remaining offset to be zero to "
-                                      "emit a single SEH directive");
+        assert(Offset == 0 && "Expected remaining offset to be zero to "
+                              "emit a single SEH directive");
       } else if (DestReg == AArch64::SP) {
         if (HasWinCFI)
           *HasWinCFI = true;
@@ -3376,8 +3398,7 @@ static void emitFrameOffsetAdj(MachineBasicBlock &MBB,
         *HasWinCFI = true;
     }
 
-    SrcReg = DestReg;
-    Offset -= ThisVal << LocalShiftSize;
+    SrcReg = TmpReg;
   } while (Offset);
 }
 
@@ -6071,7 +6092,9 @@ outliner::OutlinedFunction AArch64InstrInfo::getOutliningCandidateInfo(
   }
 
   else if (LastInstrOpcode == AArch64::BL ||
-           (LastInstrOpcode == AArch64::BLR && !HasBTI)) {
+           ((LastInstrOpcode == AArch64::BLR ||
+             LastInstrOpcode == AArch64::BLRNoIP) &&
+            !HasBTI)) {
     // FIXME: Do we need to check if the code after this uses the value of LR?
     FrameID = MachineOutlinerThunk;
     NumBytesToCreateFrame = 0;
@@ -6388,7 +6411,8 @@ AArch64InstrInfo::getOutliningType(MachineBasicBlock::iterator &MIT,
     // as a tail-call.  Whitelist the call instructions we know about so we
     // don't get unexpected results with call pseudo-instructions.
     auto UnknownCallOutlineType = outliner::InstrType::Illegal;
-    if (MI.getOpcode() == AArch64::BLR || MI.getOpcode() == AArch64::BL)
+    if (MI.getOpcode() == AArch64::BLR ||
+        MI.getOpcode() == AArch64::BLRNoIP || MI.getOpcode() == AArch64::BL)
       UnknownCallOutlineType = outliner::InstrType::LegalTerminator;
 
     if (!Callee)
@@ -6536,7 +6560,8 @@ void AArch64InstrInfo::buildOutlinedFrame(
     if (Call->getOpcode() == AArch64::BL) {
       TailOpcode = AArch64::TCRETURNdi;
     } else {
-      assert(Call->getOpcode() == AArch64::BLR);
+      assert(Call->getOpcode() == AArch64::BLR ||
+             Call->getOpcode() == AArch64::BLRNoIP);
       TailOpcode = AArch64::TCRETURNriALL;
     }
     MachineInstr *TC = BuildMI(MF, DebugLoc(), get(TailOpcode))
@@ -6870,6 +6895,13 @@ AArch64InstrInfo::describeLoadedValue(const MachineInstr &MI,
 
 uint64_t AArch64InstrInfo::getElementSizeForOpcode(unsigned Opc) const {
   return get(Opc).TSFlags & AArch64::ElementSizeMask;
+}
+
+unsigned llvm::getBLRCallOpcode(const MachineFunction &MF) {
+  if (MF.getSubtarget<AArch64Subtarget>().hardenSlsBlr())
+    return AArch64::BLRNoIP;
+  else
+    return AArch64::BLR;
 }
 
 #define GET_INSTRINFO_HELPERS
