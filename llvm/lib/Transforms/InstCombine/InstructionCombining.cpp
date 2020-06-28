@@ -1084,14 +1084,11 @@ Instruction *InstCombiner::foldOpIntoPhi(Instruction &I, PHINode *PN) {
     Constant *C = cast<Constant>(I.getOperand(1));
     for (unsigned i = 0; i != NumPHIValues; ++i) {
       Value *InV = nullptr;
-      if (Constant *InC = dyn_cast<Constant>(PN->getIncomingValue(i)))
+      if (auto *InC = dyn_cast<Constant>(PN->getIncomingValue(i)))
         InV = ConstantExpr::getCompare(CI->getPredicate(), InC, C);
-      else if (isa<ICmpInst>(CI))
-        InV = Builder.CreateICmp(CI->getPredicate(), PN->getIncomingValue(i),
-                                 C, "phitmp");
       else
-        InV = Builder.CreateFCmp(CI->getPredicate(), PN->getIncomingValue(i),
-                                 C, "phitmp");
+        InV = Builder.CreateCmp(CI->getPredicate(), PN->getIncomingValue(i),
+                                C, "phitmp");
       NewPN->addIncoming(InV, PN->getIncomingBlock(i));
     }
   } else if (auto *BO = dyn_cast<BinaryOperator>(&I)) {
@@ -3357,6 +3354,12 @@ static bool TryToSinkInstruction(Instruction *I, BasicBlock *DestBlock) {
   BasicBlock::iterator InsertPos = DestBlock->getFirstInsertionPt();
   I->moveBefore(&*InsertPos);
   ++NumSunkInst;
+
+  // Drop the debug loc of non-inlinable instructions. This prevents
+  // single-stepping from going backwards. See HowToUpdateDebugInfo.rst for
+  // the full rationale.
+  if (!isa<CallBase>(I))
+    I->setDebugLoc(DebugLoc());
 
   // Also sink all related debug uses from the source basic block. Otherwise we
   // get debug use before the def. Attempt to salvage debug uses first, to

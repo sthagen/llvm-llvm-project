@@ -271,11 +271,11 @@ static bool matchZip(MachineInstr &MI, MachineRegisterInfo &MRI,
   return true;
 }
 
-static bool matchDup(MachineInstr &MI, MachineRegisterInfo &MRI,
-                     ShuffleVectorPseudo &MatchInfo) {
-  assert(MI.getOpcode() == TargetOpcode::G_SHUFFLE_VECTOR);
-  auto Lane = getSplatIndex(MI);
-  if (!Lane || *Lane != 0)
+/// Helper function for matchDup.
+static bool matchDupFromInsertVectorElt(int Lane, MachineInstr &MI,
+                                        MachineRegisterInfo &MRI,
+                                        ShuffleVectorPseudo &MatchInfo) {
+  if (Lane != 0)
     return false;
 
   // Try to match a vector splat operation into a dup instruction.
@@ -296,10 +296,9 @@ static bool matchDup(MachineInstr &MI, MachineRegisterInfo &MRI,
                              MI.getOperand(1).getReg(), MRI);
   if (!InsMI)
     return false;
-
   // Match the undef vector operand.
-  if (!getOpcodeDef(TargetOpcode::G_IMPLICIT_DEF,
-                               InsMI->getOperand(1).getReg(), MRI))
+  if (!getOpcodeDef(TargetOpcode::G_IMPLICIT_DEF, InsMI->getOperand(1).getReg(),
+                    MRI))
     return false;
 
   // Match the index constant 0.
@@ -307,10 +306,43 @@ static bool matchDup(MachineInstr &MI, MachineRegisterInfo &MRI,
   if (!mi_match(InsMI->getOperand(3).getReg(), MRI, m_ICst(Index)) || Index)
     return false;
 
-  Register Dst = MI.getOperand(0).getReg();
-  MatchInfo =
-      ShuffleVectorPseudo(AArch64::G_DUP, Dst, {InsMI->getOperand(2).getReg()});
+  MatchInfo = ShuffleVectorPseudo(AArch64::G_DUP, MI.getOperand(0).getReg(),
+                                  {InsMI->getOperand(2).getReg()});
   return true;
+}
+
+/// Helper function for matchDup.
+static bool matchDupFromBuildVector(int Lane, MachineInstr &MI,
+                                    MachineRegisterInfo &MRI,
+                                    ShuffleVectorPseudo &MatchInfo) {
+  assert(Lane >= 0 && "Expected positive lane?");
+  // Test if the LHS is a BUILD_VECTOR. If it is, then we can just reference the
+  // lane's definition directly.
+  auto *BuildVecMI = getOpcodeDef(TargetOpcode::G_BUILD_VECTOR,
+                                  MI.getOperand(1).getReg(), MRI);
+  if (!BuildVecMI)
+    return false;
+  Register Reg = BuildVecMI->getOperand(Lane + 1).getReg();
+  MatchInfo =
+      ShuffleVectorPseudo(AArch64::G_DUP, MI.getOperand(0).getReg(), {Reg});
+  return true;
+}
+
+static bool matchDup(MachineInstr &MI, MachineRegisterInfo &MRI,
+                     ShuffleVectorPseudo &MatchInfo) {
+  assert(MI.getOpcode() == TargetOpcode::G_SHUFFLE_VECTOR);
+  auto MaybeLane = getSplatIndex(MI);
+  if (!MaybeLane)
+    return false;
+  int Lane = *MaybeLane;
+  // If this is undef splat, generate it via "just" vdup, if possible.
+  if (Lane < 0)
+    Lane = 0;
+  if (matchDupFromInsertVectorElt(Lane, MI, MRI, MatchInfo))
+    return true;
+  if (matchDupFromBuildVector(Lane, MI, MRI, MatchInfo))
+    return true;
+  return false;
 }
 
 static bool matchEXT(MachineInstr &MI, MachineRegisterInfo &MRI,
@@ -372,7 +404,7 @@ class AArch64PostLegalizerCombinerInfo : public CombinerInfo {
   MachineDominatorTree *MDT;
 
 public:
-  AArch64GenPostLegalizerCombinerHelper Generated;
+  AArch64GenPostLegalizerCombinerHelperRuleConfig GeneratedRuleCfg;
 
   AArch64PostLegalizerCombinerInfo(bool EnableOpt, bool OptSize, bool MinSize,
                                    GISelKnownBits *KB,
@@ -380,7 +412,7 @@ public:
       : CombinerInfo(/*AllowIllegalOps*/ true, /*ShouldLegalizeIllegal*/ false,
                      /*LegalizerInfo*/ nullptr, EnableOpt, OptSize, MinSize),
         KB(KB), MDT(MDT) {
-    if (!Generated.parseCommandLineOption())
+    if (!GeneratedRuleCfg.parseCommandLineOption())
       report_fatal_error("Invalid rule identifier");
   }
 
@@ -394,6 +426,7 @@ bool AArch64PostLegalizerCombinerInfo::combine(GISelChangeObserver &Observer,
   const auto *LI =
       MI.getParent()->getParent()->getSubtarget().getLegalizerInfo();
   CombinerHelper Helper(Observer, B, KB, MDT, LI);
+  AArch64GenPostLegalizerCombinerHelper Generated(GeneratedRuleCfg);
   return Generated.tryCombineAll(Observer, MI, B, Helper);
 }
 

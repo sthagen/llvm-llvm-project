@@ -26,6 +26,7 @@
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/OperationKinds.h"
 #include "clang/AST/Stmt.h"
+#include "clang/AST/StmtCXX.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/UnresolvedSet.h"
@@ -83,6 +84,7 @@ class CXXOperatorCallExpr final : public CallExpr {
   friend class ASTStmtWriter;
 
   SourceRange Range;
+  FPOptionsOverride Overrides;
 
   // CXXOperatorCallExpr has some trailing objects belonging
   // to CallExpr. See CallExpr for the details.
@@ -91,7 +93,7 @@ class CXXOperatorCallExpr final : public CallExpr {
 
   CXXOperatorCallExpr(OverloadedOperatorKind OpKind, Expr *Fn,
                       ArrayRef<Expr *> Args, QualType Ty, ExprValueKind VK,
-                      SourceLocation OperatorLoc, FPOptions FPFeatures,
+                      SourceLocation OperatorLoc, FPOptionsOverride FPFeatures,
                       ADLCallKind UsesADL);
 
   CXXOperatorCallExpr(unsigned NumArgs, EmptyShell Empty);
@@ -100,7 +102,7 @@ public:
   static CXXOperatorCallExpr *
   Create(const ASTContext &Ctx, OverloadedOperatorKind OpKind, Expr *Fn,
          ArrayRef<Expr *> Args, QualType Ty, ExprValueKind VK,
-         SourceLocation OperatorLoc, FPOptions FPFeatures,
+         SourceLocation OperatorLoc, FPOptionsOverride FPFeatures,
          ADLCallKind UsesADL = NotADL);
 
   static CXXOperatorCallExpr *CreateEmpty(const ASTContext &Ctx,
@@ -163,20 +165,10 @@ public:
     return T->getStmtClass() == CXXOperatorCallExprClass;
   }
 
-  // Set the FP contractability status of this operator. Only meaningful for
+  // Set the FPFeatures status of this operator. Only meaningful for
   // operations on floating point types.
-  void setFPFeatures(FPOptions F) {
-    CXXOperatorCallExprBits.FPFeatures = F.getAsOpaqueInt();
-  }
-  FPOptions getFPFeatures() const {
-    return FPOptions(CXXOperatorCallExprBits.FPFeatures);
-  }
-
-  // Get the FP contractability status of this operator. Only meaningful for
-  // operations on floating point types.
-  bool isFPContractableWithinStatement() const {
-    return getFPFeatures().allowFPContractWithinStatement();
-  }
+  void setFPFeatures(FPOptionsOverride F) { Overrides = F; }
+  FPOptionsOverride getFPFeatures() const { return Overrides; }
 };
 
 /// Represents a call to a member function that
@@ -2004,8 +1996,25 @@ public:
   /// Whether this is a generic lambda.
   bool isGenericLambda() const { return getTemplateParameterList(); }
 
-  /// Retrieve the body of the lambda.
-  CompoundStmt *getBody() const;
+  /// Retrieve the body of the lambda. This will be most of the time
+  /// a \p CompoundStmt, but can also be \p CoroutineBodyStmt wrapping
+  /// a \p CompoundStmt. Note that unlike functions, lambda-expressions
+  /// cannot have a function-try-block.
+  Stmt *getBody() const { return getStoredStmts()[capture_size()]; }
+
+  /// Retrieve the \p CompoundStmt representing the body of the lambda.
+  /// This is a convenience function for callers who do not need
+  /// to handle node(s) which may wrap a \p CompoundStmt.
+  const CompoundStmt *getCompoundStmtBody() const {
+    Stmt *Body = getBody();
+    if (const auto *CoroBody = dyn_cast<CoroutineBodyStmt>(Body))
+      return cast<CompoundStmt>(CoroBody->getBody());
+    return cast<CompoundStmt>(Body);
+  }
+  CompoundStmt *getCompoundStmtBody() {
+    const auto *ConstThis = this;
+    return const_cast<CompoundStmt *>(ConstThis->getCompoundStmtBody());
+  }
 
   /// Determine whether the lambda is mutable, meaning that any
   /// captures values can be modified.

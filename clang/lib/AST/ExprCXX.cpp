@@ -525,27 +525,27 @@ CXXOperatorCallExpr::CXXOperatorCallExpr(OverloadedOperatorKind OpKind,
                                          Expr *Fn, ArrayRef<Expr *> Args,
                                          QualType Ty, ExprValueKind VK,
                                          SourceLocation OperatorLoc,
-                                         FPOptions FPFeatures,
+                                         FPOptionsOverride FPFeatures,
                                          ADLCallKind UsesADL)
     : CallExpr(CXXOperatorCallExprClass, Fn, /*PreArgs=*/{}, Args, Ty, VK,
                OperatorLoc, /*MinNumArgs=*/0, UsesADL) {
   CXXOperatorCallExprBits.OperatorKind = OpKind;
-  CXXOperatorCallExprBits.FPFeatures = FPFeatures.getAsOpaqueInt();
   assert(
       (CXXOperatorCallExprBits.OperatorKind == static_cast<unsigned>(OpKind)) &&
       "OperatorKind overflow!");
-  assert((CXXOperatorCallExprBits.FPFeatures == FPFeatures.getAsOpaqueInt()) &&
-         "FPFeatures overflow!");
   Range = getSourceRangeImpl();
+  Overrides = FPFeatures;
 }
 
 CXXOperatorCallExpr::CXXOperatorCallExpr(unsigned NumArgs, EmptyShell Empty)
     : CallExpr(CXXOperatorCallExprClass, /*NumPreArgs=*/0, NumArgs, Empty) {}
 
-CXXOperatorCallExpr *CXXOperatorCallExpr::Create(
-    const ASTContext &Ctx, OverloadedOperatorKind OpKind, Expr *Fn,
-    ArrayRef<Expr *> Args, QualType Ty, ExprValueKind VK,
-    SourceLocation OperatorLoc, FPOptions FPFeatures, ADLCallKind UsesADL) {
+CXXOperatorCallExpr *
+CXXOperatorCallExpr::Create(const ASTContext &Ctx,
+                            OverloadedOperatorKind OpKind, Expr *Fn,
+                            ArrayRef<Expr *> Args, QualType Ty,
+                            ExprValueKind VK, SourceLocation OperatorLoc,
+                            FPOptionsOverride FPFeatures, ADLCallKind UsesADL) {
   // Allocate storage for the trailing objects of CallExpr.
   unsigned NumArgs = Args.size();
   unsigned SizeOfTrailingObjects =
@@ -1118,15 +1118,6 @@ LambdaExpr::LambdaExpr(QualType T, SourceRange IntroducerRange,
 LambdaExpr::LambdaExpr(EmptyShell Empty, unsigned NumCaptures)
     : Expr(LambdaExprClass, Empty) {
   LambdaExprBits.NumCaptures = NumCaptures;
-
-  // FIXME: There is no need to do this since these members should be
-  // initialized during deserialization.
-  LambdaExprBits.CaptureDefault = LCD_None;
-  LambdaExprBits.ExplicitParams = false;
-  LambdaExprBits.ExplicitResultType = false;
-
-  // FIXME: Remove once the bug in LambdaExpr::getBody is fixed.
-  getStoredStmts()[capture_size()] = nullptr;
 }
 
 LambdaExpr *LambdaExpr::Create(const ASTContext &Context, CXXRecordDecl *Class,
@@ -1221,17 +1212,6 @@ TemplateParameterList *LambdaExpr::getTemplateParameterList() const {
 ArrayRef<NamedDecl *> LambdaExpr::getExplicitTemplateParameters() const {
   const CXXRecordDecl *Record = getLambdaClass();
   return Record->getLambdaExplicitTemplateParameters();
-}
-
-CompoundStmt *LambdaExpr::getBody() const {
-  // FIXME: this mutation in getBody is bogus. It should be
-  // initialized in ASTStmtReader::VisitLambdaExpr, but for reasons I
-  // don't understand, that doesn't work.
-  if (!getStoredStmts()[capture_size()])
-    *const_cast<Stmt **>(&getStoredStmts()[capture_size()]) =
-        getCallOperator()->getBody();
-
-  return static_cast<CompoundStmt *>(getStoredStmts()[capture_size()]);
 }
 
 bool LambdaExpr::isMutable() const { return !getCallOperator()->isConst(); }

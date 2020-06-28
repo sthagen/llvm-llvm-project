@@ -53,6 +53,8 @@ enum NodeType : unsigned {
   SBC, // adc, sbc instructions
 
   // Arithmetic instructions
+  ADD_PRED,
+  FADD_PRED,
   SDIV_PRED,
   UDIV_PRED,
   SMIN_PRED,
@@ -702,6 +704,9 @@ public:
                                                  bool isVarArg) const override;
   /// Used for exception handling on Win64.
   bool needsFixedCatchObjects() const override;
+
+  bool fallBackToDAGISel(const Instruction &Inst) const override;
+
 private:
   /// Keep a pointer to the AArch64Subtarget around so that we can
   /// make the right decision when generating code for different targets.
@@ -710,6 +715,7 @@ private:
   bool isExtFreeImpl(const Instruction *Ext) const override;
 
   void addTypeForNEON(MVT VT, MVT PromotedBitwiseVT);
+  void addTypeForFixedLengthSVE(MVT VT);
   void addDRTypeForNEON(MVT VT);
   void addQRTypeForNEON(MVT VT);
 
@@ -844,6 +850,9 @@ private:
   SDValue LowerSVEStructLoad(unsigned Intrinsic, ArrayRef<SDValue> LoadOps,
                              EVT VT, SelectionDAG &DAG, const SDLoc &DL) const;
 
+  SDValue LowerFixedLengthVectorLoadToSVE(SDValue Op, SelectionDAG &DAG) const;
+  SDValue LowerFixedLengthVectorStoreToSVE(SDValue Op, SelectionDAG &DAG) const;
+
   SDValue BuildSDIVPow2(SDNode *N, const APInt &Divisor, SelectionDAG &DAG,
                         SmallVectorImpl<SDNode *> &Created) const override;
   SDValue getSqrtEstimate(SDValue Operand, SelectionDAG &DAG, int Enabled,
@@ -907,6 +916,9 @@ private:
 
   bool shouldLocalize(const MachineInstr &MI,
                       const TargetTransformInfo *TTI) const override;
+
+  bool useSVEForFixedLengthVectors() const;
+  bool useSVEForFixedLengthVectorVT(EVT VT) const;
 };
 
 namespace AArch64 {
