@@ -9,6 +9,10 @@ endif()
 if( CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR )
   project(Clang)
 
+  set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to conform to")
+  set(CMAKE_CXX_STANDARD_REQUIRED YES)
+  set(CMAKE_CXX_EXTENSIONS NO)
+
   # Rely on llvm-config.
   set(CONFIG_OUTPUT)
   if(LLVM_CONFIG)
@@ -527,7 +531,7 @@ list(APPEND LLVM_COMMON_DEPENDS clang-tablegen-targets)
 # Force target to be built as soon as possible. Clang modules builds depend
 # header-wise on it as they ship all headers from the umbrella folders. Building
 # an entire module might include header, which depends on intrinsics_gen.
-if(LLVM_ENABLE_MODULES AND NOT CLANG_BUILT_STANDALONE)
+if(LLVM_ENABLE_MODULES)
   list(APPEND LLVM_COMMON_DEPENDS intrinsics_gen)
 endif()
 

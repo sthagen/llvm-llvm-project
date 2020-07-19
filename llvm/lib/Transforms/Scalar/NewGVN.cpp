@@ -1539,12 +1539,8 @@ NewGVN::performSymbolicPredicateInfoEvaluation(Instruction *I) const {
 
   LLVM_DEBUG(dbgs() << "Found predicate info from instruction !\n");
 
-  auto *PWC = dyn_cast<PredicateWithCondition>(PI);
-  if (!PWC)
-    return nullptr;
-
   auto *CopyOf = I->getOperand(0);
-  auto *Cond = PWC->Condition;
+  auto *Cond = PI->Condition;
 
   // If this a copy of the condition, it must be either true or false depending
   // on the predicate info type and edge.
@@ -3436,7 +3432,7 @@ bool NewGVN::runGVN() {
   // Sort dominator tree children arrays into RPO.
   for (auto &B : RPOT) {
     auto *Node = DT->getNode(B);
-    if (Node->getChildren().size() > 1)
+    if (Node->getNumChildren() > 1)
       llvm::sort(Node->begin(), Node->end(),
                  [&](const DomTreeNode *A, const DomTreeNode *B) {
                    return RPOOrdering[A] < RPOOrdering[B];

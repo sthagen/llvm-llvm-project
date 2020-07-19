@@ -168,7 +168,7 @@ Error DWARFYAML::emitDebugRanges(raw_ostream &OS, const DWARFYAML::Data &DI) {
     if (DebugRanges.AddrSize)
       AddrSize = *DebugRanges.AddrSize;
     else
-      AddrSize = DI.Is64bit ? 8 : 4;
+      AddrSize = DI.Is64BitAddrSize ? 8 : 4;
     for (auto Entry : DebugRanges.Entries) {
       if (Error Err = writeVariableSizedInteger(Entry.LowOffset, AddrSize, OS,
                                                 DI.IsLittleEndian))
@@ -381,7 +381,7 @@ Error DWARFYAML::emitDebugAddr(raw_ostream &OS, const Data &DI) {
     if (TableEntry.AddrSize)
       AddrSize = *TableEntry.AddrSize;
     else
-      AddrSize = DI.Is64bit ? 8 : 4;
+      AddrSize = DI.Is64BitAddrSize ? 8 : 4;
 
     uint64_t Length;
     if (TableEntry.Length)
@@ -416,6 +416,31 @@ Error DWARFYAML::emitDebugAddr(raw_ostream &OS, const Data &DI) {
   return Error::success();
 }
 
+Error DWARFYAML::emitDebugStrOffsets(raw_ostream &OS, const Data &DI) {
+  assert(DI.DebugStrOffsets && "unexpected emitDebugStrOffsets() call");
+  for (const DWARFYAML::StringOffsetsTable &Table : *DI.DebugStrOffsets) {
+    uint64_t Length;
+    if (Table.Length)
+      Length = *Table.Length;
+    else
+      // sizeof(version) + sizeof(padding) = 4
+      Length =
+          4 + Table.Offsets.size() * (Table.Format == dwarf::DWARF64 ? 8 : 4);
+
+    writeInitialLength(Table.Format, Length, OS, DI.IsLittleEndian);
+    writeInteger((uint16_t)Table.Version, OS, DI.IsLittleEndian);
+    writeInteger((uint16_t)Table.Padding, OS, DI.IsLittleEndian);
+
+    for (uint64_t Offset : Table.Offsets) {
+      cantFail(writeVariableSizedInteger(Offset,
+                                         Table.Format == dwarf::DWARF64 ? 8 : 4,
+                                         OS, DI.IsLittleEndian));
+    }
+  }
+
+  return Error::success();
+}
+
 using EmitFuncType = Error (*)(raw_ostream &, const DWARFYAML::Data &);
 
 static Error
@@ -440,36 +465,36 @@ class DIEFixupVisitor : public DWARFYAML::Visitor {
 public:
   DIEFixupVisitor(DWARFYAML::Data &DI) : DWARFYAML::Visitor(DI){};
 
-private:
-  virtual void onStartCompileUnit(DWARFYAML::Unit &CU) {
+protected:
+  void onStartCompileUnit(DWARFYAML::Unit &CU) override {
     // Size of the unit header, excluding the length field itself.
     Length = CU.Version >= 5 ? 8 : 7;
   }
 
-  virtual void onEndCompileUnit(DWARFYAML::Unit &CU) { CU.Length = Length; }
+  void onEndCompileUnit(DWARFYAML::Unit &CU) override { CU.Length = Length; }
 
-  virtual void onStartDIE(DWARFYAML::Unit &CU, DWARFYAML::Entry &DIE) {
+  void onStartDIE(DWARFYAML::Unit &CU, DWARFYAML::Entry &DIE) override {
     Length += getULEB128Size(DIE.AbbrCode);
   }
 
-  virtual void onValue(const uint8_t U) { Length += 1; }
-  virtual void onValue(const uint16_t U) { Length += 2; }
-  virtual void onValue(const uint32_t U) { Length += 4; }
-  virtual void onValue(const uint64_t U, const bool LEB = false) {
+  void onValue(const uint8_t U) override { Length += 1; }
+  void onValue(const uint16_t U) override { Length += 2; }
+  void onValue(const uint32_t U) override { Length += 4; }
+  void onValue(const uint64_t U, const bool LEB = false) override {
     if (LEB)
       Length += getULEB128Size(U);
     else
       Length += 8;
   }
-  virtual void onValue(const int64_t S, const bool LEB = false) {
+  void onValue(const int64_t S, const bool LEB = false) override {
     if (LEB)
       Length += getSLEB128Size(S);
     else
       Length += 8;
   }
-  virtual void onValue(const StringRef String) { Length += String.size() + 1; }
+  void onValue(const StringRef String) override { Length += String.size() + 1; }
 
-  virtual void onValue(const MemoryBufferRef MBR) {
+  void onValue(const MemoryBufferRef MBR) override {
     Length += MBR.getBufferSize();
   }
 };

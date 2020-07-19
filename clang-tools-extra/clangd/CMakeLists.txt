@@ -25,6 +25,7 @@ set(LLVM_LINK_COMPONENTS
   Support
   AllTargetsInfos
   FrontendOpenMP
+  Option
   )
 
 add_clang_library(clangDaemon
@@ -38,6 +39,7 @@ add_clang_library(clangDaemon
   Compiler.cpp
   Config.cpp
   ConfigCompile.cpp
+  ConfigProvider.cpp
   ConfigYAML.cpp
   Diagnostics.cpp
   DraftStore.cpp

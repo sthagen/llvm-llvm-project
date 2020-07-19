@@ -443,6 +443,8 @@ std::string Attribute::getAsString(bool InAttrGrp) const {
     return "cold";
   if (hasAttribute(Attribute::ImmArg))
     return "immarg";
+  if (hasAttribute(Attribute::NoUndef))
+    return "noundef";
 
   if (hasAttribute(Attribute::ByVal)) {
     std::string Result;
@@ -923,14 +925,13 @@ MaybeAlign AttributeSetNode::getStackAlignment() const {
 Type *AttributeSetNode::getByValType() const {
   if (auto A = findEnumAttribute(Attribute::ByVal))
     return A->getValueAsType();
-  return 0;
+  return nullptr;
 }
 
 Type *AttributeSetNode::getPreallocatedType() const {
-  for (const auto &I : *this)
-    if (I.hasAttribute(Attribute::Preallocated))
-      return I.getValueAsType();
-  return 0;
+  if (auto A = findEnumAttribute(Attribute::Preallocated))
+    return A->getValueAsType();
+  return nullptr;
 }
 
 uint64_t AttributeSetNode::getDereferenceableBytes() const {
@@ -968,7 +969,7 @@ std::string AttributeSetNode::getAsString(bool InAttrGrp) const {
 
 /// Map from AttributeList index to the internal array index. Adding one happens
 /// to work, because -1 wraps around to 0.
-static constexpr unsigned attrIdxToArrayIdx(unsigned Index) {
+static unsigned attrIdxToArrayIdx(unsigned Index) {
   return Index + 1;
 }
 
@@ -981,9 +982,7 @@ AttributeListImpl::AttributeListImpl(ArrayRef<AttributeSet> Sets)
 
   // Initialize AvailableFunctionAttrs and AvailableSomewhereAttrs
   // summary bitsets.
-  static_assert(attrIdxToArrayIdx(AttributeList::FunctionIndex) == 0U,
-                "function should be stored in slot 0");
-  for (const auto &I : Sets[0])
+  for (const auto &I : Sets[attrIdxToArrayIdx(AttributeList::FunctionIndex)])
     if (!I.isStringAttribute())
       AvailableFunctionAttrs.addAttribute(I.getKindAsEnum());
 
