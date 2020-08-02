@@ -457,6 +457,11 @@ void CommandInterpreter::Initialize() {
   if (cmd_obj_sp) {
     AddAlias("re", cmd_obj_sp);
   }
+
+  cmd_obj_sp = GetCommandSPExact("session history", false);
+  if (cmd_obj_sp) {
+    AddAlias("history", cmd_obj_sp);
+  }
 }
 
 void CommandInterpreter::Clear() {
@@ -476,55 +481,40 @@ const char *CommandInterpreter::ProcessEmbeddedScriptCommands(const char *arg) {
   return arg;
 }
 
+#define REGISTER_COMMAND_OBJECT(NAME, CLASS)                                   \
+  m_command_dict[NAME] = std::make_shared<CLASS>(*this);
+
 void CommandInterpreter::LoadCommandDictionary() {
   static Timer::Category func_cat(LLVM_PRETTY_FUNCTION);
   Timer scoped_timer(func_cat, LLVM_PRETTY_FUNCTION);
 
-  lldb::ScriptLanguage script_language = m_debugger.GetScriptLanguage();
-
-  m_command_dict["apropos"] = CommandObjectSP(new CommandObjectApropos(*this));
-  m_command_dict["breakpoint"] =
-      CommandObjectSP(new CommandObjectMultiwordBreakpoint(*this));
-  m_command_dict["command"] =
-      CommandObjectSP(new CommandObjectMultiwordCommands(*this));
-  m_command_dict["disassemble"] =
-      CommandObjectSP(new CommandObjectDisassemble(*this));
-  m_command_dict["expression"] =
-      CommandObjectSP(new CommandObjectExpression(*this));
-  m_command_dict["frame"] =
-      CommandObjectSP(new CommandObjectMultiwordFrame(*this));
-  m_command_dict["gui"] = CommandObjectSP(new CommandObjectGUI(*this));
-  m_command_dict["help"] = CommandObjectSP(new CommandObjectHelp(*this));
-  m_command_dict["log"] = CommandObjectSP(new CommandObjectLog(*this));
-  m_command_dict["memory"] = CommandObjectSP(new CommandObjectMemory(*this));
-  m_command_dict["platform"] =
-      CommandObjectSP(new CommandObjectPlatform(*this));
-  m_command_dict["plugin"] = CommandObjectSP(new CommandObjectPlugin(*this));
-  m_command_dict["process"] =
-      CommandObjectSP(new CommandObjectMultiwordProcess(*this));
-  m_command_dict["quit"] = CommandObjectSP(new CommandObjectQuit(*this));
-  m_command_dict["register"] =
-      CommandObjectSP(new CommandObjectRegister(*this));
-  m_command_dict["reproducer"] =
-      CommandObjectSP(new CommandObjectReproducer(*this));
-  m_command_dict["script"] =
-      CommandObjectSP(new CommandObjectScript(*this, script_language));
-  m_command_dict["session"] = std::make_shared<CommandObjectSession>(*this);
-  m_command_dict["settings"] =
-      CommandObjectSP(new CommandObjectMultiwordSettings(*this));
-  m_command_dict["source"] =
-      CommandObjectSP(new CommandObjectMultiwordSource(*this));
-  m_command_dict["statistics"] = CommandObjectSP(new CommandObjectStats(*this));
-  m_command_dict["target"] =
-      CommandObjectSP(new CommandObjectMultiwordTarget(*this));
-  m_command_dict["thread"] =
-      CommandObjectSP(new CommandObjectMultiwordThread(*this));
-  m_command_dict["type"] = CommandObjectSP(new CommandObjectType(*this));
-  m_command_dict["version"] = CommandObjectSP(new CommandObjectVersion(*this));
-  m_command_dict["watchpoint"] =
-      CommandObjectSP(new CommandObjectMultiwordWatchpoint(*this));
-  m_command_dict["language"] =
-      CommandObjectSP(new CommandObjectLanguage(*this));
+  REGISTER_COMMAND_OBJECT("apropos", CommandObjectApropos);
+  REGISTER_COMMAND_OBJECT("breakpoint", CommandObjectMultiwordBreakpoint);
+  REGISTER_COMMAND_OBJECT("command", CommandObjectMultiwordCommands);
+  REGISTER_COMMAND_OBJECT("disassemble", CommandObjectDisassemble);
+  REGISTER_COMMAND_OBJECT("expression", CommandObjectExpression);
+  REGISTER_COMMAND_OBJECT("frame", CommandObjectMultiwordFrame);
+  REGISTER_COMMAND_OBJECT("gui", CommandObjectGUI);
+  REGISTER_COMMAND_OBJECT("help", CommandObjectHelp);
+  REGISTER_COMMAND_OBJECT("log", CommandObjectLog);
+  REGISTER_COMMAND_OBJECT("memory", CommandObjectMemory);
+  REGISTER_COMMAND_OBJECT("platform", CommandObjectPlatform);
+  REGISTER_COMMAND_OBJECT("plugin", CommandObjectPlugin);
+  REGISTER_COMMAND_OBJECT("process", CommandObjectMultiwordProcess);
+  REGISTER_COMMAND_OBJECT("quit", CommandObjectQuit);
+  REGISTER_COMMAND_OBJECT("register", CommandObjectRegister);
+  REGISTER_COMMAND_OBJECT("reproducer", CommandObjectReproducer);
+  REGISTER_COMMAND_OBJECT("script", CommandObjectScript);
+  REGISTER_COMMAND_OBJECT("settings", CommandObjectMultiwordSettings);
+  REGISTER_COMMAND_OBJECT("session", CommandObjectSession);
+  REGISTER_COMMAND_OBJECT("source", CommandObjectMultiwordSource);
+  REGISTER_COMMAND_OBJECT("statistics", CommandObjectStats);
+  REGISTER_COMMAND_OBJECT("target", CommandObjectMultiwordTarget);
+  REGISTER_COMMAND_OBJECT("thread", CommandObjectMultiwordThread);
+  REGISTER_COMMAND_OBJECT("type", CommandObjectType);
+  REGISTER_COMMAND_OBJECT("version", CommandObjectVersion);
+  REGISTER_COMMAND_OBJECT("watchpoint", CommandObjectMultiwordWatchpoint);
+  REGISTER_COMMAND_OBJECT("language", CommandObjectLanguage);
 
   // clang-format off
   const char *break_regexes[][2] = {
@@ -641,15 +631,10 @@ void CommandInterpreter::LoadCommandDictionary() {
   if (tbreak_regex_cmd_up) {
     bool success = true;
     for (size_t i = 0; i < num_regexes; i++) {
-      // If you add a resultant command string longer than 1024 characters be
-      // sure to increase the size of this buffer.
-      char buffer[1024];
-      int num_printed =
-          snprintf(buffer, 1024, "%s %s", break_regexes[i][1], "-o 1");
-      lldbassert(num_printed < 1024);
-      UNUSED_IF_ASSERT_DISABLED(num_printed);
+      std::string command = break_regexes[i][1];
+      command += " -o 1";
       success =
-          tbreak_regex_cmd_up->AddRegexCommand(break_regexes[i][0], buffer);
+          tbreak_regex_cmd_up->AddRegexCommand(break_regexes[i][0], command);
       if (!success)
         break;
     }
@@ -1997,10 +1982,7 @@ void CommandInterpreter::BuildAliasCommandArgs(CommandObject *alias_cmd_obj,
         if (value_type != OptionParser::eOptionalArgument)
           new_args.AppendArgument(value);
         else {
-          char buffer[255];
-          ::snprintf(buffer, sizeof(buffer), "%s%s", option.c_str(),
-                     value.c_str());
-          new_args.AppendArgument(llvm::StringRef(buffer));
+          new_args.AppendArgument(option + value);
         }
 
       } else if (static_cast<size_t>(index) >= cmd_args.GetArgumentCount()) {
@@ -2022,10 +2004,7 @@ void CommandInterpreter::BuildAliasCommandArgs(CommandObject *alias_cmd_obj,
         if (value_type != OptionParser::eOptionalArgument)
           new_args.AppendArgument(cmd_args.GetArgumentAtIndex(index));
         else {
-          char buffer[255];
-          ::snprintf(buffer, sizeof(buffer), "%s%s", option.c_str(),
-                     cmd_args.GetArgumentAtIndex(index));
-          new_args.AppendArgument(buffer);
+          new_args.AppendArgument(option + cmd_args.GetArgumentAtIndex(index));
         }
         used[index] = true;
       }
