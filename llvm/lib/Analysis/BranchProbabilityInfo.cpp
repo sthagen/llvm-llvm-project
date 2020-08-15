@@ -122,8 +122,8 @@ static const uint32_t CC_NONTAKEN_WEIGHT = 64;
 static const uint32_t PH_TAKEN_WEIGHT = 20;
 static const uint32_t PH_NONTAKEN_WEIGHT = 12;
 
-static const uint32_t ZH_TAKEN_WEIGHT = 20;
-static const uint32_t ZH_NONTAKEN_WEIGHT = 12;
+static const uint32_t INTH_TAKEN_WEIGHT = 20;
+static const uint32_t INTH_NONTAKEN_WEIGHT = 12;
 
 static const uint32_t FPH_TAKEN_WEIGHT = 20;
 static const uint32_t FPH_NONTAKEN_WEIGHT = 12;
@@ -244,6 +244,66 @@ void BranchProbabilityInfo::SccInfo::calculateSccBlockType(const BasicBlock *BB,
     std::tie(std::ignore, IsInserted) =
         SccBlockTypes.insert(std::make_pair(BB, BlockType));
     assert(IsInserted && "Duplicated block in SCC");
+  }
+}
+
+BranchProbabilityInfo::LoopBlock::LoopBlock(const BasicBlock *BB,
+                                            const LoopInfo &LI,
+                                            const SccInfo &SccI)
+    : BB(BB) {
+  LD.first = LI.getLoopFor(BB);
+  if (!LD.first) {
+    LD.second = SccI.getSCCNum(BB);
+  }
+}
+
+bool BranchProbabilityInfo::isLoopEnteringEdge(const LoopEdge &Edge) const {
+  const auto &SrcBlock = Edge.first;
+  const auto &DstBlock = Edge.second;
+  return (DstBlock.getLoop() &&
+          !DstBlock.getLoop()->contains(SrcBlock.getLoop())) ||
+         // Assume that SCCs can't be nested.
+         (DstBlock.getSccNum() != -1 &&
+          SrcBlock.getSccNum() != DstBlock.getSccNum());
+}
+
+bool BranchProbabilityInfo::isLoopExitingEdge(const LoopEdge &Edge) const {
+  return isLoopEnteringEdge({Edge.second, Edge.first});
+}
+
+bool BranchProbabilityInfo::isLoopEnteringExitingEdge(
+    const LoopEdge &Edge) const {
+  return isLoopEnteringEdge(Edge) || isLoopExitingEdge(Edge);
+}
+
+bool BranchProbabilityInfo::isLoopBackEdge(const LoopEdge &Edge) const {
+  const auto &SrcBlock = Edge.first;
+  const auto &DstBlock = Edge.second;
+  return SrcBlock.belongsToSameLoop(DstBlock) &&
+         ((DstBlock.getLoop() &&
+           DstBlock.getLoop()->getHeader() == DstBlock.getBlock()) ||
+          (DstBlock.getSccNum() != -1 &&
+           SccI->isSCCHeader(DstBlock.getBlock(), DstBlock.getSccNum())));
+}
+
+void BranchProbabilityInfo::getLoopEnterBlocks(
+    const LoopBlock &LB, SmallVectorImpl<BasicBlock *> &Enters) const {
+  if (LB.getLoop()) {
+    auto *Header = LB.getLoop()->getHeader();
+    Enters.append(pred_begin(Header), pred_end(Header));
+  } else {
+    assert(LB.getSccNum() != -1 && "LB doesn't belong to any loop?");
+    SccI->getSccEnterBlocks(LB.getSccNum(), Enters);
+  }
+}
+
+void BranchProbabilityInfo::getLoopExitBlocks(
+    const LoopBlock &LB, SmallVectorImpl<BasicBlock *> &Exits) const {
+  if (LB.getLoop()) {
+    LB.getLoop()->getExitBlocks(Exits);
+  } else {
+    assert(LB.getSccNum() != -1 && "LB doesn't belong to any loop?");
+    SccI->getSccExitBlocks(LB.getSccNum(), Exits);
   }
 }
 
@@ -720,17 +780,13 @@ computeUnlikelySuccessors(const BasicBlock *BB, Loop *L,
 // as taken, exiting edges as not-taken.
 bool BranchProbabilityInfo::calcLoopBranchHeuristics(const BasicBlock *BB,
                                                      const LoopInfo &LI) {
-  int SccNum;
-  Loop *L = LI.getLoopFor(BB);
-  if (!L) {
-    SccNum = SccI->getSCCNum(BB);
-    if (SccNum < 0)
-      return false;
-  }
+  LoopBlock LB(BB, LI, *SccI.get());
+  if (!LB.belongsToLoop())
+    return false;
 
   SmallPtrSet<const BasicBlock*, 8> UnlikelyBlocks;
-  if (L)
-    computeUnlikelySuccessors(BB, L, UnlikelyBlocks);
+  if (LB.getLoop())
+    computeUnlikelySuccessors(BB, LB.getLoop(), UnlikelyBlocks);
 
   SmallVector<unsigned, 8> BackEdges;
   SmallVector<unsigned, 8> ExitingEdges;
@@ -738,24 +794,19 @@ bool BranchProbabilityInfo::calcLoopBranchHeuristics(const BasicBlock *BB,
   SmallVector<unsigned, 8> UnlikelyEdges;
 
   for (const_succ_iterator I = succ_begin(BB), E = succ_end(BB); I != E; ++I) {
-    // Use LoopInfo if we have it, otherwise fall-back to SCC info to catch
-    // irreducible loops.
-    if (L) {
-      if (UnlikelyBlocks.count(*I) != 0)
-        UnlikelyEdges.push_back(I.getSuccessorIndex());
-      else if (!L->contains(*I))
-        ExitingEdges.push_back(I.getSuccessorIndex());
-      else if (L->getHeader() == *I)
-        BackEdges.push_back(I.getSuccessorIndex());
-      else
-        InEdges.push_back(I.getSuccessorIndex());
-    } else {
-      if (SccI->getSCCNum(*I) != SccNum)
-        ExitingEdges.push_back(I.getSuccessorIndex());
-      else if (SccI->isSCCHeader(*I, SccNum))
-        BackEdges.push_back(I.getSuccessorIndex());
-      else
-        InEdges.push_back(I.getSuccessorIndex());
+    LoopBlock SuccLB(*I, LI, *SccI.get());
+    LoopEdge Edge(LB, SuccLB);
+    bool IsUnlikelyEdge =
+        LB.getLoop() && (UnlikelyBlocks.find(*I) != UnlikelyBlocks.end());
+
+    if (IsUnlikelyEdge)
+      UnlikelyEdges.push_back(I.getSuccessorIndex());
+    else if (isLoopExitingEdge(Edge))
+      ExitingEdges.push_back(I.getSuccessorIndex());
+    else if (isLoopBackEdge(Edge))
+      BackEdges.push_back(I.getSuccessorIndex());
+    else {
+      InEdges.push_back(I.getSuccessorIndex());
     }
   }
 
@@ -805,7 +856,7 @@ bool BranchProbabilityInfo::calcLoopBranchHeuristics(const BasicBlock *BB,
   return true;
 }
 
-bool BranchProbabilityInfo::calcZeroHeuristics(const BasicBlock *BB,
+bool BranchProbabilityInfo::calcIntegerHeuristics(const BasicBlock *BB,
                                                const TargetLibraryInfo *TLI) {
   const BranchInst *BI = dyn_cast<BranchInst>(BB->getTerminator());
   if (!BI || !BI->isConditional())
@@ -822,10 +873,21 @@ bool BranchProbabilityInfo::calcZeroHeuristics(const BasicBlock *BB,
     return dyn_cast<ConstantInt>(V);
   };
 
+  BranchProbability TakenProb(INTH_TAKEN_WEIGHT,
+                              INTH_TAKEN_WEIGHT + INTH_NONTAKEN_WEIGHT);
+  BranchProbability UntakenProb(INTH_NONTAKEN_WEIGHT,
+                                INTH_TAKEN_WEIGHT + INTH_NONTAKEN_WEIGHT);
   Value *RHS = CI->getOperand(1);
   ConstantInt *CV = GetConstantInt(RHS);
-  if (!CV)
-    return false;
+  if (!CV) {
+    // X == Y -> Unlikely
+    // Otherwise -> Likely
+    if (CI->isTrueWhenEqual())
+      std::swap(TakenProb, UntakenProb);
+    setEdgeProbability(
+        BB, SmallVector<BranchProbability, 2>({TakenProb, UntakenProb}));
+    return true;
+  }
 
   // If the LHS is the result of AND'ing a value with a single bit bitmask,
   // we don't have information about probabilities.
@@ -847,7 +909,8 @@ bool BranchProbabilityInfo::calcZeroHeuristics(const BasicBlock *BB,
       Func == LibFunc_strcmp ||
       Func == LibFunc_strncasecmp ||
       Func == LibFunc_strncmp ||
-      Func == LibFunc_memcmp) {
+      Func == LibFunc_memcmp ||
+      Func == LibFunc_bcmp) {
     // strcmp and similar functions return zero, negative, or positive, if the
     // first string is equal, less, or greater than the second. We consider it
     // likely that the strings are not equal, so a comparison with zero is
@@ -912,10 +975,6 @@ bool BranchProbabilityInfo::calcZeroHeuristics(const BasicBlock *BB,
     return false;
   }
 
-  BranchProbability TakenProb(ZH_TAKEN_WEIGHT,
-                              ZH_TAKEN_WEIGHT + ZH_NONTAKEN_WEIGHT);
-  BranchProbability UntakenProb(ZH_NONTAKEN_WEIGHT,
-                                ZH_TAKEN_WEIGHT + ZH_NONTAKEN_WEIGHT);
   if (!isProb)
     std::swap(TakenProb, UntakenProb);
 
@@ -1169,7 +1228,7 @@ void BranchProbabilityInfo::calculate(const Function &F, const LoopInfo &LI,
       continue;
     if (calcPointerHeuristics(BB))
       continue;
-    if (calcZeroHeuristics(BB, TLI))
+    if (calcIntegerHeuristics(BB, TLI))
       continue;
     if (calcFloatingPointHeuristics(BB))
       continue;

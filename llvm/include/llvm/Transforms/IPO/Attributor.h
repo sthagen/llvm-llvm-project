@@ -3359,12 +3359,32 @@ struct AAValueConstantRange
 /// force it. As for the conditions under which we force it, see
 /// AAPotentialValues.
 template <typename MemberTy, typename KeyInfo = DenseMapInfo<MemberTy>>
-struct PotentialValuesState : BooleanState {
+struct PotentialValuesState : AbstractState {
   using SetTy = DenseSet<MemberTy, KeyInfo>;
 
-  PotentialValuesState() : BooleanState(true) {}
+  PotentialValuesState() : IsValidState(true) {}
 
-  PotentialValuesState(bool IsValid) : BooleanState(IsValid) {}
+  PotentialValuesState(bool IsValid) : IsValidState(IsValid) {}
+
+  /// See AbstractState::isValidState(...)
+  bool isValidState() const override { return IsValidState.isValidState(); }
+
+  /// See AbstractState::isAtFixpoint(...)
+  bool isAtFixpoint() const override { return IsValidState.isAtFixpoint(); }
+
+  /// See AbstractState::indicatePessimisticFixpoint(...)
+  ChangeStatus indicatePessimisticFixpoint() override {
+    return IsValidState.indicatePessimisticFixpoint();
+  }
+
+  /// See AbstractState::indicateOptimisticFixpoint(...)
+  ChangeStatus indicateOptimisticFixpoint() override {
+    return IsValidState.indicateOptimisticFixpoint();
+  }
+
+  /// Return the assumed state
+  PotentialValuesState &getAssumed() { return *this; }
+  const PotentialValuesState &getAssumed() const { return *this; }
 
   /// Return this set. We should check whether this set is valid or not by
   /// isValidState() before calling this function.
@@ -3407,11 +3427,13 @@ struct PotentialValuesState : BooleanState {
 
   /// "Clamp" this state with \p PVS.
   PotentialValuesState operator^=(const PotentialValuesState &PVS) {
+    IsValidState ^= PVS.IsValidState;
     unionAssumed(PVS);
     return *this;
   }
 
   PotentialValuesState operator&=(const PotentialValuesState &PVS) {
+    IsValidState &= PVS.IsValidState;
     unionAssumed(PVS);
     return *this;
   }
@@ -3464,6 +3486,9 @@ private:
     }
     Set = IntersectSet;
   }
+
+  /// A helper state which indicate whether this state is valid or not.
+  BooleanState IsValidState;
 
   /// Container for potential values
   SetTy Set;
