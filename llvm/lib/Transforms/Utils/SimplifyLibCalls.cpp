@@ -2506,7 +2506,7 @@ Value *LibCallSimplifier::optimizeSPrintFString(CallInst *CI,
           CI->getArgOperand(0), Align(1), CI->getArgOperand(2), Align(1),
           ConstantInt::get(DL.getIntPtrType(CI->getContext()), SrcLen));
       // Returns total number of characters written without null-character.
-      return ConstantInt::get(DL.getIntPtrType(CI->getContext()), SrcLen - 1);
+      return ConstantInt::get(CI->getType(), SrcLen - 1);
     } else if (Value *V = emitStpCpy(CI->getArgOperand(0), CI->getArgOperand(2),
                                      B, TLI)) {
       // sprintf(dest, "%s", str) -> stpcpy(dest, str) - dest
