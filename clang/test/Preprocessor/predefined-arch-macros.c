@@ -3,6 +3,7 @@
 // RUN: %clang -march=i386 -m32 -E -dM %s -o - 2>&1 \
 // RUN:     -target i386-unknown-linux \
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_I386_M32
+// CHECK_I386_M32: #define __LAHF_SAHF__ 1
 // CHECK_I386_M32: #define __i386 1
 // CHECK_I386_M32: #define __i386__ 1
 // CHECK_I386_M32: #define __tune_i386__ 1
@@ -541,6 +542,7 @@
 // CHECK_CORE_AVX2_M32: #define __F16C__ 1
 // CHECK_CORE_AVX2_M32: #define __FMA__ 1
 // CHECK_CORE_AVX2_M32: #define __INVPCID__ 1
+// CHECK_CORE_AVX2_M32: #define __LAHF_SAHF__ 1
 // CHECK_CORE_AVX2_M32: #define __LZCNT__ 1
 // CHECK_CORE_AVX2_M32: #define __MMX__ 1
 // CHECK_CORE_AVX2_M32: #define __MOVBE__ 1
@@ -572,6 +574,7 @@
 // CHECK_CORE_AVX2_M64: #define __F16C__ 1
 // CHECK_CORE_AVX2_M64: #define __FMA__ 1
 // CHECK_CORE_AVX2_M64: #define __INVPCID__ 1
+// CHECK_CORE_AVX2_M64: #define __LAHF_SAHF__ 1
 // CHECK_CORE_AVX2_M64: #define __LZCNT__ 1
 // CHECK_CORE_AVX2_M64: #define __MMX__ 1
 // CHECK_CORE_AVX2_M64: #define __MOVBE__ 1
@@ -607,6 +610,7 @@
 // CHECK_BROADWELL_M32: #define __F16C__ 1
 // CHECK_BROADWELL_M32: #define __FMA__ 1
 // CHECK_BROADWELL_M32: #define __INVPCID__ 1
+// CHECK_BROADWELL_M32: #define __LAHF_SAHF__ 1
 // CHECK_BROADWELL_M32: #define __LZCNT__ 1
 // CHECK_BROADWELL_M32: #define __MMX__ 1
 // CHECK_BROADWELL_M32: #define __MOVBE__ 1
@@ -641,6 +645,7 @@
 // CHECK_BROADWELL_M64: #define __F16C__ 1
 // CHECK_BROADWELL_M64: #define __FMA__ 1
 // CHECK_BROADWELL_M64: #define __INVPCID__ 1
+// CHECK_BROADWELL_M64: #define __LAHF_SAHF__ 1
 // CHECK_BROADWELL_M64: #define __LZCNT__ 1
 // CHECK_BROADWELL_M64: #define __MMX__ 1
 // CHECK_BROADWELL_M64: #define __MOVBE__ 1
@@ -1683,6 +1688,7 @@
 // CHECK_SPR_M32: #define __SSE__ 1
 // CHECK_SPR_M32: #define __SSSE3__ 1
 // CHECK_SPR_M32: #define __TSXLDTRK__ 1
+// CHECK_SPR_M32: #define __UINTR__ 1
 // CHECK_SPR_M32: #define __VAES__ 1
 // CHECK_SPR_M32: #define __VPCLMULQDQ__ 1
 // CHECK_SPR_M32: #define __WAITPKG__ 1
@@ -1752,6 +1758,7 @@
 // CHECK_SPR_M64: #define __SSE__ 1
 // CHECK_SPR_M64: #define __SSSE3__ 1
 // CHECK_SPR_M64: #define __TSXLDTRK__ 1
+// CHECK_SPR_M64: #define __UINTR__ 1
 // CHECK_SPR_M64: #define __VAES__ 1
 // CHECK_SPR_M64: #define __VPCLMULQDQ__ 1
 // CHECK_SPR_M64: #define __WAITPKG__ 1
@@ -2258,21 +2265,6 @@
 // CHECK_X86_64_M32: #define __k8__ 1
 // CHECK_X86_64_M32: #define i386 1
 
-// RUN: %clang -march=x86-64 -m64 -E -dM %s -o - 2>&1 \
-// RUN:     -target i386-unknown-linux \
-// RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_X86_64_M64
-// CHECK_X86_64_M64: #define __MMX__ 1
-// CHECK_X86_64_M64: #define __SSE2_MATH__ 1
-// CHECK_X86_64_M64: #define __SSE2__ 1
-// CHECK_X86_64_M64: #define __SSE_MATH__ 1
-// CHECK_X86_64_M64: #define __SSE__ 1
-// CHECK_X86_64_M64: #define __amd64 1
-// CHECK_X86_64_M64: #define __amd64__ 1
-// CHECK_X86_64_M64: #define __k8 1
-// CHECK_X86_64_M64: #define __k8__ 1
-// CHECK_X86_64_M64: #define __x86_64 1
-// CHECK_X86_64_M64: #define __x86_64__ 1
-
 // RUN: %clang -march=k8 -m32 -E -dM %s -o - 2>&1 \
 // RUN:     -target i386-unknown-linux \
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_K8_M32
@@ -2515,6 +2507,7 @@
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_AMDFAM10_M32
 // CHECK_AMDFAM10_M32: #define __3dNOW_A__ 1
 // CHECK_AMDFAM10_M32: #define __3dNOW__ 1
+// CHECK_AMDFAM10_M32: #define __LAHF_SAHF__ 1
 // CHECK_AMDFAM10_M32: #define __LZCNT__ 1
 // CHECK_AMDFAM10_M32: #define __MMX__ 1
 // CHECK_AMDFAM10_M32: #define __POPCNT__ 1
@@ -2538,6 +2531,7 @@
 // CHECK_AMDFAM10_M64: #define __3dNOW_A__ 1
 // CHECK_AMDFAM10_M64: #define __3dNOW__ 1
 // CHECK_AMDFAM10_M64: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_16 1
+// CHECK_AMDFAM10_M64: #define __LAHF_SAHF__ 1
 // CHECK_AMDFAM10_M64: #define __LZCNT__ 1
 // CHECK_AMDFAM10_M64: #define __MMX__ 1
 // CHECK_AMDFAM10_M64: #define __POPCNT__ 1
@@ -2562,6 +2556,7 @@
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_BTVER1_M32
 // CHECK_BTVER1_M32-NOT: #define __3dNOW_A__ 1
 // CHECK_BTVER1_M32-NOT: #define __3dNOW__ 1
+// CHECK_BTVER1_M32: #define __LAHF_SAHF__ 1
 // CHECK_BTVER1_M32: #define __LZCNT__ 1
 // CHECK_BTVER1_M32: #define __MMX__ 1
 // CHECK_BTVER1_M32: #define __POPCNT__ 1
@@ -2584,6 +2579,7 @@
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_BTVER1_M64
 // CHECK_BTVER1_M64-NOT: #define __3dNOW_A__ 1
 // CHECK_BTVER1_M64-NOT: #define __3dNOW__ 1
+// CHECK_BTVER1_M64: #define __LAHF_SAHF__ 1
 // CHECK_BTVER1_M64: #define __LZCNT__ 1
 // CHECK_BTVER1_M64: #define __MMX__ 1
 // CHECK_BTVER1_M64: #define __POPCNT__ 1
@@ -3023,6 +3019,7 @@
 // CHECK_ZNVER1_M64-NOT: #define __FMA4__ 1
 // CHECK_ZNVER1_M64: #define __FMA__ 1
 // CHECK_ZNVER1_M64: #define __FSGSBASE__ 1
+// CHECK_ZNVER1_M64: #define __LAHF_SAHF__ 1
 // CHECK_ZNVER1_M64: #define __LZCNT__ 1
 // CHECK_ZNVER1_M64: #define __MMX__ 1
 // CHECK_ZNVER1_M64: #define __MOVBE__ 1
@@ -3073,6 +3070,7 @@
 // CHECK_ZNVER2_M32-NOT: #define __FMA4__ 1
 // CHECK_ZNVER2_M32: #define __FMA__ 1
 // CHECK_ZNVER2_M32: #define __FSGSBASE__ 1
+// CHECK_ZNVER2_M32: #define __LAHF_SAHF__ 1
 // CHECK_ZNVER2_M32: #define __LZCNT__ 1
 // CHECK_ZNVER2_M32: #define __MMX__ 1
 // CHECK_ZNVER2_M32: #define __PCLMUL__ 1
@@ -3122,6 +3120,7 @@
 // CHECK_ZNVER2_M64-NOT: #define __FMA4__ 1
 // CHECK_ZNVER2_M64: #define __FMA__ 1
 // CHECK_ZNVER2_M64: #define __FSGSBASE__ 1
+// CHECK_ZNVER2_M64: #define __LAHF_SAHF__ 1
 // CHECK_ZNVER2_M64: #define __LZCNT__ 1
 // CHECK_ZNVER2_M64: #define __MMX__ 1
 // CHECK_ZNVER2_M64: #define __PCLMUL__ 1
@@ -3235,9 +3234,26 @@
 // RUN:     -target sparc-unknown-linux \
 // RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_SPARC-V9
 // CHECK_SPARC-V9-NOT: #define __sparcv8 1
+// CHECK_SPARC-V9-NOT: #define __sparcv8__ 1
 // CHECK_SPARC-V9: #define __sparc_v9__ 1
 // CHECK_SPARC-V9: #define __sparcv9 1
-// CHECK_SPARC-V9-NOT: #define __sparcv8 1
+// CHECK_SPARC-V9: #define __sparcv9__ 1
+
+// RUN: %clang -E -dM %s -o - 2>&1 \
+// RUN:     -target sparc-sun-solaris \
+// RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_SPARC_SOLARIS_GCC_ATOMICS
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_1 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_2 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_8 1
+
+// RUN: %clang -mcpu=v8 -E -dM %s -o - 2>&1 \
+// RUN:     -target sparc-sun-solaris \
+// RUN:   | FileCheck -match-full-lines %s -check-prefix=CHECK_SPARC_SOLARIS_GCC_ATOMICS-V8
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS-V8-NOT: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_1 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS-V8-NOT: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_2 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS-V8-NOT: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4 1
+// CHECK_SPARC_SOLARIS_GCC_ATOMICS-V8-NOT: #define __GCC_HAVE_SYNC_COMPARE_AND_SWAP_8 1
 
 // RUN: %clang -E -dM %s -o - 2>&1 \
 // RUN:     -target sparcel-unknown-linux \

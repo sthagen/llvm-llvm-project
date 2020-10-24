@@ -88,6 +88,7 @@ class GCNTTIImpl final : public BasicTTIImplBase<GCNTTIImpl> {
     AMDGPU::FeatureEnableUnsafeDSOffsetFolding,
     AMDGPU::FeatureFlatForGlobal,
     AMDGPU::FeaturePromoteAlloca,
+    AMDGPU::FeatureUnalignedBufferAccess,
     AMDGPU::FeatureUnalignedScratchAccess,
     AMDGPU::FeatureUnalignedAccessMode,
 
@@ -97,7 +98,6 @@ class GCNTTIImpl final : public BasicTTIImplBase<GCNTTIImpl> {
     AMDGPU::FeatureSGPRInitBug,
     AMDGPU::FeatureXNACK,
     AMDGPU::FeatureTrapHandler,
-    AMDGPU::FeatureCodeObjectV3,
 
     // The default assumption needs to be ecc is enabled, but no directly
     // exposed operations depend on it, so it can be safely inlined.
@@ -227,6 +227,8 @@ public:
   Value *rewriteIntrinsicWithAddressSpace(IntrinsicInst *II, Value *OldV,
                                           Value *NewV) const;
 
+  bool canSimplifyLegacyMulToMul(const Value *Op0, const Value *Op1,
+                                 InstCombiner &IC) const;
   Optional<Instruction *> instCombineIntrinsic(InstCombiner &IC,
                                                IntrinsicInst &II) const;
   Optional<Value *> simplifyDemandedVectorEltsIntrinsic(

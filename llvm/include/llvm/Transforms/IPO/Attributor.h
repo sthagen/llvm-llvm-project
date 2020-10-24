@@ -116,9 +116,6 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/DOTGraphTraits.h"
-#include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Transforms/Utils/CallGraphUpdater.h"
 
@@ -1537,6 +1534,22 @@ struct Attributor {
   /// holds on all of them.
   bool checkForAllReadWriteInstructions(function_ref<bool(Instruction &)> Pred,
                                         AbstractAttribute &QueryingAA);
+
+  /// Create a shallow wrapper for \p F such that \p F has internal linkage
+  /// afterwards. It also sets the original \p F 's name to anonymous
+  ///
+  /// A wrapper is a function with the same type (and attributes) as \p F
+  /// that will only call \p F and return the result, if any.
+  ///
+  /// Assuming the declaration of looks like:
+  ///   rty F(aty0 arg0, ..., atyN argN);
+  ///
+  /// The wrapper will then look as follows:
+  ///   rty wrapper(aty0 arg0, ..., atyN argN) {
+  ///     return F(arg0, ..., argN);
+  ///   }
+  ///
+  static void createShallowWrapper(Function &F);
 
   /// Return the data layout associated with the anchor scope.
   const DataLayout &getDataLayout() const { return InfoCache.DL; }

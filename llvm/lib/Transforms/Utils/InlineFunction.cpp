@@ -1676,6 +1676,22 @@ llvm::InlineResult llvm::InlineFunction(CallBase &CB, InlineFunctionInfo &IFI,
       return InlineResult::failure("incompatible GC");
   }
 
+  // Inlining a function that explicitly should not have a stack protector may
+  // break the code if inlined into a function that does have a stack
+  // protector.
+  if (LLVM_UNLIKELY(Caller->hasFnAttribute(Attribute::NoStackProtect)))
+    if (CalledFunc->hasFnAttribute(Attribute::StackProtect) ||
+        CalledFunc->hasFnAttribute(Attribute::StackProtectStrong) ||
+        CalledFunc->hasFnAttribute(Attribute::StackProtectReq))
+      return InlineResult::failure(
+          "stack protected callee but caller requested no stack protector");
+  if (LLVM_UNLIKELY(CalledFunc->hasFnAttribute(Attribute::NoStackProtect)))
+    if (Caller->hasFnAttribute(Attribute::StackProtect) ||
+        Caller->hasFnAttribute(Attribute::StackProtectStrong) ||
+        Caller->hasFnAttribute(Attribute::StackProtectReq))
+      return InlineResult::failure(
+          "stack protected caller but callee requested no stack protector");
+
   // Get the personality function from the callee if it contains a landing pad.
   Constant *CalledPersonality =
       CalledFunc->hasPersonalityFn()
@@ -2061,7 +2077,7 @@ llvm::InlineResult llvm::InlineFunction(CallBase &CB, InlineFunctionInfo &IFI,
           dyn_cast<ConstantInt>(AI->getArraySize())) {
         auto &DL = Caller->getParent()->getDataLayout();
         Type *AllocaType = AI->getAllocatedType();
-        uint64_t AllocaTypeSize = DL.getTypeAllocSize(AllocaType);
+        TypeSize AllocaTypeSize = DL.getTypeAllocSize(AllocaType);
         uint64_t AllocaArraySize = AIArraySize->getLimitedValue();
 
         // Don't add markers for zero-sized allocas.
@@ -2070,9 +2086,10 @@ llvm::InlineResult llvm::InlineFunction(CallBase &CB, InlineFunctionInfo &IFI,
 
         // Check that array size doesn't saturate uint64_t and doesn't
         // overflow when it's multiplied by type size.
-        if (AllocaArraySize != std::numeric_limits<uint64_t>::max() &&
+        if (!AllocaTypeSize.isScalable() &&
+            AllocaArraySize != std::numeric_limits<uint64_t>::max() &&
             std::numeric_limits<uint64_t>::max() / AllocaArraySize >=
-                AllocaTypeSize) {
+                AllocaTypeSize.getFixedSize()) {
           AllocaSize = ConstantInt::get(Type::getInt64Ty(AI->getContext()),
                                         AllocaArraySize * AllocaTypeSize);
         }

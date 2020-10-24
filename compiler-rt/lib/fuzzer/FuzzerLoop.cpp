@@ -354,8 +354,10 @@ void Fuzzer::PrintStats(const char *Where, const char *End, size_t Units,
 }
 
 void Fuzzer::PrintFinalStats() {
+  if (Options.PrintFullCoverage)
+    TPC.PrintCoverage(/*PrintAllCounters=*/true);
   if (Options.PrintCoverage)
-    TPC.PrintCoverage();
+    TPC.PrintCoverage(/*PrintAllCounters=*/false);
   if (Options.PrintCorpusStats)
     Corpus.PrintStats();
   if (!Options.PrintFinalStats)
@@ -545,6 +547,8 @@ bool Fuzzer::RunOne(const uint8_t *Data, size_t Size, bool MayDeleteFile,
   return false;
 }
 
+void Fuzzer::TPCUpdateObservedPCs() { TPC.UpdateObservedPCs(); }
+
 size_t Fuzzer::GetCurrentUnitInFuzzingThead(const uint8_t **Data) const {
   assert(InFuzzingThread());
   *Data = CurrentUnitData;
@@ -636,7 +640,7 @@ void Fuzzer::PrintStatusForNewUnit(const Unit &U, const char *Text) {
   PrintStats(Text, "");
   if (Options.Verbosity) {
     Printf(" L: %zd/%zd ", U.size(), Corpus.MaxInputSize());
-    MD.PrintMutationSequence();
+    MD.PrintMutationSequence(Options.Verbosity >= 2);
     Printf("\n");
   }
 }

@@ -15,6 +15,7 @@
 #define MLIR_IR_OPERATION_SUPPORT_H
 
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/BlockSupport.h"
 #include "mlir/IR/Identifier.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/TypeRange.h"
@@ -28,8 +29,6 @@
 #include <memory>
 
 namespace mlir {
-class Block;
-class BlockRange;
 class Dialect;
 class Operation;
 struct OperationState;
@@ -364,8 +363,8 @@ public:
   OperationState(Location location, OperationName name);
 
   OperationState(Location location, StringRef name, ValueRange operands,
-                 ArrayRef<Type> types, ArrayRef<NamedAttribute> attributes,
-                 ArrayRef<Block *> successors = {},
+                 TypeRange types, ArrayRef<NamedAttribute> attributes,
+                 BlockRange successors = {},
                  MutableArrayRef<std::unique_ptr<Region>> regions = {});
 
   void addOperands(ValueRange newOperands);
@@ -563,10 +562,10 @@ public:
   OpPrintingFlags();
   OpPrintingFlags(llvm::NoneType) : OpPrintingFlags() {}
 
-  /// Enable the elision of large elements attributes, by printing a '...'
-  /// instead of the element data. Note: The IR generated with this option is
-  /// not parsable. `largeElementLimit` is used to configure what is considered
-  /// to be a "large" ElementsAttr by providing an upper limit to the number of
+  /// Enables the elision of large elements attributes by printing a lexically
+  /// valid but otherwise meaningless form instead of the element data. The
+  /// `largeElementLimit` is used to configure what is considered to be a
+  /// "large" ElementsAttr by providing an upper limit to the number of
   /// elements.
   OpPrintingFlags &elideLargeElementsAttrs(int64_t largeElementLimit = 16);
 

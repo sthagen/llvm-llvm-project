@@ -232,6 +232,7 @@ private:
     case ELF::R_X86_64_64:
       return ELF_x86_64_Edges::ELFX86RelocationKind::Pointer64;
     case ELF::R_X86_64_GOTPCREL:
+    case ELF::R_X86_64_REX_GOTPCRELX:
       return ELF_x86_64_Edges::ELFX86RelocationKind::PCRel32GOTLoad;
     }
     return make_error<JITLinkError>("Unsupported x86-64 relocation:" +
@@ -244,7 +245,7 @@ private:
   object::ELFFile<object::ELF64LE>::Elf_Shdr_Range sections;
   SymbolTable SymTab;
 
-  bool isRelocatable() { return Obj.getHeader()->e_type == llvm::ELF::ET_REL; }
+  bool isRelocatable() { return Obj.getHeader().e_type == llvm::ELF::ET_REL; }
 
   support::endianness
   getEndianness(const object::ELFFile<object::ELF64LE> &Obj) {
@@ -253,7 +254,7 @@ private:
 
   // This could also just become part of a template
   unsigned getPointerSize(const object::ELFFile<object::ELF64LE> &Obj) {
-    return Obj.getHeader()->getFileClass() == ELF::ELFCLASS64 ? 8 : 4;
+    return Obj.getHeader().getFileClass() == ELF::ELFCLASS64 ? 8 : 4;
   }
 
   // We don't technically need this right now
@@ -277,7 +278,7 @@ private:
       auto StrTabSec = Obj.getSection(SecRef.sh_link);
       if (!StrTabSec)
         return StrTabSec.takeError();
-      auto StringTable = Obj.getStringTable(*StrTabSec);
+      auto StringTable = Obj.getStringTable(**StrTabSec);
       if (!StringTable)
         return StringTable.takeError();
 
@@ -310,7 +311,7 @@ private:
   Error createNormalizedSections() {
     LLVM_DEBUG(dbgs() << "Creating normalized sections...\n");
     for (auto &SecRef : sections) {
-      auto Name = Obj.getSectionName(&SecRef);
+      auto Name = Obj.getSectionName(SecRef);
       if (!Name)
         return Name.takeError();
       sys::Memory::ProtectionFlags Prot;
@@ -343,7 +344,7 @@ private:
       if (SecRef.sh_type != ELF::SHT_NOBITS) {
         // .sections() already checks that the data is not beyond the end of
         // file
-        auto contents = Obj.getSectionContentsAsArray<char>(&SecRef);
+        auto contents = Obj.getSectionContentsAsArray<char>(SecRef);
         if (!contents)
           return contents.takeError();
 
@@ -357,6 +358,9 @@ private:
         if (SecRef.sh_type == ELF::SHT_SYMTAB)
           // TODO: Dynamic?
           SymTab = SecRef;
+      } else {
+        auto &Section = G->createSection(*Name, Prot);
+        G->createZeroFillBlock(Section, Size, Address, Alignment, 0);
       }
     }
 
@@ -375,7 +379,7 @@ private:
         return make_error<llvm::StringError>("Shouldn't have REL in x64",
                                              llvm::inconvertibleErrorCode());
 
-      auto RelSectName = Obj.getSectionName(&SecRef);
+      auto RelSectName = Obj.getSectionName(SecRef);
       if (!RelSectName)
         return RelSectName.takeError();
       // Deal with .eh_frame later
@@ -386,7 +390,7 @@ private:
       if (!UpdateSection)
         return UpdateSection.takeError();
 
-      auto UpdateSectionName = Obj.getSectionName(*UpdateSection);
+      auto UpdateSectionName = Obj.getSectionName(**UpdateSection);
       if (!UpdateSectionName)
         return UpdateSectionName.takeError();
 
@@ -397,7 +401,7 @@ private:
                 *UpdateSectionName,
             llvm::inconvertibleErrorCode());
 
-      auto Relocations = Obj.relas(&SecRef);
+      auto Relocations = Obj.relas(SecRef);
       if (!Relocations)
         return Relocations.takeError();
 
@@ -409,7 +413,7 @@ private:
                  << "Name: " << Obj.getRelocationTypeName(Type) << "\n";
         });
         auto SymbolIndex = Rela.getSymbol(false);
-        auto Symbol = Obj.getRelocationSymbol(&Rela, &SymTab);
+        auto Symbol = Obj.getRelocationSymbol(Rela, &SymTab);
         if (!Symbol)
           return Symbol.takeError();
 
@@ -472,15 +476,16 @@ private:
       auto StrTabSec = Obj.getSection(SecRef.sh_link);
       if (!StrTabSec)
         return StrTabSec.takeError();
-      auto StringTable = Obj.getStringTable(*StrTabSec);
+      auto StringTable = Obj.getStringTable(**StrTabSec);
       if (!StringTable)
         return StringTable.takeError();
-      auto Name = Obj.getSectionName(&SecRef);
+      auto Name = Obj.getSectionName(SecRef);
       if (!Name)
         return Name.takeError();
       auto Section = G->findSectionByName(*Name);
       if (!Section)
-        return make_error<llvm::StringError>("Could not find a section",
+        return make_error<llvm::StringError>("Could not find a section " +
+                                             *Name,
                                              llvm::inconvertibleErrorCode());
       // we only have one for now
       auto blocks = Section->blocks();
@@ -520,14 +525,15 @@ private:
           auto DefinedSection = Obj.getSection(SymRef.st_shndx);
           if (!DefinedSection)
             return DefinedSection.takeError();
-          auto sectName = Obj.getSectionName(*DefinedSection);
+          auto sectName = Obj.getSectionName(**DefinedSection);
           if (!sectName)
             return Name.takeError();
 
           auto JitSection = G->findSectionByName(*sectName);
           if (!JitSection)
             return make_error<llvm::StringError>(
-                "Could not find a section", llvm::inconvertibleErrorCode());
+                "Could not find the JitSection " + *sectName,
+                llvm::inconvertibleErrorCode());
           auto bs = JitSection->blocks();
           if (bs.empty())
             return make_error<llvm::StringError>(
