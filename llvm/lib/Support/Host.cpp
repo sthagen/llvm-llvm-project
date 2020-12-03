@@ -208,6 +208,7 @@ StringRef sys::detail::getHostCPUNameForARM(StringRef ProcCpuinfoContent) {
             .Case("0xd41", "cortex-a78")
             .Case("0xd44", "cortex-x1")
             .Case("0xd0c", "neoverse-n1")
+            .Case("0xd49", "neoverse-n2")
             .Default("generic");
   }
 
@@ -767,14 +768,15 @@ getIntelProcessorTypeAndSubtype(unsigned Family, unsigned Model,
       *Type = X86::INTEL_GOLDMONT_PLUS;
       break;
     case 0x86:
+      CPU = "tremont";
       *Type = X86::INTEL_TREMONT;
       break;
 
+    // Xeon Phi (Knights Landing + Knights Mill):
     case 0x57:
-      CPU = "tremont";
+      CPU = "knl";
       *Type = X86::INTEL_KNL;
       break;
-
     case 0x85:
       CPU = "knm";
       *Type = X86::INTEL_KNM;
@@ -1496,6 +1498,7 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
   Features["amx-int8"]   = HasLeaf7 && ((EDX >> 25) & 1) && HasAMXSave;
   bool HasLeaf7Subleaf1 =
       MaxLevel >= 7 && !getX86CpuIDAndInfoEx(0x7, 0x1, &EAX, &EBX, &ECX, &EDX);
+  Features["avxvnni"]    = HasLeaf7Subleaf1 && ((EAX >> 4) & 1) && HasAVXSave;
   Features["avx512bf16"] = HasLeaf7Subleaf1 && ((EAX >> 5) & 1) && HasAVX512Save;
   Features["hreset"]     = HasLeaf7Subleaf1 && ((EAX >> 22) & 1);
 

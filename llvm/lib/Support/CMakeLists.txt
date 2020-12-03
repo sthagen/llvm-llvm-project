@@ -97,7 +97,6 @@ add_llvm_component_library(LLVMSupport
   BranchProbability.cpp
   BuryPointer.cpp
   CachePruning.cpp
-  CfgTraits.cpp
   circular_raw_ostream.cpp
   Chrono.cpp
   COM.cpp
@@ -125,7 +124,6 @@ add_llvm_component_library(LLVMSupport
   FoldingSet.cpp
   FormattedStream.cpp
   FormatVariadic.cpp
-  GenericDomTree.cpp
   GlobPattern.cpp
   GraphWriter.cpp
   Hashing.cpp
@@ -224,7 +222,12 @@ add_llvm_component_library(LLVMSupport
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/ADT
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Support
   ${Backtrace_INCLUDE_DIRS}
-  LINK_LIBS ${system_libs} ${imported_libs} ${delayload_flags}
+
+  LINK_LIBS
+  ${system_libs} ${imported_libs} ${delayload_flags}
+
+  LINK_COMPONENTS
+  Demangle
   )
 
 set(llvm_system_libs ${system_libs})
