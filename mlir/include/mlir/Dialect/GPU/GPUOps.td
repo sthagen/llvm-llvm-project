@@ -207,8 +207,8 @@ def GPU_GPUFuncOp : GPU_Op<"func", [HasParent<"GPUModuleOp">,
     /// Returns `true` if the GPU function defined by this Op is a kernel, i.e.
     /// it is intended to be launched from host.
     bool isKernel() {
-      return getAttrOfType<UnitAttr>(GPUDialect::getKernelFuncAttrName()) !=
-             nullptr;
+      return (*this)->getAttrOfType<UnitAttr>(
+          GPUDialect::getKernelFuncAttrName()) != nullptr;
     }
 
     /// Change the type of this function in place. This is an extremely
@@ -223,8 +223,8 @@ def GPU_GPUFuncOp : GPU_Op<"func", [HasParent<"GPUModuleOp">,
 
     /// Returns the number of buffers located in the workgroup memory.
     unsigned getNumWorkgroupAttributions() {
-      return getAttrOfType<IntegerAttr>(getNumWorkgroupAttributionsAttrName())
-          .getInt();
+      return (*this)->getAttrOfType<IntegerAttr>(
+          getNumWorkgroupAttributionsAttrName()).getInt();
     }
 
     /// Returns a list of block arguments that correspond to buffers located in
@@ -877,6 +877,41 @@ def GPU_DeallocOp : GPU_Op<"dealloc", [
     custom<AsyncDependencies>(type($asyncToken), $asyncDependencies)
     $memref attr-dict `:` type($memref)
   }];
+}
+
+def GPU_MemcpyOp : GPU_Op<"memcpy", [
+    GPU_AsyncOpInterface, MemoryEffects<[MemRead, MemWrite]>
+  ]> {
+
+  let summary = "GPU memcpy operation";
+
+  let description = [{
+    The `gpu.memcpy` operation copies the content of one memref to another.
+
+    The op does not execute before all async dependencies have finished
+    executing.
+
+    If the `async` keyword is present, the op is executed asynchronously (i.e.
+    it does not block until the execution has finished on the device). In
+    that case, it returns a !gpu.async.token.
+
+    Example:
+
+    ```mlir
+    %token = gpu.memcpy async [%dep] %dst, %src : memref<?xf32, 1>, memref<?xf32>
+    ```
+  }];
+
+  let arguments = (ins Variadic<GPU_AsyncToken>:$asyncDependencies,
+                   Arg<AnyMemRef, "", [MemWrite]>:$dst,
+                   Arg<AnyMemRef, "", [MemRead]>:$src);
+  let results = (outs Optional<GPU_AsyncToken>:$asyncToken);
+
+  let assemblyFormat = [{
+    custom<AsyncDependencies>(type($asyncToken), $asyncDependencies)
+    $dst`,` $src `:` type($dst)`,` type($src) attr-dict
+  }];
+  let verifier = [{ return ::verify(*this); }];
 }
 
 #endif // GPU_OPS

@@ -27,13 +27,24 @@ struct TestVectorToVectorConversion
   void runOnFunction() override {
     OwningRewritePatternList patterns;
     auto *ctx = &getContext();
-    patterns.insert<UnrollVectorPattern<AddFOp>>(
-        ctx, UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2}));
-    patterns.insert<UnrollVectorPattern<vector::ContractionOp>>(
-        ctx, UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2, 2}));
+    patterns.insert<UnrollVectorPattern>(
+        ctx, UnrollVectorOptions().setNativeShapeFn(getShape));
     populateVectorToVectorCanonicalizationPatterns(patterns, ctx);
     populateVectorToVectorTransformationPatterns(patterns, ctx);
     applyPatternsAndFoldGreedily(getFunction(), std::move(patterns));
+  }
+
+private:
+  // Return the target shape based on op type.
+  static Optional<SmallVector<int64_t, 4>> getShape(Operation *op) {
+    if (isa<AddFOp, SelectOp, CmpFOp>(op))
+      return SmallVector<int64_t, 4>(2, 2);
+    if (auto transferOp = dyn_cast<VectorTransferOpInterface>(op)) {
+      return SmallVector<int64_t, 4>(transferOp.getVectorType().getRank(), 2);
+    }
+    if (isa<vector::ContractionOp>(op))
+      return SmallVector<int64_t, 4>(3, 2);
+    return llvm::None;
   }
 };
 
@@ -120,8 +131,11 @@ struct TestVectorUnrollingPatterns
   void runOnFunction() override {
     MLIRContext *ctx = &getContext();
     OwningRewritePatternList patterns;
-    patterns.insert<UnrollVectorPattern<AddFOp>>(
-        ctx, UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2}));
+    patterns.insert<UnrollVectorPattern>(
+        ctx, UnrollVectorOptions()
+                 .setNativeShape(ArrayRef<int64_t>{2, 2})
+                 .setFilterConstraint(
+                     [](Operation *op) { return success(isa<AddFOp>(op)); }));
 
     if (unrollBasedOnType) {
       UnrollVectorOptions::NativeShapeFnType nativeShapeFn =
@@ -137,12 +151,19 @@ struct TestVectorUnrollingPatterns
         }
         return nativeShape;
       };
-      patterns.insert<UnrollVectorPattern<vector::ContractionOp>>(
-          ctx, UnrollVectorOptions().setNativeShapeFn(nativeShapeFn));
+      patterns.insert<UnrollVectorPattern>(
+          ctx, UnrollVectorOptions()
+                   .setNativeShapeFn(nativeShapeFn)
+                   .setFilterConstraint([](Operation *op) {
+                     return success(isa<ContractionOp>(op));
+                   }));
     } else {
-      patterns.insert<UnrollVectorPattern<vector::ContractionOp>>(
-          ctx,
-          UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2, 2}));
+      patterns.insert<UnrollVectorPattern>(
+          ctx, UnrollVectorOptions()
+                   .setNativeShape(ArrayRef<int64_t>{2, 2, 2})
+                   .setFilterConstraint([](Operation *op) {
+                     return success(isa<ContractionOp>(op));
+                   }));
     }
     populateVectorToVectorCanonicalizationPatterns(patterns, ctx);
     populateVectorToVectorTransformationPatterns(patterns, ctx);
@@ -273,10 +294,14 @@ struct TestVectorTransferUnrollingPatterns
   void runOnFunction() override {
     MLIRContext *ctx = &getContext();
     OwningRewritePatternList patterns;
-    patterns.insert<UnrollVectorPattern<vector::TransferReadOp>>(
-        ctx, UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2}));
-    patterns.insert<UnrollVectorPattern<vector::TransferWriteOp>>(
-        ctx, UnrollVectorOptions().setNativeShape(ArrayRef<int64_t>{2, 2}));
+    patterns.insert<UnrollVectorPattern>(
+        ctx,
+        UnrollVectorOptions()
+            .setNativeShape(ArrayRef<int64_t>{2, 2})
+            .setFilterConstraint([](Operation *op) {
+              return success(
+                  isa<vector::TransferReadOp, vector::TransferWriteOp>(op));
+            }));
     populateVectorToVectorCanonicalizationPatterns(patterns, ctx);
     populateVectorToVectorTransformationPatterns(patterns, ctx);
     applyPatternsAndFoldGreedily(getFunction(), std::move(patterns));

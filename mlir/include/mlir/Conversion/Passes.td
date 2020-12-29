@@ -231,6 +231,23 @@ def ConvertSCFToOpenMP : FunctionPass<"convert-scf-to-openmp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// SCFToSPIRV
+//===----------------------------------------------------------------------===//
+
+def SCFToSPIRV : Pass<"convert-scf-to-spirv", "ModuleOp"> {
+  let summary = "Convert SCF dialect to SPIR-V dialect.";
+  let description = [{
+    This pass converts SCF ops into SPIR-V structured control flow ops.
+    SPIR-V structured control flow ops does not support yielding values.
+    So for SCF ops yielding values, SPIR-V variables are created for
+    holding the values and load/store operations are emitted for updating
+    them.
+  }];
+  let constructor = "mlir::createConvertSCFToSPIRVPass()";
+  let dependentDialects = ["spirv::SPIRVDialect"];
+}
+
+//===----------------------------------------------------------------------===//
 // SCFToStandard
 //===----------------------------------------------------------------------===//
 
@@ -394,13 +411,15 @@ def ConvertVectorToLLVM : Pass<"convert-vector-to-llvm", "ModuleOp"> {
 
     Convert operations from the vector dialect into the LLVM IR dialect
     operations. The lowering pass provides several options to control
-    the kind of optimizations that are allowed. It also provides options
-    that augment the architectural-neutral vector dialect with
-    architectural-specific dialects (AVX512, Neon, etc.).
+    the kinds of optimizations that are allowed. It also provides options
+    that enable the use of one or more architectural-specific dialects
+    (AVX512, ArmNeon, ArmSVE, etc.) in combination with the
+    architectural-neutral vector dialect lowering.
 
   }];
   let constructor = "mlir::createConvertVectorToLLVMPass()";
-  let dependentDialects = ["LLVM::LLVMDialect", "LLVM::LLVMAVX512Dialect"];
+  // Override explicitly in C++ to allow conditional dialect dependence.
+  // let dependentDialects;
   let options = [
     Option<"reassociateFPReductions", "reassociate-fp-reductions",
            "bool", /*default=*/"false",
@@ -411,7 +430,16 @@ def ConvertVectorToLLVM : Pass<"convert-vector-to-llvm", "ModuleOp"> {
 	   "faster code">,
     Option<"enableAVX512", "enable-avx512",
            "bool", /*default=*/"false",
-           "Augments the vector dialect with the AVX512 dialect during lowering">
+           "Enables the use of AVX512 dialect while lowering the vector "
+	   "dialect.">,
+    Option<"enableArmNeon", "enable-arm-neon",
+           "bool", /*default=*/"false",
+           "Enables the use of ArmNeon dialect while lowering the vector "
+	   "dialect.">,
+    Option<"enableArmSVE", "enable-arm-sve",
+           "bool", /*default=*/"false",
+           "Enables the use of ArmSVE dialect while lowering the vector "
+       "dialect.">
   ];
 }
 

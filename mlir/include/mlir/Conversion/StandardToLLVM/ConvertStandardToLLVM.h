@@ -71,7 +71,7 @@ public:
   /// Convert a function type.  The arguments and results are converted one by
   /// one and results are packed into a wrapped LLVM IR structure type. `result`
   /// is populated with argument mapping.
-  LLVM::LLVMType convertFunctionSignature(FunctionType type, bool isVariadic,
+  LLVM::LLVMType convertFunctionSignature(FunctionType funcTy, bool isVariadic,
                                           SignatureConversion &result);
 
   /// Convert a non-empty list of types to be returned from a function into a
@@ -446,7 +446,8 @@ public:
   /// Builds IR extracting the pointer to the first element of the size array.
   static Value sizeBasePtr(OpBuilder &builder, Location loc,
                            LLVMTypeConverter &typeConverter,
-                           Value memRefDescPtr, LLVM::LLVMType elemPtrPtrType);
+                           Value memRefDescPtr,
+                           LLVM::LLVMPointerType elemPtrPtrType);
   /// Builds IR extracting the size[index] from the descriptor.
   static Value size(OpBuilder &builder, Location loc,
                     LLVMTypeConverter typeConverter, Value sizeBasePtr,
@@ -485,6 +486,8 @@ protected:
   /// Returns the LLVM dialect.
   LLVM::LLVMDialect &getDialect() const;
 
+  LLVMTypeConverter *getTypeConverter() const;
+
   /// Gets the MLIR type wrapping the LLVM integer type whose bit width is
   /// defined by the used type converter.
   LLVM::LLVMType getIndexType() const;
@@ -509,13 +512,9 @@ protected:
                              ValueRange indices,
                              ConversionPatternRewriter &rewriter) const;
 
-  // Forwards to getStridedElementPtr. TODO: remove.
-  Value getDataPtr(Location loc, MemRefType type, Value memRefDesc,
-                   ValueRange indices,
-                   ConversionPatternRewriter &rewriter) const;
-
-  /// Returns if the givem memref type is supported.
-  bool isSupportedMemRefType(MemRefType type) const;
+  /// Returns if the given memref has identity maps and the element type is
+  /// convertible to LLVM.
+  bool isConvertibleAndHasIdentityMaps(MemRefType type) const;
 
   /// Returns the type of a pointer to an element of the memref.
   Type getElementPtrType(MemRefType type) const;
@@ -556,10 +555,6 @@ protected:
                          Value allocatedPtr, Value alignedPtr,
                          ArrayRef<Value> sizes, ArrayRef<Value> strides,
                          ConversionPatternRewriter &rewriter) const;
-
-protected:
-  /// Reference to the type converter, with potential extensions.
-  LLVMTypeConverter &typeConverter;
 };
 
 /// Utility class for operation conversions targeting the LLVM dialect that
@@ -567,8 +562,8 @@ protected:
 template <typename SourceOp>
 class ConvertOpToLLVMPattern : public ConvertToLLVMPattern {
 public:
-  ConvertOpToLLVMPattern(LLVMTypeConverter &typeConverter,
-                         PatternBenefit benefit = 1)
+  explicit ConvertOpToLLVMPattern(LLVMTypeConverter &typeConverter,
+                                  PatternBenefit benefit = 1)
       : ConvertToLLVMPattern(SourceOp::getOperationName(),
                              &typeConverter.getContext(), typeConverter,
                              benefit) {}
@@ -644,7 +639,7 @@ public:
   matchAndRewrite(SourceOp op, ArrayRef<Value> operands,
                   ConversionPatternRewriter &rewriter) const override {
     return LLVM::detail::oneToOneRewrite(op, TargetOp::getOperationName(),
-                                         operands, this->typeConverter,
+                                         operands, *this->getTypeConverter(),
                                          rewriter);
   }
 };
@@ -666,9 +661,9 @@ public:
     static_assert(std::is_base_of<OpTrait::SameOperandsAndResultType<SourceOp>,
                                   SourceOp>::value,
                   "expected same operands and result type");
-    return LLVM::detail::vectorOneToOneRewrite(op, TargetOp::getOperationName(),
-                                               operands, this->typeConverter,
-                                               rewriter);
+    return LLVM::detail::vectorOneToOneRewrite(
+        op, TargetOp::getOperationName(), operands, *this->getTypeConverter(),
+        rewriter);
   }
 };
 

@@ -139,7 +139,7 @@ ClangdServer::Options::operator TUScheduler::Options() const {
 ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
                            const ThreadsafeFS &TFS, const Options &Opts,
                            Callbacks *Callbacks)
-    : ConfigProvider(Opts.ConfigProvider), TFS(TFS),
+    : ConfigProvider(Opts.ConfigProvider), TFS(TFS), ServerCallbacks(Callbacks),
       DynamicIdx(Opts.BuildDynamicSymbolIndex
                      ? new FileIndex(Opts.HeavyweightDynamicSymbolIndex,
                                      Opts.CollectMainFileRefs)
@@ -621,7 +621,7 @@ void ClangdServer::typeHierarchy(PathRef File, Position Pos, int Resolve,
                                 File));
   };
 
-  WorkScheduler.runWithAST("Type Hierarchy", File, std::move(Action));
+  WorkScheduler.runWithAST("TypeHierarchy", File, std::move(Action));
 }
 
 void ClangdServer::resolveTypeHierarchy(
@@ -642,7 +642,7 @@ void ClangdServer::prepareCallHierarchy(
       return CB(InpAST.takeError());
     CB(clangd::prepareCallHierarchy(InpAST->AST, Pos, File));
   };
-  WorkScheduler.runWithAST("Call Hierarchy", File, std::move(Action));
+  WorkScheduler.runWithAST("CallHierarchy", File, std::move(Action));
 }
 
 void ClangdServer::incomingCalls(
@@ -678,7 +678,7 @@ void ClangdServer::documentSymbols(llvm::StringRef File,
           return CB(InpAST.takeError());
         CB(clangd::getDocumentSymbols(InpAST->AST));
       };
-  WorkScheduler.runWithAST("documentSymbols", File, std::move(Action),
+  WorkScheduler.runWithAST("DocumentSymbols", File, std::move(Action),
                            TUScheduler::InvalidateOnUpdate);
 }
 
@@ -690,7 +690,7 @@ void ClangdServer::foldingRanges(llvm::StringRef File,
           return CB(InpAST.takeError());
         CB(clangd::getFoldingRanges(InpAST->AST));
       };
-  WorkScheduler.runWithAST("foldingRanges", File, std::move(Action),
+  WorkScheduler.runWithAST("FoldingRanges", File, std::move(Action),
                            TUScheduler::InvalidateOnUpdate);
 }
 
@@ -829,16 +829,44 @@ Context ClangdServer::createProcessingContext(PathRef File) const {
     Params.Path = PosixPath.str();
   }
 
-  auto DiagnosticHandler = [](const llvm::SMDiagnostic &Diag) {
-    if (Diag.getKind() == llvm::SourceMgr::DK_Error) {
-      elog("config error at {0}:{1}:{2}: {3}", Diag.getFilename(),
-           Diag.getLineNo(), Diag.getColumnNo(), Diag.getMessage());
-    } else {
-      log("config warning at {0}:{1}:{2}: {3}", Diag.getFilename(),
-          Diag.getLineNo(), Diag.getColumnNo(), Diag.getMessage());
+  llvm::StringMap<std::vector<Diag>> ReportableDiagnostics;
+  auto ConfigDiagnosticHandler = [&](const llvm::SMDiagnostic &D) {
+    // Ensure we create the map entry even for note diagnostics we don't report.
+    // This means that when the file is parsed with no warnings, we'll
+    // publish an empty set of diagnostics, clearing any the client has.
+    auto *Reportable = D.getFilename().empty()
+                           ? nullptr
+                           : &ReportableDiagnostics[D.getFilename()];
+    switch (D.getKind()) {
+    case llvm::SourceMgr::DK_Error:
+      elog("config error at {0}:{1}:{2}: {3}", D.getFilename(), D.getLineNo(),
+           D.getColumnNo(), D.getMessage());
+      if (Reportable)
+        Reportable->push_back(toDiag(D, Diag::ClangdConfig));
+      break;
+    case llvm::SourceMgr::DK_Warning:
+      log("config warning at {0}:{1}:{2}: {3}", D.getFilename(), D.getLineNo(),
+          D.getColumnNo(), D.getMessage());
+      if (Reportable)
+        Reportable->push_back(toDiag(D, Diag::ClangdConfig));
+      break;
+    case llvm::SourceMgr::DK_Note:
+    case llvm::SourceMgr::DK_Remark:
+      vlog("config note at {0}:{1}:{2}: {3}", D.getFilename(), D.getLineNo(),
+           D.getColumnNo(), D.getMessage());
+      break;
     }
   };
-  Config C = ConfigProvider->getConfig(Params, DiagnosticHandler);
+  Config C = ConfigProvider->getConfig(Params, ConfigDiagnosticHandler);
+  // Blindly publish diagnostics for the (unopened) parsed config files.
+  // We must avoid reporting diagnostics for *the same file* concurrently.
+  // Source file diags are published elsewhere, but those are different files.
+  if (!ReportableDiagnostics.empty()) {
+    std::lock_guard<std::mutex> Lock(ConfigDiagnosticsMu);
+    for (auto &Entry : ReportableDiagnostics)
+      ServerCallbacks->onDiagnosticsReady(Entry.first(), /*Version=*/"",
+                                          std::move(Entry.second));
+  }
   return Context::current().derive(Config::Key, std::move(C));
 }
 

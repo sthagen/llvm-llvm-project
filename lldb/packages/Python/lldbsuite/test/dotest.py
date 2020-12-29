@@ -388,14 +388,6 @@ def parseOptionsAndInitTestdirs():
             usage(parser)
         configuration.regexp = args.p
 
-    if args.s:
-        configuration.sdir_name = args.s
-    else:
-        timestamp_started = datetime.datetime.now().strftime("%Y-%m-%d-%H_%M_%S")
-        configuration.sdir_name = os.path.join(os.getcwd(), timestamp_started)
-
-    configuration.session_file_format = args.session_file_format
-
     if args.t:
         os.environ['LLDB_COMMAND_TRACE'] = 'YES'
 
@@ -858,6 +850,23 @@ def checkDebugInfoSupport():
     if skipped:
         print("Skipping following debug info categories:", skipped)
 
+def checkDebugServerSupport():
+    from lldbsuite.test import lldbplatformutil
+    import lldb
+
+    skip_msg = "Skipping %s tests, as they are not compatible with remote testing on this platform"
+    if lldbplatformutil.platformIsDarwin():
+        configuration.skip_categories.append("llgs")
+        if lldb.remote_platform:
+            # <rdar://problem/34539270>
+            configuration.skip_categories.append("debugserver")
+            print(skip_msg%"debugserver");
+    else:
+        configuration.skip_categories.append("debugserver")
+        if lldb.remote_platform and lldbplatformutil.getPlatform() == "windows":
+            configuration.skip_categories.append("llgs")
+            print(skip_msg%"lldb-server");
+
 def run_suite():
     # On MacOS X, check to make sure that domain for com.apple.DebugSymbols defaults
     # does not exist before proceeding to running the test suite.
@@ -952,14 +961,8 @@ def run_suite():
     checkLibstdcxxSupport()
     checkWatchpointSupport()
     checkDebugInfoSupport()
+    checkDebugServerSupport()
     checkObjcSupport()
-
-    # Perform LLGS tests only on platforms using it.
-    configuration.llgs_platform = (
-        target_platform in ["freebsd", "linux", "netbsd", "windows"])
-
-    # Perform debugserver tests elsewhere (i.e. on Darwin platforms).
-    configuration.debugserver_platform = not configuration.llgs_platform
 
     for testdir in configuration.testdirs:
         for (dirpath, dirnames, filenames) in os.walk(testdir):
@@ -971,14 +974,6 @@ def run_suite():
 
     # Install the control-c handler.
     unittest2.signals.installHandler()
-
-    lldbutil.mkdir_p(configuration.sdir_name)
-    os.environ["LLDB_SESSION_DIRNAME"] = configuration.sdir_name
-
-    sys.stderr.write(
-        "\nSession logs for test failures/errors/unexpected successes"
-        " will go into directory '%s'\n" %
-        configuration.sdir_name)
 
     #
     # Invoke the default TextTestRunner to run the test suite
@@ -1033,8 +1028,7 @@ def run_suite():
     if configuration.sdir_has_content and configuration.verbose:
         sys.stderr.write(
             "Session logs for test failures/errors/unexpected successes"
-            " can be found in directory '%s'\n" %
-            configuration.sdir_name)
+            " can be found in the test build directory\n")
 
     if configuration.use_categories and len(
             configuration.failures_per_category) > 0:
