@@ -1256,6 +1256,38 @@ defm "" : SIMDConvert<I32x4, I16x8, int_wasm_extadd_pairwise_signed,
 defm "" : SIMDConvert<I32x4, I16x8, int_wasm_extadd_pairwise_unsigned,
                       "extadd_pairwise_i16x8_u", 0xa6>;
 
+// Prototype f64x2 conversions
+defm "" : SIMDConvert<F64x2, I32x4, int_wasm_convert_low_signed,
+                      "convert_low_i32x4_s", 0x53>;
+defm "" : SIMDConvert<F64x2, I32x4, int_wasm_convert_low_unsigned,
+                      "convert_low_i32x4_u", 0x54>;
+defm "" : SIMDConvert<I32x4, F64x2, int_wasm_trunc_saturate_zero_signed,
+                      "trunc_sat_zero_f64x2_s", 0x55>;
+defm "" : SIMDConvert<I32x4, F64x2, int_wasm_trunc_saturate_zero_unsigned,
+                      "trunc_sat_zero_f64x2_u", 0x56>;
+defm "" : SIMDConvert<F32x4, F64x2, int_wasm_demote_zero,
+                      "demote_zero_f64x2", 0x57>;
+defm "" : SIMDConvert<F64x2, F32x4, int_wasm_promote_low,
+                      "promote_low_f32x4", 0x69>;
+
+// Prototype i8x16 to i32x4 widening
+defm WIDEN_I8x16_TO_I32x4_S :
+  SIMD_I<(outs V128:$dst), (ins V128:$vec, vec_i8imm_op:$idx),
+         (outs), (ins vec_i8imm_op:$idx),
+         [(set (I32x4.vt V128:$dst),
+            (I32x4.vt (int_wasm_widen_signed
+              (I8x16.vt V128:$vec), (i32 timm:$idx))))],
+         "i32x4.widen_i8x16_s\t$dst, $vec, $idx",
+         "i32x4.widen_i8x16_s\t$idx", 0x67>;
+defm WIDEN_I8x16_TO_I32x4_U :
+  SIMD_I<(outs V128:$dst), (ins V128:$vec, vec_i8imm_op:$idx),
+         (outs), (ins vec_i8imm_op:$idx),
+         [(set (I32x4.vt V128:$dst),
+            (I32x4.vt (int_wasm_widen_unsigned
+              (I8x16.vt V128:$vec), (i32 timm:$idx))))],
+         "i32x4.widen_i8x16_u\t$dst, $vec, $idx",
+         "i32x4.widen_i8x16_u\t$idx", 0x68>;
+
 
 //===----------------------------------------------------------------------===//
 // Quasi-Fused Multiply- Add and Subtract (QFMA/QFMS)
@@ -1285,3 +1317,43 @@ defm "" : SIMDQFM<F64x2, 254, 255>;
 
 defm Q15MULR_SAT_S :
   SIMDBinary<I16x8, int_wasm_q15mulr_saturate_signed, "q15mulr_sat_s", 156>;
+
+//===----------------------------------------------------------------------===//
+// Experimental prefetch instructions: prefetch.t, prefetch.nt
+//===----------------------------------------------------------------------===//
+
+let mayLoad = true, UseNamedOperandTable = true in {
+defm PREFETCH_T_A32 :
+  SIMD_I<(outs), (ins P2Align:$p2align, offset32_op:$off, I32:$addr),
+         (outs), (ins P2Align:$p2align, offset32_op:$off), [],
+         "prefetch.t\t${off}(${addr})$p2align",
+         "prefetch.t\t$off$p2align", 0xc5>;
+defm PREFETCH_T_A64 :
+  SIMD_I<(outs), (ins P2Align:$p2align, offset64_op:$off, I64:$addr),
+         (outs), (ins P2Align:$p2align, offset64_op:$off), [],
+         "prefetch.t\t${off}(${addr})$p2align",
+         "prefetch.t\t$off$p2align", 0xc5>;
+defm PREFETCH_NT_A32 :
+  SIMD_I<(outs), (ins P2Align:$p2align, offset32_op:$off, I32:$addr),
+         (outs), (ins P2Align:$p2align, offset32_op:$off), [],
+         "prefetch.nt\t${off}(${addr})$p2align",
+         "prefetch.nt\t$off$p2align", 0xc6>;
+defm PREFETCH_NT_A64 :
+  SIMD_I<(outs), (ins P2Align:$p2align, offset64_op:$off, I64:$addr),
+         (outs), (ins P2Align:$p2align, offset64_op:$off), [],
+         "prefetch.nt\t${off}(${addr})$p2align",
+         "prefetch.nt\t$off$p2align", 0xc6>;
+} // mayLoad, UseNamedOperandTable
+
+multiclass PrefetchPatNoOffset<PatFrag kind, string inst> {
+  def : Pat<(kind I32:$addr), (!cast<NI>(inst # "_A32") 0, 0, $addr)>,
+        Requires<[HasAddr32]>;
+  def : Pat<(kind I64:$addr), (!cast<NI>(inst # "_A64") 0, 0, $addr)>,
+        Requires<[HasAddr64]>;
+}
+
+foreach inst = [["PREFETCH_T", "int_wasm_prefetch_t"],
+                ["PREFETCH_NT", "int_wasm_prefetch_nt"]] in {
+defvar node = !cast<Intrinsic>(inst[1]);
+defm : PrefetchPatNoOffset<node, inst[0]>;
+}

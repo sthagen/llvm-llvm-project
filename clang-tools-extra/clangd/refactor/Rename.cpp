@@ -68,7 +68,7 @@ llvm::Optional<std::string> getOtherRefFile(const Decl &D, StringRef MainFile,
     if (OtherFile)
       return;
     if (auto RefFilePath = filePath(R.Location, /*HintFilePath=*/MainFile)) {
-      if (*RefFilePath != MainFile)
+      if (!pathEqual(*RefFilePath, MainFile))
         OtherFile = *RefFilePath;
     }
   });
@@ -119,7 +119,7 @@ const NamedDecl *canonicalRenameDecl(const NamedDecl *D) {
     // declaration.
     while (Method->isVirtual() && Method->size_overridden_methods())
       Method = *Method->overridden_methods().begin();
-    return dyn_cast<NamedDecl>(Method->getCanonicalDecl());
+    return Method->getCanonicalDecl();
   }
   if (const auto *Function = dyn_cast<FunctionDecl>(D))
     if (const FunctionTemplateDecl *Template = Function->getPrimaryTemplate())
@@ -474,7 +474,7 @@ findOccurrencesOutsideFile(const NamedDecl &RenameDecl,
     if ((R.Kind & RefKind::Spelled) == RefKind::Unknown)
       return;
     if (auto RefFilePath = filePath(R.Location, /*HintFilePath=*/MainFile)) {
-      if (*RefFilePath != MainFile)
+      if (!pathEqual(*RefFilePath, MainFile))
         AffectedFiles[*RefFilePath].push_back(toRange(R.Location));
     }
   });

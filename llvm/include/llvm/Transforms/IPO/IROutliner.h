@@ -44,6 +44,7 @@
 #include "llvm/Analysis/IRSimilarityIdentifier.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueMap.h"
+#include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
 #include <set>
 
@@ -145,6 +146,12 @@ struct OutlinableRegion {
   /// function has been extracted, the start and end of the BasicBlock
   /// containing the called function.
   void reattachCandidate();
+
+  /// Get the size of the code removed from the region.
+  ///
+  /// \param [in] TTI - The TargetTransformInfo for the parent function.
+  /// \returns the code size of the region
+  InstructionCost getBenefit(TargetTransformInfo &TTI);
 };
 
 /// This class is a pass that identifies similarity in a Module, extracts
@@ -156,8 +163,9 @@ struct OutlinableRegion {
 class IROutliner {
 public:
   IROutliner(function_ref<TargetTransformInfo &(Function &)> GTTI,
-             function_ref<IRSimilarityIdentifier &(Module &)> GIRSI)
-      : getTTI(GTTI), getIRSI(GIRSI) {}
+             function_ref<IRSimilarityIdentifier &(Module &)> GIRSI,
+             function_ref<OptimizationRemarkEmitter &(Function &)> GORE)
+      : getTTI(GTTI), getIRSI(GIRSI), getORE(GORE) {}
   bool run(Module &M);
 
 private:
@@ -201,6 +209,28 @@ private:
   void findAddInputsOutputs(Module &M, OutlinableRegion &Region,
                             DenseSet<unsigned> &NotSame);
 
+  /// Find the number of instructions that will be removed by extracting the
+  /// OutlinableRegions in \p CurrentGroup.
+  ///
+  /// \param [in] CurrentGroup - The collection of OutlinableRegions to be
+  /// analyzed.
+  /// \returns the number of outlined instructions across all regions.
+  InstructionCost findBenefitFromAllRegions(OutlinableGroup &CurrentGroup);
+
+  /// Find the number of instructions that will be added by reloading arguments.
+  ///
+  /// \param [in] CurrentGroup - The collection of OutlinableRegions to be
+  /// analyzed.
+  /// \returns the number of added reload instructions across all regions.
+  InstructionCost findCostOutputReloads(OutlinableGroup &CurrentGroup);
+
+  /// Find the cost and the benefit of \p CurrentGroup and save it back to
+  /// \p CurrentGroup.
+  ///
+  /// \param [in] M - The module being analyzed
+  /// \param [in,out] CurrentGroup - The overall outlined section
+  void findCostBenefit(Module &M, OutlinableGroup &CurrentGroup);
+
   /// Update the output mapping based on the load instruction, and the outputs
   /// of the extracted function.
   ///
@@ -229,6 +259,15 @@ private:
                                     std::vector<Function *> &FuncsToRemove,
                                     unsigned &OutlinedFunctionNum);
 
+  /// If true, enables us to outline from functions that have LinkOnceFromODR
+  /// linkages.
+  bool OutlineFromLinkODRs = false;
+
+  /// If false, we do not worry if the cost is greater than the benefit.  This
+  /// is for debugging and testing, so that we can test small cases to ensure
+  /// that the outlining is being done correctly.
+  bool CostModel = true;
+
   /// The set of outlined Instructions, identified by their location in the
   /// sequential ordering of instructions in a Module.
   DenseSet<unsigned> Outlined;
@@ -243,6 +282,9 @@ private:
 
   /// IRSimilarityIdentifier lambda to retrieve IRSimilarityIdentifier.
   function_ref<IRSimilarityIdentifier &(Module &)> getIRSI;
+
+  /// The optimization remark emitter for the pass.
+  function_ref<OptimizationRemarkEmitter &(Function &)> getORE;
 
   /// The memory allocator used to allocate the CodeExtractors.
   SpecificBumpPtrAllocator<CodeExtractor> ExtractorAllocator;
@@ -277,14 +319,17 @@ private:
     // analyzed for similarity as it has no bearing on the outcome of the
     // program.
     bool visitDbgInfoIntrinsic(DbgInfoIntrinsic &DII) { return true; }
-    // TODO: Handle GetElementPtrInsts
-    bool visitGetElementPtrInst(GetElementPtrInst &GEPI) { return false; }
     // TODO: Handle specific intrinsics individually from those that can be
     // handled.
     bool IntrinsicInst(IntrinsicInst &II) { return false; }
-    // TODO: Handle CallInsts, there will need to be handling for special kinds
-    // of calls, as well as calls to intrinsics.
-    bool visitCallInst(CallInst &CI) { return false; }
+    // We only handle CallInsts that are not indirect, since we cannot guarantee
+    // that they have a name in these cases.
+    bool visitCallInst(CallInst &CI) {
+      Function *F = CI.getCalledFunction();
+      if (!F || CI.isIndirectCall() || !F->hasName())
+        return false;
+      return true;
+    }
     // TODO: Handle FreezeInsts.  Since a frozen value could be frozen inside
     // the outlined region, and then returned as an output, this will have to be
     // handled differently.

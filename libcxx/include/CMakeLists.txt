@@ -1,6 +1,7 @@
 set(files
   __availability
   __bit_reference
+  __bits
   __bsd_locale_defaults.h
   __bsd_locale_fallbacks.h
   __debug
@@ -98,6 +99,7 @@ set(files
   fenv.h
   filesystem
   float.h
+  format
   forward_list
   fstream
   functional
@@ -159,6 +161,7 @@ set(files
   support/musl/xlocale.h
   support/newlib/xlocale.h
   support/nuttx/xlocale.h
+  support/openbsd/xlocale.h
   support/solaris/floatingpoint.h
   support/solaris/wchar.h
   support/solaris/xlocale.h
