@@ -10,8 +10,8 @@
 /// pass.
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_TRANSFORMS_INSTRPROFILING_H
-#define LLVM_TRANSFORMS_INSTRPROFILING_H
+#ifndef LLVM_TRANSFORMS_INSTRUMENTATION_INSTRPROFILING_H
+#define LLVM_TRANSFORMS_INSTRUMENTATION_INSTRPROFILING_H
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -83,9 +83,6 @@ private:
   /// Returns true if profile counter update register promotion is enabled.
   bool isCounterPromotionEnabled() const;
 
-  /// Returns true if the use of !associated metadata is enabled.
-  bool isCounterLinkOrderEnabled() const;
-
   /// Count the number of instrumented value sites for the function.
   void computeNumValueSiteCounts(InstrProfValueProfileInst *Ins);
 
@@ -127,4 +124,4 @@ private:
 
 } // end namespace llvm
 
-#endif // LLVM_TRANSFORMS_INSTRPROFILING_H
+#endif // LLVM_TRANSFORMS_INSTRUMENTATION_INSTRPROFILING_H

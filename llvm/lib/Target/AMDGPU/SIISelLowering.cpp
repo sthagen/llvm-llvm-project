@@ -1467,8 +1467,8 @@ bool SITargetLowering::allowsMisalignedMemoryAccessesImpl(
 }
 
 bool SITargetLowering::allowsMisalignedMemoryAccesses(
-    EVT VT, unsigned AddrSpace, unsigned Alignment,
-    MachineMemOperand::Flags Flags, bool *IsFast) const {
+    EVT VT, unsigned AddrSpace, Align Alignment, MachineMemOperand::Flags Flags,
+    bool *IsFast) const {
   if (IsFast)
     *IsFast = false;
 
@@ -1482,7 +1482,7 @@ bool SITargetLowering::allowsMisalignedMemoryAccesses(
   }
 
   return allowsMisalignedMemoryAccessesImpl(VT.getSizeInBits(), AddrSpace,
-                                            Align(Alignment), Flags, IsFast);
+                                            Alignment, Flags, IsFast);
 }
 
 EVT SITargetLowering::getOptimalMemOpType(
@@ -8283,8 +8283,8 @@ SDValue SITargetLowering::lowerFDIV_FAST(SDValue Op, SelectionDAG &DAG) const {
 
 // Returns immediate value for setting the F32 denorm mode when using the
 // S_DENORM_MODE instruction.
-static const SDValue getSPDenormModeValue(int SPDenormMode, SelectionDAG &DAG,
-                                          const SDLoc &SL, const GCNSubtarget *ST) {
+static SDValue getSPDenormModeValue(int SPDenormMode, SelectionDAG &DAG,
+                                    const SDLoc &SL, const GCNSubtarget *ST) {
   assert(ST->hasDenormModeInst() && "Requires S_DENORM_MODE");
   int DPDenormModeDefault = hasFP64FP16Denormals(DAG.getMachineFunction())
                                 ? FP_DENORM_FLUSH_NONE
@@ -11773,7 +11773,9 @@ SITargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *RMW) const {
     unsigned AS = RMW->getPointerAddressSpace();
 
     if (AS == AMDGPUAS::GLOBAL_ADDRESS && Subtarget->hasAtomicFaddInsts()) {
-      if (!fpModeMatchesGlobalFPAtomicMode(RMW))
+      if (!fpModeMatchesGlobalFPAtomicMode(RMW) ||
+          RMW->getFunction()->getFnAttribute("amdgpu-unsafe-fp-atomics")
+              .getValueAsString() != "true")
         return AtomicExpansionKind::CmpXChg;
 
       return RMW->use_empty() ? AtomicExpansionKind::None :

@@ -231,13 +231,13 @@ public:
   }
 
   /// Add \p RHS to the value at the univariate dimension.
-  LeafTy getWithIncrement(ScalarTy RHS) {
+  LeafTy getWithIncrement(ScalarTy RHS) const {
     return static_cast<LeafTy>(
         UnivariateLinearPolyBase(Value + RHS, UnivariateDim));
   }
 
   /// Subtract \p RHS from the value at the univariate dimension.
-  LeafTy getWithDecrement(ScalarTy RHS) {
+  LeafTy getWithDecrement(ScalarTy RHS) const {
     return static_cast<LeafTy>(
         UnivariateLinearPolyBase(Value - RHS, UnivariateDim));
   }
@@ -528,4 +528,4 @@ template <> struct DenseMapInfo<ElementCount> {
 
 } // end namespace llvm
 
-#endif // LLVM_SUPPORT_TypeSize_H
+#endif // LLVM_SUPPORT_TYPESIZE_H

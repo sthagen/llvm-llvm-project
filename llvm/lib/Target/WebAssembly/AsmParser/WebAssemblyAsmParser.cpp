@@ -125,10 +125,19 @@ struct WebAssemblyOperand : public MCParsedAsmOperand {
       llvm_unreachable("Should be integer immediate or symbol!");
   }
 
-  void addFPImmOperands(MCInst &Inst, unsigned N) const {
+  void addFPImmf32Operands(MCInst &Inst, unsigned N) const {
     assert(N == 1 && "Invalid number of operands!");
     if (Kind == Float)
-      Inst.addOperand(MCOperand::createFPImm(Flt.Val));
+      Inst.addOperand(
+          MCOperand::createSFPImm(bit_cast<uint32_t>(float(Flt.Val))));
+    else
+      llvm_unreachable("Should be float immediate!");
+  }
+
+  void addFPImmf64Operands(MCInst &Inst, unsigned N) const {
+    assert(N == 1 && "Invalid number of operands!");
+    if (Kind == Float)
+      Inst.addOperand(MCOperand::createDFPImm(bit_cast<uint64_t>(Flt.Val)));
     else
       llvm_unreachable("Should be float immediate!");
   }
@@ -194,7 +203,6 @@ class WebAssemblyAsmParser final : public MCTargetAsmParser {
   // guarantee that correct order.
   enum ParserState {
     FileStart,
-    Label,
     FunctionStart,
     FunctionLocals,
     Instructions,
@@ -214,9 +222,6 @@ class WebAssemblyAsmParser final : public MCTargetAsmParser {
   };
   std::vector<NestingType> NestingStack;
 
-  // We track this to see if a .functype following a label is the same,
-  // as this is how we recognize the start of a function.
-  MCSymbol *LastLabel = nullptr;
   MCSymbol *LastFunctionLabel = nullptr;
 
 public:
@@ -678,11 +683,6 @@ public:
     return false;
   }
 
-  void onLabelParsed(MCSymbol *Symbol) override {
-    LastLabel = Symbol;
-    CurrentState = Label;
-  }
-
   bool parseSignature(wasm::WasmSignature *Signature) {
     if (expect(AsmToken::LParen, "("))
       return true;
@@ -799,12 +799,12 @@ public:
       if (SymName.empty())
         return true;
       auto WasmSym = cast<MCSymbolWasm>(Ctx.getOrCreateSymbol(SymName));
-      if (CurrentState == Label && WasmSym == LastLabel) {
+      if (WasmSym->isDefined()) {
         // This .functype indicates a start of a function.
         if (ensureEmptyNestingStack())
           return true;
         CurrentState = FunctionStart;
-        LastFunctionLabel = LastLabel;
+        LastFunctionLabel = WasmSym;
         push(Function);
       }
       auto Signature = std::make_unique<wasm::WasmSignature>();
@@ -872,7 +872,7 @@ public:
 
     if (DirectiveID.getString() == ".local") {
       if (CurrentState != FunctionStart)
-        return error(".local directive should follow the start of a function",
+        return error(".local directive should follow the start of a function: ",
                      Lexer.getTok());
       SmallVector<wasm::ValType, 4> Locals;
       if (parseRegTypeList(Locals))
@@ -990,6 +990,20 @@ public:
   }
 
   void doBeforeLabelEmit(MCSymbol *Symbol) override {
+    // Code below only applies to labels in text sections.
+    auto CWS = cast<MCSectionWasm>(getStreamer().getCurrentSection().first);
+    if (!CWS || !CWS->getKind().isText())
+      return;
+
+    auto WasmSym = cast<MCSymbolWasm>(Symbol);
+    // Unlike other targets, we don't allow data in text sections (labels
+    // declared with .type @object).
+    if (WasmSym->getType() == wasm::WASM_SYMBOL_TYPE_DATA) {
+      Parser.Error(Parser.getTok().getLoc(),
+                   "Wasm doesn\'t support data symbols in text sections");
+      return;
+    }
+
     // Start a new section for the next function automatically, since our
     // object writer expects each function to have its own section. This way
     // The user can't forget this "convention".
@@ -997,14 +1011,10 @@ public:
     if (SymName.startswith(".L"))
       return; // Local Symbol.
 
-    // Only create a new text section if we're already in one.
     // TODO: If the user explicitly creates a new function section, we ignore
     // its name when we create this one. It would be nice to honor their
     // choice, while still ensuring that we create one if they forget.
     // (that requires coordination with WasmAsmParser::parseSectionDirective)
-    auto CWS = cast<MCSectionWasm>(getStreamer().getCurrentSection().first);
-    if (!CWS || !CWS->getKind().isText())
-      return;
     auto SecName = ".text." + SymName;
 
     auto *Group = CWS->getGroup();
@@ -1013,7 +1023,7 @@ public:
     // for importing comdat functions. But there's no way to specify that in
     // assembly currently.
     if (Group)
-      cast<MCSymbolWasm>(Symbol)->setComdat(true);
+      WasmSym->setComdat(true);
     auto *WS =
         getContext().getWasmSection(SecName, SectionKind::getText(), Group,
                                     MCContext::GenericSectionID, nullptr);
