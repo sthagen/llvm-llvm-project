@@ -6,312 +6,6 @@
 ; RUN: llc -mtriple=riscv64 -mattr=+experimental-zbp -verify-machineinstrs < %s \
 ; RUN:   | FileCheck %s -check-prefix=RV64IBP
 
-define signext i32 @slo_i32(i32 signext %a, i32 signext %b) nounwind {
-; RV64I-LABEL: slo_i32:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    sllw a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: slo_i32:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    slow a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: slo_i32:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    slow a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i32 %a, -1
-  %shl = shl i32 %neg, %b
-  %neg1 = xor i32 %shl, -1
-  ret i32 %neg1
-}
-
-define signext i32 @slo_i32_mask(i32 signext %a, i32 signext %b) nounwind {
-; RV64I-LABEL: slo_i32_mask:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    sllw a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: slo_i32_mask:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    slow a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: slo_i32_mask:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    slow a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i32 %a, -1
-  %and = and i32 %b, 31
-  %shl = shl i32 %neg, %and
-  %neg1 = xor i32 %shl, -1
-  ret i32 %neg1
-}
-
-define i64 @slo_i64(i64 %a, i64 %b) nounwind {
-; RV64I-LABEL: slo_i64:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    sll a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: slo_i64:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    slo a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: slo_i64:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    slo a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i64 %a, -1
-  %shl = shl i64 %neg, %b
-  %neg1 = xor i64 %shl, -1
-  ret i64 %neg1
-}
-
-define i64 @slo_i64_mask(i64 %a, i64 %b) nounwind {
-; RV64I-LABEL: slo_i64_mask:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    sll a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: slo_i64_mask:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    slo a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: slo_i64_mask:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    slo a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i64 %a, -1
-  %and = and i64 %b, 63
-  %shl = shl i64 %neg, %and
-  %neg1 = xor i64 %shl, -1
-  ret i64 %neg1
-}
-
-define signext i32 @sro_i32(i32 signext %a, i32 signext %b) nounwind {
-; RV64I-LABEL: sro_i32:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    srlw a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sro_i32:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    srow a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sro_i32:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    srow a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i32 %a, -1
-  %shr = lshr i32 %neg, %b
-  %neg1 = xor i32 %shr, -1
-  ret i32 %neg1
-}
-
-define signext i32 @sro_i32_mask(i32 signext %a, i32 signext %b) nounwind {
-; RV64I-LABEL: sro_i32_mask:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    srlw a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sro_i32_mask:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    srow a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sro_i32_mask:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    srow a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i32 %a, -1
-  %and = and i32 %b, 31
-  %shr = lshr i32 %neg, %and
-  %neg1 = xor i32 %shr, -1
-  ret i32 %neg1
-}
-
-define i64 @sro_i64(i64 %a, i64 %b) nounwind {
-; RV64I-LABEL: sro_i64:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    srl a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sro_i64:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sro a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sro_i64:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sro a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i64 %a, -1
-  %shr = lshr i64 %neg, %b
-  %neg1 = xor i64 %shr, -1
-  ret i64 %neg1
-}
-
-define i64 @sro_i64_mask(i64 %a, i64 %b) nounwind {
-; RV64I-LABEL: sro_i64_mask:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    srl a0, a0, a1
-; RV64I-NEXT:    not a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sro_i64_mask:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sro a0, a0, a1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sro_i64_mask:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sro a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = xor i64 %a, -1
-  %and = and i64 %b, 63
-  %shr = lshr i64 %neg, %and
-  %neg1 = xor i64 %shr, -1
-  ret i64 %neg1
-}
-
-define signext i32 @sloi_i32(i32 signext %a) nounwind {
-; RV64I-LABEL: sloi_i32:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    slli a0, a0, 1
-; RV64I-NEXT:    ori a0, a0, 1
-; RV64I-NEXT:    sext.w a0, a0
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sloi_i32:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sloiw a0, a0, 1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sloi_i32:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sloiw a0, a0, 1
-; RV64IBP-NEXT:    ret
-  %neg = shl i32 %a, 1
-  %neg12 = or i32 %neg, 1
-  ret i32 %neg12
-}
-
-define i64 @sloi_i64(i64 %a) nounwind {
-; RV64I-LABEL: sloi_i64:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    slli a0, a0, 1
-; RV64I-NEXT:    ori a0, a0, 1
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sloi_i64:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sloi a0, a0, 1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sloi_i64:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sloi a0, a0, 1
-; RV64IBP-NEXT:    ret
-  %neg = shl i64 %a, 1
-  %neg12 = or i64 %neg, 1
-  ret i64 %neg12
-}
-
-define signext i32 @sroi_i32(i32 signext %a) nounwind {
-; RV64I-LABEL: sroi_i32:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    srli a0, a0, 1
-; RV64I-NEXT:    lui a1, 524288
-; RV64I-NEXT:    or a0, a0, a1
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sroi_i32:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sroiw a0, a0, 1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sroi_i32:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sroiw a0, a0, 1
-; RV64IBP-NEXT:    ret
-  %neg = lshr i32 %a, 1
-  %neg12 = or i32 %neg, -2147483648
-  ret i32 %neg12
-}
-
-; This is similar to the type legalized version of sroiw but the mask is 0 in
-; the upper bits instead of 1 so the result is not sign extended. Make sure we
-; don't match it to sroiw.
-define i64 @sroiw_bug(i64 %a) nounwind {
-; RV64I-LABEL: sroiw_bug:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    srli a0, a0, 1
-; RV64I-NEXT:    addi a1, zero, 1
-; RV64I-NEXT:    slli a1, a1, 31
-; RV64I-NEXT:    or a0, a0, a1
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sroiw_bug:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    srli a0, a0, 1
-; RV64IB-NEXT:    bseti a0, a0, 31
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sroiw_bug:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    srli a0, a0, 1
-; RV64IBP-NEXT:    addi a1, zero, 1
-; RV64IBP-NEXT:    slli a1, a1, 31
-; RV64IBP-NEXT:    or a0, a0, a1
-; RV64IBP-NEXT:    ret
-  %neg = lshr i64 %a, 1
-  %neg12 = or i64 %neg, 2147483648
-  ret i64 %neg12
-}
-
-define i64 @sroi_i64(i64 %a) nounwind {
-; RV64I-LABEL: sroi_i64:
-; RV64I:       # %bb.0:
-; RV64I-NEXT:    srli a0, a0, 1
-; RV64I-NEXT:    addi a1, zero, -1
-; RV64I-NEXT:    slli a1, a1, 63
-; RV64I-NEXT:    or a0, a0, a1
-; RV64I-NEXT:    ret
-;
-; RV64IB-LABEL: sroi_i64:
-; RV64IB:       # %bb.0:
-; RV64IB-NEXT:    sroi a0, a0, 1
-; RV64IB-NEXT:    ret
-;
-; RV64IBP-LABEL: sroi_i64:
-; RV64IBP:       # %bb.0:
-; RV64IBP-NEXT:    sroi a0, a0, 1
-; RV64IBP-NEXT:    ret
-  %neg = lshr i64 %a, 1
-  %neg12 = or i64 %neg, -9223372036854775808
-  ret i64 %neg12
-}
-
 define signext i32 @gorc1_i32(i32 signext %a) nounwind {
 ; RV64I-LABEL: gorc1_i32:
 ; RV64I:       # %bb.0:
@@ -2976,6 +2670,34 @@ define i64 @grev32_fshr(i64 %a) nounwind {
   ret i64 %or
 }
 
+declare i16 @llvm.bswap.i16(i16)
+
+define zeroext i16 @bswap_i16(i16 zeroext %a) nounwind {
+; RV64I-LABEL: bswap_i16:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    srli a1, a0, 8
+; RV64I-NEXT:    slli a0, a0, 8
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    lui a1, 16
+; RV64I-NEXT:    addiw a1, a1, -1
+; RV64I-NEXT:    and a0, a0, a1
+; RV64I-NEXT:    ret
+;
+; RV64IB-LABEL: bswap_i16:
+; RV64IB:       # %bb.0:
+; RV64IB-NEXT:    rev8 a0, a0
+; RV64IB-NEXT:    srli a0, a0, 48
+; RV64IB-NEXT:    ret
+;
+; RV64IBP-LABEL: bswap_i16:
+; RV64IBP:       # %bb.0:
+; RV64IBP-NEXT:    rev8 a0, a0
+; RV64IBP-NEXT:    srli a0, a0, 48
+; RV64IBP-NEXT:    ret
+  %1 = tail call i16 @llvm.bswap.i16(i16 %a)
+  ret i16 %1
+}
+
 declare i32 @llvm.bswap.i32(i32)
 
 define signext i32 @bswap_i32(i32 signext %a) nounwind {
@@ -3091,6 +2813,114 @@ define i64 @bswap_i64(i64 %a) {
 ; RV64IBP-NEXT:    ret
   %1 = call i64 @llvm.bswap.i64(i64 %a)
   ret i64 %1
+}
+
+declare i8 @llvm.bitreverse.i8(i8)
+
+define zeroext i8 @bitreverse_i8(i8 zeroext %a) nounwind {
+; RV64I-LABEL: bitreverse_i8:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    slli a1, a0, 52
+; RV64I-NEXT:    addi a2, zero, 15
+; RV64I-NEXT:    slli a2, a2, 56
+; RV64I-NEXT:    and a1, a1, a2
+; RV64I-NEXT:    slli a0, a0, 60
+; RV64I-NEXT:    or a0, a1, a0
+; RV64I-NEXT:    addi a1, zero, 51
+; RV64I-NEXT:    slli a1, a1, 56
+; RV64I-NEXT:    and a1, a0, a1
+; RV64I-NEXT:    slli a1, a1, 2
+; RV64I-NEXT:    addi a2, zero, -13
+; RV64I-NEXT:    slli a2, a2, 58
+; RV64I-NEXT:    and a0, a0, a2
+; RV64I-NEXT:    srli a0, a0, 2
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    addi a1, zero, 85
+; RV64I-NEXT:    slli a1, a1, 56
+; RV64I-NEXT:    and a1, a0, a1
+; RV64I-NEXT:    slli a1, a1, 1
+; RV64I-NEXT:    addi a2, zero, -43
+; RV64I-NEXT:    slli a2, a2, 57
+; RV64I-NEXT:    and a0, a0, a2
+; RV64I-NEXT:    srli a0, a0, 1
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    srli a0, a0, 56
+; RV64I-NEXT:    ret
+;
+; RV64IB-LABEL: bitreverse_i8:
+; RV64IB:       # %bb.0:
+; RV64IB-NEXT:    rev a0, a0
+; RV64IB-NEXT:    srli a0, a0, 56
+; RV64IB-NEXT:    ret
+;
+; RV64IBP-LABEL: bitreverse_i8:
+; RV64IBP:       # %bb.0:
+; RV64IBP-NEXT:    rev a0, a0
+; RV64IBP-NEXT:    srli a0, a0, 56
+; RV64IBP-NEXT:    ret
+  %1 = tail call i8 @llvm.bitreverse.i8(i8 %a)
+  ret i8 %1
+}
+
+declare i16 @llvm.bitreverse.i16(i16)
+
+define zeroext i16 @bitreverse_i16(i16 zeroext %a) nounwind {
+; RV64I-LABEL: bitreverse_i16:
+; RV64I:       # %bb.0:
+; RV64I-NEXT:    slli a1, a0, 40
+; RV64I-NEXT:    addi a2, zero, 255
+; RV64I-NEXT:    slli a2, a2, 48
+; RV64I-NEXT:    and a1, a1, a2
+; RV64I-NEXT:    slli a0, a0, 56
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    lui a1, 1
+; RV64I-NEXT:    addiw a1, a1, -241
+; RV64I-NEXT:    slli a1, a1, 48
+; RV64I-NEXT:    and a1, a0, a1
+; RV64I-NEXT:    slli a1, a1, 4
+; RV64I-NEXT:    addi a2, zero, -241
+; RV64I-NEXT:    slli a2, a2, 52
+; RV64I-NEXT:    and a0, a0, a2
+; RV64I-NEXT:    srli a0, a0, 4
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    lui a1, 3
+; RV64I-NEXT:    addiw a1, a1, 819
+; RV64I-NEXT:    slli a1, a1, 48
+; RV64I-NEXT:    and a1, a0, a1
+; RV64I-NEXT:    slli a1, a1, 2
+; RV64I-NEXT:    lui a2, 1048575
+; RV64I-NEXT:    addiw a2, a2, 819
+; RV64I-NEXT:    slli a2, a2, 50
+; RV64I-NEXT:    and a0, a0, a2
+; RV64I-NEXT:    srli a0, a0, 2
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    lui a1, 5
+; RV64I-NEXT:    addiw a1, a1, 1365
+; RV64I-NEXT:    slli a1, a1, 48
+; RV64I-NEXT:    and a1, a0, a1
+; RV64I-NEXT:    slli a1, a1, 1
+; RV64I-NEXT:    lui a2, 1048573
+; RV64I-NEXT:    addiw a2, a2, 1365
+; RV64I-NEXT:    slli a2, a2, 49
+; RV64I-NEXT:    and a0, a0, a2
+; RV64I-NEXT:    srli a0, a0, 1
+; RV64I-NEXT:    or a0, a0, a1
+; RV64I-NEXT:    srli a0, a0, 48
+; RV64I-NEXT:    ret
+;
+; RV64IB-LABEL: bitreverse_i16:
+; RV64IB:       # %bb.0:
+; RV64IB-NEXT:    rev a0, a0
+; RV64IB-NEXT:    srli a0, a0, 48
+; RV64IB-NEXT:    ret
+;
+; RV64IBP-LABEL: bitreverse_i16:
+; RV64IBP:       # %bb.0:
+; RV64IBP-NEXT:    rev a0, a0
+; RV64IBP-NEXT:    srli a0, a0, 48
+; RV64IBP-NEXT:    ret
+  %1 = tail call i16 @llvm.bitreverse.i16(i16 %a)
+  ret i16 %1
 }
 
 declare i32 @llvm.bitreverse.i32(i32)

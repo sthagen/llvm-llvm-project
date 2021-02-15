@@ -78,10 +78,11 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
          "gc-transition operand bundle id drifted!");
   (void)GCLiveEntry;
 
-  auto *ClangARCRVEntry = pImpl->getOrInsertBundleTag("clang.arc.rv");
-  assert(ClangARCRVEntry->second == LLVMContext::OB_clang_arc_rv &&
-         "clang.arc.rv operand bundle id drifted!");
-  (void)ClangARCRVEntry;
+  auto *ClangAttachedCall =
+      pImpl->getOrInsertBundleTag("clang.arc.attachedcall");
+  assert(ClangAttachedCall->second == LLVMContext::OB_clang_arc_attachedcall &&
+         "clang.arc.attachedcall operand bundle id drifted!");
+  (void)ClangAttachedCall;
 
   SyncScope::ID SingleThreadSSID =
       pImpl->getOrInsertSyncScopeID("singlethread");

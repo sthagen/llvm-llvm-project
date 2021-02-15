@@ -54,26 +54,85 @@ bool HardwareLoopInfo::canAnalyze(LoopInfo &LI) {
   return true;
 }
 
+IntrinsicCostAttributes::IntrinsicCostAttributes(const IntrinsicInst &I) :
+    II(&I), RetTy(I.getType()), IID(I.getIntrinsicID()) {
+
+ FunctionType *FTy = I.getCalledFunction()->getFunctionType();
+ ParamTys.insert(ParamTys.begin(), FTy->param_begin(), FTy->param_end());
+ Arguments.insert(Arguments.begin(), I.arg_begin(), I.arg_end());
+ if (auto *FPMO = dyn_cast<FPMathOperator>(&I))
+   FMF = FPMO->getFastMathFlags();
+}
+
 IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id,
-                                                 const CallBase &CI,
-                                                 unsigned ScalarizationCost)
-    : II(dyn_cast<IntrinsicInst>(&CI)), RetTy(CI.getType()), IID(Id),
-      ScalarizationCost(ScalarizationCost) {
+                                                 const CallBase &CI) :
+  II(dyn_cast<IntrinsicInst>(&CI)),  RetTy(CI.getType()), IID(Id) {
 
   if (const auto *FPMO = dyn_cast<FPMathOperator>(&CI))
     FMF = FPMO->getFastMathFlags();
 
   Arguments.insert(Arguments.begin(), CI.arg_begin(), CI.arg_end());
-  FunctionType *FTy = CI.getCalledFunction()->getFunctionType();
+  FunctionType *FTy =
+    CI.getCalledFunction()->getFunctionType();
+  ParamTys.insert(ParamTys.begin(), FTy->param_begin(), FTy->param_end());
+}
+
+IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id,
+                                                 const CallBase &CI,
+                                                 ElementCount Factor)
+    : RetTy(CI.getType()), IID(Id), VF(Factor) {
+
+  if (auto *FPMO = dyn_cast<FPMathOperator>(&CI))
+    FMF = FPMO->getFastMathFlags();
+
+  Arguments.insert(Arguments.begin(), CI.arg_begin(), CI.arg_end());
+  FunctionType *FTy =
+    CI.getCalledFunction()->getFunctionType();
+  ParamTys.insert(ParamTys.begin(), FTy->param_begin(), FTy->param_end());
+}
+
+IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id,
+                                                 const CallBase &CI,
+                                                 ElementCount Factor,
+                                                 unsigned ScalarCost)
+    : RetTy(CI.getType()), IID(Id), VF(Factor), ScalarizationCost(ScalarCost) {
+
+  if (const auto *FPMO = dyn_cast<FPMathOperator>(&CI))
+    FMF = FPMO->getFastMathFlags();
+
+  Arguments.insert(Arguments.begin(), CI.arg_begin(), CI.arg_end());
+  FunctionType *FTy =
+    CI.getCalledFunction()->getFunctionType();
   ParamTys.insert(ParamTys.begin(), FTy->param_begin(), FTy->param_end());
 }
 
 IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *RTy,
                                                  ArrayRef<Type *> Tys,
+                                                 FastMathFlags Flags) :
+    RetTy(RTy), IID(Id), FMF(Flags) {
+  ParamTys.insert(ParamTys.begin(), Tys.begin(), Tys.end());
+}
+
+IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *RTy,
+                                                 ArrayRef<Type *> Tys,
                                                  FastMathFlags Flags,
-                                                 const IntrinsicInst *I,
-                                                 unsigned ScalarCost)
-    : II(I), RetTy(RTy), IID(Id), FMF(Flags), ScalarizationCost(ScalarCost) {
+                                                 unsigned ScalarCost) :
+    RetTy(RTy), IID(Id), FMF(Flags), ScalarizationCost(ScalarCost) {
+  ParamTys.insert(ParamTys.begin(), Tys.begin(), Tys.end());
+}
+
+IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *RTy,
+                                                 ArrayRef<Type *> Tys,
+                                                 FastMathFlags Flags,
+                                                 unsigned ScalarCost,
+                                                 const IntrinsicInst *I) :
+    II(I), RetTy(RTy), IID(Id), FMF(Flags), ScalarizationCost(ScalarCost) {
+  ParamTys.insert(ParamTys.begin(), Tys.begin(), Tys.end());
+}
+
+IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *RTy,
+                                                 ArrayRef<Type *> Tys) :
+    RetTy(RTy), IID(Id) {
   ParamTys.insert(ParamTys.begin(), Tys.begin(), Tys.end());
 }
 
@@ -85,17 +144,6 @@ IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *Ty,
   ParamTys.reserve(Arguments.size());
   for (unsigned Idx = 0, Size = Arguments.size(); Idx != Size; ++Idx)
     ParamTys.push_back(Arguments[Idx]->getType());
-}
-
-IntrinsicCostAttributes::IntrinsicCostAttributes(Intrinsic::ID Id, Type *RTy,
-                                                 ArrayRef<const Value *> Args,
-                                                 ArrayRef<Type *> Tys,
-                                                 FastMathFlags Flags,
-                                                 const IntrinsicInst *I,
-                                                 unsigned ScalarCost)
-    : II(I), RetTy(RTy), IID(Id), FMF(Flags), ScalarizationCost(ScalarCost) {
-  ParamTys.insert(ParamTys.begin(), Tys.begin(), Tys.end());
-  Arguments.insert(Arguments.begin(), Args.begin(), Args.end());
 }
 
 bool HardwareLoopInfo::isHardwareLoopCandidate(ScalarEvolution &SE,
@@ -361,12 +409,10 @@ bool TargetTransformInfo::canSaveCmp(Loop *L, BranchInst **BI,
   return TTIImpl->canSaveCmp(L, BI, SE, LI, DT, AC, LibInfo);
 }
 
-bool TargetTransformInfo::shouldFavorPostInc() const {
-  return TTIImpl->shouldFavorPostInc();
-}
-
-bool TargetTransformInfo::shouldFavorBackedgeIndex(const Loop *L) const {
-  return TTIImpl->shouldFavorBackedgeIndex(L);
+TTI::AddressingModeKind
+TargetTransformInfo::getPreferredAddressingMode(const Loop *L,
+                                                ScalarEvolution *SE) const {
+  return TTIImpl->getPreferredAddressingMode(L, SE);
 }
 
 bool TargetTransformInfo::isLegalMaskedStore(Type *DataType,
@@ -591,8 +637,9 @@ bool TargetTransformInfo::shouldMaximizeVectorBandwidth(bool OptSize) const {
   return TTIImpl->shouldMaximizeVectorBandwidth(OptSize);
 }
 
-unsigned TargetTransformInfo::getMinimumVF(unsigned ElemWidth) const {
-  return TTIImpl->getMinimumVF(ElemWidth);
+ElementCount TargetTransformInfo::getMinimumVF(unsigned ElemWidth,
+                                               bool IsScalable) const {
+  return TTIImpl->getMinimumVF(ElemWidth, IsScalable);
 }
 
 unsigned TargetTransformInfo::getMaximumVF(unsigned ElemWidth,
@@ -998,11 +1045,6 @@ unsigned TargetTransformInfo::getStoreVectorFactor(unsigned VF,
                                                    unsigned ChainSizeInBytes,
                                                    VectorType *VecTy) const {
   return TTIImpl->getStoreVectorFactor(VF, StoreSize, ChainSizeInBytes, VecTy);
-}
-
-bool TargetTransformInfo::useReductionIntrinsic(unsigned Opcode, Type *Ty,
-                                                ReductionFlags Flags) const {
-  return TTIImpl->useReductionIntrinsic(Opcode, Ty, Flags);
 }
 
 bool TargetTransformInfo::preferInLoopReduction(unsigned Opcode, Type *Ty,

@@ -1853,7 +1853,6 @@ const char *AArch64TargetLowering::getTargetNodeName(unsigned Opcode) const {
     MAKE_CASE(AArch64ISD::CLASTB_N)
     MAKE_CASE(AArch64ISD::LASTA)
     MAKE_CASE(AArch64ISD::LASTB)
-    MAKE_CASE(AArch64ISD::REV)
     MAKE_CASE(AArch64ISD::REINTERPRET_CAST)
     MAKE_CASE(AArch64ISD::TBL)
     MAKE_CASE(AArch64ISD::FADD_PRED)
@@ -3594,7 +3593,7 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return DAG.getNode(AArch64ISD::LASTB, dl, Op.getValueType(),
                        Op.getOperand(1), Op.getOperand(2));
   case Intrinsic::aarch64_sve_rev:
-    return DAG.getNode(AArch64ISD::REV, dl, Op.getValueType(),
+    return DAG.getNode(ISD::VECTOR_REVERSE, dl, Op.getValueType(),
                        Op.getOperand(1));
   case Intrinsic::aarch64_sve_tbl:
     return DAG.getNode(AArch64ISD::TBL, dl, Op.getValueType(),
@@ -5654,11 +5653,12 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
   }
 
   unsigned CallOpc = AArch64ISD::CALL;
-  // Calls with operand bundle "clang.arc.rv" are special. They should be
-  // expanded to the call, directly followed by a special marker sequence. Use
-  // the CALL_RVMARKER to do that.
-  if (CLI.CB && objcarc::hasRVOpBundle(CLI.CB)) {
-    assert(!IsTailCall && "tail calls cannot be marked with clang.arc.rv");
+  // Calls with operand bundle "clang.arc.attachedcall" are special. They should
+  // be expanded to the call, directly followed by a special marker sequence.
+  // Use the CALL_RVMARKER to do that.
+  if (CLI.CB && objcarc::hasAttachedCallOpBundle(CLI.CB)) {
+    assert(!IsTailCall &&
+           "tail calls cannot be marked with clang.arc.attachedcall");
     CallOpc = AArch64ISD::CALL_RVMARKER;
   }
 
