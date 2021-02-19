@@ -165,19 +165,17 @@ public:
     log("<-- {0}", Method);
     if (Method == "exit")
       return false;
-    if (!Server.Server) {
+    auto Handler = Server.Handlers.NotificationHandlers.find(Method);
+    if (Handler != Server.Handlers.NotificationHandlers.end()) {
+      Handler->second(std::move(Params));
+      Server.maybeExportMemoryProfile();
+      Server.maybeCleanupMemory();
+    } else if (!Server.Server) {
       elog("Notification {0} before initialization", Method);
     } else if (Method == "$/cancelRequest") {
       onCancel(std::move(Params));
     } else {
-      auto Handler = Server.Handlers.NotificationHandlers.find(Method);
-      if (Handler != Server.Handlers.NotificationHandlers.end()) {
-        Handler->second(std::move(Params));
-        Server.maybeExportMemoryProfile();
-        Server.maybeCleanupMemory();
-      } else {
-        log("unhandled notification {0}", Method);
-      }
+      log("unhandled notification {0}", Method);
     }
     return true;
   }
@@ -191,18 +189,16 @@ public:
     SPAN_ATTACH(Tracer, "Params", Params);
     ReplyOnce Reply(ID, Method, &Server, Tracer.Args);
     log("<-- {0}({1})", Method, ID);
-    if (!Server.Server && Method != "initialize") {
+    auto Handler = Server.Handlers.MethodHandlers.find(Method);
+    if (Handler != Server.Handlers.MethodHandlers.end()) {
+      Handler->second(std::move(Params), std::move(Reply));
+    } else if (!Server.Server) {
       elog("Call {0} before initialization.", Method);
       Reply(llvm::make_error<LSPError>("server not initialized",
                                        ErrorCode::ServerNotInitialized));
     } else {
-      auto Handler = Server.Handlers.MethodHandlers.find(Method);
-      if (Handler != Server.Handlers.MethodHandlers.end()) {
-        Handler->second(std::move(Params), std::move(Reply));
-      } else {
-        Reply(llvm::make_error<LSPError>("method not found",
-                                         ErrorCode::MethodNotFound));
-      }
+      Reply(llvm::make_error<LSPError>("method not found",
+                                       ErrorCode::MethodNotFound));
     }
     return true;
   }
@@ -414,8 +410,8 @@ private:
 constexpr int ClangdLSPServer::MessageHandler::MaxReplayCallbacks;
 
 // call(), notify(), and reply() wrap the Transport, adding logging and locking.
-void ClangdLSPServer::callRaw(StringRef Method, llvm::json::Value Params,
-                              Callback<llvm::json::Value> CB) {
+void ClangdLSPServer::callMethod(StringRef Method, llvm::json::Value Params,
+                                 Callback<llvm::json::Value> CB) {
   auto ID = MsgHandler->bindReply(std::move(CB));
   log("--> {0}({1})", Method, ID);
   std::lock_guard<std::mutex> Lock(TranspWriter);
@@ -582,10 +578,11 @@ void ClangdLSPServer::onInitialize(const InitializeParams &Params,
   };
 
   {
-    LSPBinder Binder(Handlers);
+    LSPBinder Binder(Handlers, *this);
+    bindMethods(Binder);
     if (Opts.Modules)
       for (auto &Mod : *Opts.Modules)
-        Mod.initializeLSP(Binder, Params.capabilities, ServerCaps);
+        Mod.initializeLSP(Binder, Params.rawCapabilities, ServerCaps);
   }
 
   // Per LSP, renameProvider can be either boolean or RenameOptions.
@@ -739,7 +736,7 @@ void ClangdLSPServer::onCommandApplyTweak(const TweakArgs &Args,
       ShowMessageParams Msg;
       Msg.message = *R->ShowMessage;
       Msg.type = MessageType::Info;
-      notify("window/showMessage", Msg);
+      ShowMessage(Msg);
     }
     // When no edit is specified, make sure we Reply().
     if (R->ApplyEdits.empty())
@@ -765,10 +762,9 @@ void ClangdLSPServer::applyEdit(WorkspaceEdit WE, llvm::json::Value Success,
                                 Callback<llvm::json::Value> Reply) {
   ApplyWorkspaceEditParams Edit;
   Edit.edit = std::move(WE);
-  call<ApplyWorkspaceEditResponse>(
-      "workspace/applyEdit", std::move(Edit),
-      [Reply = std::move(Reply), SuccessMessage = std::move(Success)](
-          llvm::Expected<ApplyWorkspaceEditResponse> Response) mutable {
+  ApplyWorkspaceEdit(
+      Edit, [Reply = std::move(Reply), SuccessMessage = std::move(Success)](
+                llvm::Expected<ApplyWorkspaceEditResponse> Response) mutable {
         if (!Response)
           return Reply(Response.takeError());
         if (!Response->applied) {
@@ -854,7 +850,7 @@ void ClangdLSPServer::onDocumentDidClose(
   // executed after it returns.
   PublishDiagnosticsParams Notification;
   Notification.uri = URIForFile::canonicalize(File, /*TUPath=*/File);
-  publishDiagnostics(Notification);
+  PublishDiagnostics(Notification);
 }
 
 void ClangdLSPServer::onDocumentOnTypeFormatting(
@@ -1254,11 +1250,6 @@ void ClangdLSPServer::applyConfiguration(
       [&](llvm::StringRef File) { return ModifiedFiles.count(File) != 0; });
 }
 
-void ClangdLSPServer::publishDiagnostics(
-    const PublishDiagnosticsParams &Params) {
-  notify("textDocument/publishDiagnostics", Params);
-}
-
 void ClangdLSPServer::maybeExportMemoryProfile() {
   if (!trace::enabled() || !ShouldProfile())
     return;
@@ -1457,10 +1448,12 @@ ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
     this->Opts.ContextProvider = ClangdServer::createConfiguredContextProvider(
         Opts.ConfigProvider, this);
   }
-
-  // clang-format off
-  LSPBinder Bind(this->Handlers);
+  LSPBinder Bind(this->Handlers, *this);
   Bind.method("initialize", this, &ClangdLSPServer::onInitialize);
+}
+
+void ClangdLSPServer::bindMethods(LSPBinder &Bind) {
+  // clang-format off
   Bind.notification("initialized", this, &ClangdLSPServer::onInitialized);
   Bind.method("shutdown", this, &ClangdLSPServer::onShutdown);
   Bind.method("sync", this, &ClangdLSPServer::onSync);
@@ -1504,6 +1497,15 @@ ClangdLSPServer::ClangdLSPServer(class Transport &Transp,
     Bind.method("textDocument/foldingRange", this, &ClangdLSPServer::onFoldingRange);
   Bind.command(APPLY_FIX_COMMAND, this, &ClangdLSPServer::onCommandApplyEdit);
   Bind.command(APPLY_TWEAK_COMMAND, this, &ClangdLSPServer::onCommandApplyTweak);
+
+  ApplyWorkspaceEdit = Bind.outgoingMethod("workspace/applyEdit");
+  PublishDiagnostics = Bind.outgoingNotification("textDocument/publishDiagnostics");
+  ShowMessage = Bind.outgoingNotification("window/showMessage");
+  NotifyFileStatus = Bind.outgoingNotification("textDocument/clangd.fileStatus");
+  CreateWorkDoneProgress = Bind.outgoingMethod("window/workDoneProgress/create");
+  BeginWorkDoneProgress = Bind.outgoingNotification("$/progress");
+  ReportWorkDoneProgress = Bind.outgoingNotification("$/progress");
+  EndWorkDoneProgress = Bind.outgoingNotification("$/progress");
   // clang-format on
 }
 
@@ -1590,7 +1592,7 @@ void ClangdLSPServer::onDiagnosticsReady(PathRef File, llvm::StringRef Version,
   }
 
   // Send a notification to the LSP client.
-  publishDiagnostics(Notification);
+  PublishDiagnostics(Notification);
 }
 
 void ClangdLSPServer::onBackgroundIndexProgress(
@@ -1607,7 +1609,7 @@ void ClangdLSPServer::onBackgroundIndexProgress(
       WorkDoneProgressBegin Begin;
       Begin.percentage = true;
       Begin.title = "indexing";
-      progress(ProgressToken, std::move(Begin));
+      BeginWorkDoneProgress({ProgressToken, std::move(Begin)});
       BackgroundIndexProgressState = BackgroundIndexProgress::Live;
     }
 
@@ -1619,10 +1621,10 @@ void ClangdLSPServer::onBackgroundIndexProgress(
       Report.message =
           llvm::formatv("{0}/{1}", Stats.Completed - Stats.LastIdle,
                         Stats.Enqueued - Stats.LastIdle);
-      progress(ProgressToken, std::move(Report));
+      ReportWorkDoneProgress({ProgressToken, std::move(Report)});
     } else {
       assert(Stats.Completed == Stats.Enqueued);
-      progress(ProgressToken, WorkDoneProgressEnd());
+      EndWorkDoneProgress({ProgressToken, WorkDoneProgressEnd()});
       BackgroundIndexProgressState = BackgroundIndexProgress::Empty;
     }
   };
@@ -1644,8 +1646,8 @@ void ClangdLSPServer::onBackgroundIndexProgress(
     BackgroundIndexProgressState = BackgroundIndexProgress::Creating;
     WorkDoneProgressCreateParams CreateRequest;
     CreateRequest.token = ProgressToken;
-    call<std::nullptr_t>(
-        "window/workDoneProgress/create", CreateRequest,
+    CreateWorkDoneProgress(
+        CreateRequest,
         [this, NotifyProgress](llvm::Expected<std::nullptr_t> E) {
           std::lock_guard<std::mutex> Lock(BackgroundIndexProgressMutex);
           if (E) {
@@ -1676,7 +1678,7 @@ void ClangdLSPServer::onFileUpdated(PathRef File, const TUStatus &Status) {
       (Status.ASTActivity.K == ASTAction::Building ||
        Status.ASTActivity.K == ASTAction::RunningAction))
     return;
-  notify("textDocument/clangd.fileStatus", Status.render(File));
+  NotifyFileStatus(Status.render(File));
 }
 
 void ClangdLSPServer::reparseOpenFilesIfNeeded(

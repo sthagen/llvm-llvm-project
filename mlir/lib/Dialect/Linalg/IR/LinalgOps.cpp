@@ -684,95 +684,6 @@ struct ReplaceDimOfInitTensorOp : public OpRewritePattern<DimOp> {
 };
 } // namespace
 
-static Value getCollapsedInitTensor(OpBuilder &builder,
-                                    TensorReshapeOp reshapeOp) {
-  Location loc = reshapeOp.getLoc();
-  SmallVector<Value, 4> dynamicShapes;
-  SmallVector<int64_t, 4> staticShapes;
-  auto reassociation = reshapeOp.getReassociationMaps();
-  Value src = reshapeOp.src();
-  RankedTensorType srcType = reshapeOp.getSrcType();
-  ArrayRef<int64_t> srcShape = srcType.getShape();
-  for (auto map : reassociation) {
-    Value linearizedDynamicDim = nullptr;
-    int64_t linearizedStaticDim = 1;
-    for (unsigned i : llvm::map_range(map.getResults(), [](AffineExpr e) {
-           return e.cast<AffineDimExpr>().getPosition();
-         })) {
-      if (ShapedType::isDynamic(srcShape[i])) {
-        Value shapeVal = builder.create<DimOp>(loc, src, i);
-        if (linearizedDynamicDim) {
-          linearizedDynamicDim =
-              builder.create<MulIOp>(loc, linearizedDynamicDim, shapeVal);
-        } else {
-          linearizedDynamicDim = shapeVal;
-        }
-      } else {
-        linearizedStaticDim *= srcShape[i];
-      }
-    }
-    if (linearizedDynamicDim) {
-      if (linearizedStaticDim != 1) {
-        linearizedDynamicDim = builder.create<MulIOp>(
-            loc, linearizedDynamicDim,
-            builder.create<ConstantIndexOp>(loc, linearizedStaticDim));
-      }
-      dynamicShapes.push_back(linearizedDynamicDim);
-      staticShapes.push_back(ShapedType::kDynamicSize);
-    } else {
-      staticShapes.push_back(linearizedStaticDim);
-    }
-  }
-  return builder.create<InitTensorOp>(loc, dynamicShapes, staticShapes,
-                                      srcType.getElementType());
-}
-
-static Value getExpandedInitTensor(OpBuilder &builder,
-                                   TensorReshapeOp reshapeOp) {
-  SmallVector<Value, 4> dynamicShapes;
-  SmallVector<int64_t, 4> staticShapes;
-  auto reassociation = reshapeOp.getReassociationMaps();
-  Value src = reshapeOp.src();
-  RankedTensorType srcType = reshapeOp.getSrcType();
-  ArrayRef<int64_t> srcShape = srcType.getShape();
-  ArrayRef<int64_t> dstShape = reshapeOp.getResultType().getShape();
-  Location loc = reshapeOp.getLoc();
-  for (auto map : enumerate(reassociation)) {
-    int64_t linearizedStaticDim = 1;
-    bool hasDynamic = false;
-    for (unsigned i :
-         llvm::map_range(map.value().getResults(), [](AffineExpr e) {
-           return e.cast<AffineDimExpr>().getPosition();
-         })) {
-      if (ShapedType::isDynamic(dstShape[i])) {
-        // Only one of the dimensions of the expanded shape should be dynamic.
-        if (hasDynamic)
-          return nullptr;
-        hasDynamic = true;
-        staticShapes.push_back(ShapedType::kDynamicSize);
-        continue;
-      }
-      staticShapes.push_back(dstShape[i]);
-      linearizedStaticDim *= dstShape[i];
-    }
-    if (hasDynamic) {
-      // If the expanded dimensions has a dynamic shape, the src shape must be
-      // dynamic as well.
-      if (!ShapedType::isDynamic(srcShape[map.index()]))
-        return nullptr;
-      Value dynamicDim = builder.create<DimOp>(loc, src, map.index());
-      if (linearizedStaticDim != 1) {
-        dynamicDim = builder.create<UnsignedDivIOp>(
-            loc, dynamicDim,
-            builder.create<ConstantIndexOp>(loc, linearizedStaticDim));
-      }
-      dynamicShapes.push_back(dynamicDim);
-    }
-  }
-  return builder.create<InitTensorOp>(loc, dynamicShapes, staticShapes,
-                                      srcType.getElementType());
-}
-
 namespace {
 /// Since `init_tensor` operation creates a tensor needed only for its shape, a
 /// subtensor of this is also needed only for its shape. The result can be
@@ -803,17 +714,13 @@ struct FoldInitTensorWithTensorReshapeOp
                                 PatternRewriter &rewriter) const override {
     if (!reshapeOp.src().getDefiningOp<InitTensorOp>())
       return failure();
-    RankedTensorType collapsedType = reshapeOp.getSrcType();
-    RankedTensorType expandedType = reshapeOp.getResultType();
-    bool isCollapsed = expandedType.getRank() < collapsedType.getRank();
-    if (isCollapsed)
-      std::swap(collapsedType, expandedType);
-    Value initTensorOp = isCollapsed
-                             ? getCollapsedInitTensor(rewriter, reshapeOp)
-                             : getExpandedInitTensor(rewriter, reshapeOp);
-    if (!initTensorOp)
-      return failure();
-    rewriter.replaceOp(reshapeOp, initTensorOp);
+    Location loc = reshapeOp.getLoc();
+    SmallVector<Value, 4> resultShapeValues =
+        reshapeOp.getOutputShape(rewriter, loc);
+    Value initTensor = rewriter.create<InitTensorOp>(
+        loc, resultShapeValues, reshapeOp.getResultType().getElementType());
+    rewriter.replaceOpWithNewOp<tensor::CastOp>(
+        reshapeOp, reshapeOp.getResultType(), initTensor);
     return success();
   }
 };
@@ -1255,6 +1162,141 @@ convertReassociationIndicesToMaps(
   return reassociationMaps;
 }
 
+/// For reshape op compute the shape at dimension `dimIndex` of the output in
+/// terms of shape of the `src`, when the reshape op is a collapsing
+/// operation. It is the product of the shape of the collapsed dimensions of the
+/// `src`.
+static Value
+getCollapsedOutputDimFromInputShape(OpBuilder &builder, Location loc,
+                                    int64_t dimIndex, Value src,
+                                    ArrayRef<AffineMap> reassociationMap) {
+  AffineMap map = reassociationMap[dimIndex];
+  unsigned startPos =
+      map.getResults().front().cast<AffineDimExpr>().getPosition();
+  unsigned endPos = map.getResults().back().cast<AffineDimExpr>().getPosition();
+  AffineExpr expr;
+  SmallVector<Value, 2> dynamicDims;
+  for (auto dim : llvm::seq(startPos, endPos + 1)) {
+    dynamicDims.push_back(builder.create<DimOp>(loc, src, dim));
+    AffineExpr currExpr = builder.getAffineSymbolExpr(dim - startPos);
+    expr = (expr ? expr * currExpr : currExpr);
+  }
+  return applyMapToValues(builder, loc,
+                          AffineMap::get(0, endPos - startPos + 1, expr),
+                          dynamicDims)[0];
+}
+
+/// Given the `src` of a collapsing reshape op and its reassociation maps,
+/// compute the shape of the result of the reshape.
+static SmallVector<Value, 4> getCollapsedOutputShapeFromInputShape(
+    OpBuilder &builder, Location loc, Value src,
+    ArrayRef<int64_t> dstStaticShape, ArrayRef<AffineMap> reassociation) {
+  return llvm::to_vector<4>(llvm::map_range(
+      llvm::seq<int64_t>(0, dstStaticShape.size()), [&](int64_t dim) {
+        return getCollapsedOutputDimFromInputShape(builder, loc, dim, src,
+                                                   reassociation);
+      }));
+}
+
+/// Compute a map that for a given dimension of the expanded type gives the
+/// dimension in the collapsed type it maps to. Essentially its the inverse of
+/// the `reassocation` maps.
+static llvm::DenseMap<int64_t, int64_t>
+getExpandedDimToCollapsedDimMap(ArrayRef<AffineMap> reassociation) {
+  llvm::DenseMap<int64_t, int64_t> expandedDimToCollapsedDim;
+  for (auto map : enumerate(reassociation)) {
+    unsigned startPos =
+        map.value().getResults().front().cast<AffineDimExpr>().getPosition();
+    unsigned endPos =
+        map.value().getResults().back().cast<AffineDimExpr>().getPosition();
+    for (auto dim : llvm::seq(startPos, endPos + 1)) {
+      expandedDimToCollapsedDim[dim] = map.index();
+    }
+  }
+  return expandedDimToCollapsedDim;
+}
+
+/// For an expanding reshape op, compute the value for a dimension of the output
+/// from the shape of the input.
+static Value getExpandedOutputDimFromInputShape(
+    OpBuilder &builder, Location loc, int64_t dimIndex, Value src,
+    ArrayRef<int64_t> dstStaticShape, ArrayRef<AffineMap> reassociation,
+    llvm::DenseMap<int64_t, int64_t> &expandedDimToCollapsedDim) {
+  if (!ShapedType::isDynamic(dstStaticShape[dimIndex])) {
+    return builder.create<ConstantIndexOp>(loc, dstStaticShape[dimIndex]);
+  }
+  unsigned sourceDimPos = expandedDimToCollapsedDim[dimIndex];
+  unsigned startPos = reassociation[sourceDimPos]
+                          .getResults()
+                          .front()
+                          .cast<AffineDimExpr>()
+                          .getPosition();
+  unsigned endPos = reassociation[sourceDimPos]
+                        .getResults()
+                        .back()
+                        .cast<AffineDimExpr>()
+                        .getPosition();
+  int64_t linearizedStaticDim = 1;
+  for (auto d :
+       llvm::enumerate(dstStaticShape.slice(startPos, endPos - startPos + 1))) {
+    if (d.index() + startPos == static_cast<unsigned>(dimIndex))
+      continue;
+    assert(!ShapedType::isDynamic(d.value()) &&
+           "single dimension cannot be expanded into multiple dynamic "
+           "dimensions");
+    linearizedStaticDim *= d.value();
+  }
+  Value sourceDim = builder.create<DimOp>(loc, src, sourceDimPos);
+  return applyMapToValues(
+      builder, loc,
+      AffineMap::get(
+          0, 1, builder.getAffineSymbolExpr(0).floorDiv(linearizedStaticDim)),
+      sourceDim)[0];
+}
+
+/// Given the `src` of an expanding reshape op, the reassociation maps and the
+/// result type, compute the shape of the result of the reshape.
+static SmallVector<Value, 4> getExpandedOutputShapeFromInputShape(
+    OpBuilder &builder, Location loc, Value src,
+    ArrayRef<int64_t> dstStaticShape, ArrayRef<AffineMap> reassociation) {
+  llvm::DenseMap<int64_t, int64_t> expandedDimToCollapsedDim =
+      getExpandedDimToCollapsedDimMap(reassociation);
+  return llvm::to_vector<4>(llvm::map_range(
+      llvm::seq<int64_t>(0, dstStaticShape.size()), [&](int64_t dim) {
+        return getExpandedOutputDimFromInputShape(builder, loc, dim, src,
+                                                  dstStaticShape, reassociation,
+                                                  expandedDimToCollapsedDim);
+      }));
+}
+
+SmallVector<Value, 4> mlir::linalg::getReshapeOutputShapeFromInputShape(
+    OpBuilder &builder, Location loc, Value src,
+    ArrayRef<int64_t> dstStaticShape, ArrayRef<AffineMap> reassocation) {
+  return dstStaticShape.size() >
+                 static_cast<size_t>(src.getType().cast<ShapedType>().getRank())
+             ? getExpandedOutputShapeFromInputShape(
+                   builder, loc, src, dstStaticShape, reassocation)
+             : getCollapsedOutputShapeFromInputShape(
+                   builder, loc, src, dstStaticShape, reassocation);
+}
+
+/// For a reshape op, compute the value of a given dimension of the output
+/// (`dimIndex`) from the shape of the inputs and type of the result.
+static Value getReshapeOutputDimFromInputShape(
+    OpBuilder &builder, Location loc, int64_t dimIndex, Value src,
+    ArrayRef<int64_t> dstStaticShape, ArrayRef<AffineMap> reassociation) {
+  if (dstStaticShape.size() >
+      static_cast<size_t>(src.getType().cast<ShapedType>().getRank())) {
+    llvm::DenseMap<int64_t, int64_t> expandedDimToCollapsedDim =
+        getExpandedDimToCollapsedDimMap(reassociation);
+    return getExpandedOutputDimFromInputShape(builder, loc, dimIndex, src,
+                                              dstStaticShape, reassociation,
+                                              expandedDimToCollapsedDim);
+  }
+  return getCollapsedOutputDimFromInputShape(builder, loc, dimIndex, src,
+                                             reassociation);
+}
+
 void mlir::linalg::ReshapeOp::build(OpBuilder &b, OperationState &result,
                                     Value src,
                                     ArrayRef<ReassociationExprs> reassociation,
@@ -1478,12 +1520,35 @@ struct FoldReshapeWithConstant : OpRewritePattern<TensorReshapeOp> {
     return success();
   }
 };
+
+/// Canonicalize dim ops that use the output shape with dim of the input.
+struct ReplaceDimOfReshapeOpResult : OpRewritePattern<DimOp> {
+  using OpRewritePattern<DimOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(DimOp dimOp,
+                                PatternRewriter &rewriter) const override {
+    Value dimValue = dimOp.memrefOrTensor();
+    Optional<int64_t> dimIndex = dimOp.getConstantIndex();
+    if (!dimIndex)
+      return failure();
+
+    auto reshapeOp = dimValue.getDefiningOp<TensorReshapeOp>();
+    if (!reshapeOp)
+      return failure();
+
+    rewriter.replaceOp(dimOp,
+                       getReshapeOutputDimFromInputShape(
+                           rewriter, dimOp.getLoc(), *dimIndex, reshapeOp.src(),
+                           reshapeOp.getResultType().getShape(),
+                           reshapeOp.getReassociationMaps()));
+    return success();
+  }
+};
 } // namespace
 
 void TensorReshapeOp::getCanonicalizationPatterns(
     OwningRewritePatternList &results, MLIRContext *context) {
-  results.insert<CollapseReshapeOps<TensorReshapeOp>, FoldReshapeWithConstant>(
-      context);
+  results.insert<CollapseReshapeOps<TensorReshapeOp>, FoldReshapeWithConstant,
+                 ReplaceDimOfReshapeOpResult>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1550,8 +1615,156 @@ static LogicalResult verify(linalg::YieldOp op) {
     return success();
   }
 
+  if (auto tiledLoopOp = dyn_cast<linalg::TiledLoopOp>(parentOp)) {
+    return success();
+  }
   return op.emitOpError("expected parent op with LinalgOp interface");
 }
+
+//===----------------------------------------------------------------------===//
+// TiledLoopOp
+//===----------------------------------------------------------------------===//
+
+static void print(OpAsmPrinter &p, TiledLoopOp op) {
+  p << op.getOperationName() << " (" << op.getBody()->getArguments() << ") = ("
+    << op.lowerBound() << ") to (" << op.upperBound() << ") step (" << op.step()
+    << ")";
+
+  if (!op.inputs().empty())
+    p << " ins (" << op.inputs() << ")";
+  if (!op.outputs().empty())
+    p << " outs (" << op.outputs() << ")";
+
+  if (llvm::any_of(op.iterator_types(), [](Attribute attr) {
+        return attr.cast<StringAttr>().getValue() !=
+               getParallelIteratorTypeName();
+      })) {
+    p << " iterators(" << op.iterator_types() << ")";
+  }
+
+  p.printRegion(op.region(), /*printEntryBlockArgs=*/false);
+  p.printOptionalAttrDict(
+      op.getAttrs(), /*elidedAttrs=*/{TiledLoopOp::getOperandSegmentSizeAttr(),
+                                      getIteratorTypesAttrName()});
+}
+
+static ParseResult parseTiledLoopOp(OpAsmParser &parser,
+                                    OperationState &result) {
+  auto &builder = parser.getBuilder();
+  // Parse an opening `(` followed by induction variables followed by `)`
+  SmallVector<OpAsmParser::OperandType, 4> ivs;
+  if (parser.parseRegionArgumentList(ivs, /*requiredOperandCount=*/-1,
+                                     OpAsmParser::Delimiter::Paren))
+    return failure();
+
+  // Parse loop bounds.
+  SmallVector<OpAsmParser::OperandType, 4> lower;
+  if (parser.parseEqual() ||
+      parser.parseOperandList(lower, ivs.size(),
+                              OpAsmParser::Delimiter::Paren) ||
+      parser.resolveOperands(lower, builder.getIndexType(), result.operands))
+    return failure();
+
+  SmallVector<OpAsmParser::OperandType, 4> upper;
+  if (parser.parseKeyword("to") ||
+      parser.parseOperandList(upper, ivs.size(),
+                              OpAsmParser::Delimiter::Paren) ||
+      parser.resolveOperands(upper, builder.getIndexType(), result.operands))
+    return failure();
+
+  // Parse step values.
+  SmallVector<OpAsmParser::OperandType, 4> steps;
+  if (parser.parseKeyword("step") ||
+      parser.parseOperandList(steps, ivs.size(),
+                              OpAsmParser::Delimiter::Paren) ||
+      parser.resolveOperands(steps, builder.getIndexType(), result.operands))
+    return failure();
+
+  // Parse input tensors.
+  SmallVector<OpAsmParser::OperandType, 4> inputs;
+  if (succeeded(parser.parseOptionalKeyword("ins"))) {
+    SmallVector<Type, 4> inputTypes;
+    llvm::SMLoc inputsOperandsLoc = parser.getCurrentLocation();
+
+    if (parser.parseLParen() || parser.parseOperandList(inputs) ||
+        parser.parseColonTypeList(inputTypes) || parser.parseRParen())
+      return failure();
+
+    if (parser.resolveOperands(inputs, inputTypes, inputsOperandsLoc,
+                               result.operands))
+      return failure();
+  }
+
+  // Parse output tensors.
+  SmallVector<OpAsmParser::OperandType, 4> outputs;
+  if (succeeded(parser.parseOptionalKeyword("outs"))) {
+    SmallVector<Type, 4> outputTypes;
+    llvm::SMLoc outputsOperandsLoc = parser.getCurrentLocation();
+
+    if (parser.parseLParen() || parser.parseOperandList(outputs) ||
+        parser.parseColonTypeList(outputTypes) || parser.parseRParen())
+      return failure();
+
+    if (parser.resolveOperands(outputs, outputTypes, outputsOperandsLoc,
+                               result.operands))
+      return failure();
+    result.addTypes(outputTypes);
+  }
+
+  // Parse attributes.
+  SmallVector<Attribute, 4> iterTypes;
+  if (succeeded(parser.parseOptionalKeyword("iterators"))) {
+    StringAttr iterType;
+
+    if (parser.parseLParen() || parser.parseAttribute(iterType))
+      return failure();
+    iterTypes.push_back(iterType);
+    for (int i = 1, e = ivs.size(); i < e; ++i) {
+      if (parser.parseComma() || parser.parseAttribute(iterType))
+        return failure();
+      iterTypes.push_back(iterType);
+    }
+    if (parser.parseRParen())
+      return failure();
+  } else {
+    auto parallelIter = builder.getStringAttr(getParallelIteratorTypeName());
+    iterTypes = SmallVector<Attribute, 4>(ivs.size(), parallelIter);
+  }
+  result.addAttribute(getIteratorTypesAttrName(),
+                      builder.getArrayAttr(iterTypes));
+  result.addAttribute(
+      TiledLoopOp::getOperandSegmentSizeAttr(),
+      builder.getI32VectorAttr({static_cast<int32_t>(lower.size()),
+                                static_cast<int32_t>(upper.size()),
+                                static_cast<int32_t>(steps.size()),
+                                static_cast<int32_t>(inputs.size()),
+                                static_cast<int32_t>(outputs.size())}));
+
+  // Parse the body.
+  Region *body = result.addRegion();
+  SmallVector<Type, 4> types(ivs.size(), builder.getIndexType());
+  if (parser.parseRegion(*body, ivs, types))
+    return failure();
+
+  // Parse optional attributes.
+  parser.parseOptionalAttrDict(result.attributes);
+
+  return success();
+}
+
+Region &TiledLoopOp::getLoopBody() { return region(); }
+
+LogicalResult TiledLoopOp::moveOutOfLoop(ArrayRef<Operation *> ops) {
+  for (auto *op : ops)
+    op->moveBefore(*this);
+  return success();
+}
+
+bool TiledLoopOp::isDefinedOutsideOfLoop(Value value) {
+  return !region().isAncestor(value.getParentRegion());
+}
+
+static LogicalResult verify(TiledLoopOp op) { return success(); }
 
 /////// Operations corresponding to library calls defined with Tablegen ////////
 

@@ -195,18 +195,17 @@ Value *VPTransformState::get(VPValue *Def, const VPIteration &Instance) {
   if (hasScalarValue(Def, Instance))
     return Data.PerPartScalars[Def][Instance.Part][Instance.Lane];
 
-  if (hasVectorValue(Def, Instance.Part)) {
-    assert(Data.PerPartOutput.count(Def));
-    auto *VecPart = Data.PerPartOutput[Def][Instance.Part];
-    if (!VecPart->getType()->isVectorTy()) {
-      assert(Instance.Lane == 0 && "cannot get lane > 0 for scalar");
-      return VecPart;
-    }
-    // TODO: Cache created scalar values.
-    return Builder.CreateExtractElement(VecPart,
-                                        Builder.getInt32(Instance.Lane));
+  assert(hasVectorValue(Def, Instance.Part));
+  auto *VecPart = Data.PerPartOutput[Def][Instance.Part];
+  if (!VecPart->getType()->isVectorTy()) {
+    assert(Instance.Lane == 0 && "cannot get lane > 0 for scalar");
+    return VecPart;
   }
-  return Callback.getOrCreateScalarValue(VPValue2Value[Def], Instance);
+  // TODO: Cache created scalar values.
+  auto *Extract =
+      Builder.CreateExtractElement(VecPart, Builder.getInt32(Instance.Lane));
+  // set(Def, Extract, Instance);
+  return Extract;
 }
 
 BasicBlock *
@@ -299,17 +298,15 @@ void VPBasicBlock::execute(VPTransformState *State) {
 
   VPValue *CBV;
   if (EnableVPlanNativePath && (CBV = getCondBit())) {
-    Value *IRCBV = CBV->getUnderlyingValue();
-    assert(IRCBV && "Unexpected null underlying value for condition bit");
+    assert(CBV->getUnderlyingValue() &&
+           "Unexpected null underlying value for condition bit");
 
     // Condition bit value in a VPBasicBlock is used as the branch selector. In
     // the VPlan-native path case, since all branches are uniform we generate a
     // branch instruction using the condition value from vector lane 0 and dummy
     // successors. The successors are fixed later when the successor blocks are
     // visited.
-    Value *NewCond = State->Callback.getOrCreateVectorValues(IRCBV, 0);
-    NewCond = State->Builder.CreateExtractElement(NewCond,
-                                                  State->Builder.getInt32(0));
+    Value *NewCond = State->get(CBV, {0, 0});
 
     // Replace the temporary unreachable terminator with the new conditional
     // branch.
@@ -884,7 +881,7 @@ void VPWidenGEPRecipe::print(raw_ostream &O, const Twine &Indent,
 
 void VPWidenPHIRecipe::print(raw_ostream &O, const Twine &Indent,
                              VPSlotTracker &SlotTracker) const {
-  O << "WIDEN-PHI " << VPlanIngredient(Phi);
+  O << "WIDEN-PHI " << VPlanIngredient(getUnderlyingValue());
 }
 
 void VPBlendRecipe::print(raw_ostream &O, const Twine &Indent,
@@ -941,6 +938,8 @@ void VPReplicateRecipe::print(raw_ostream &O, const Twine &Indent,
 void VPPredInstPHIRecipe::print(raw_ostream &O, const Twine &Indent,
                                 VPSlotTracker &SlotTracker) const {
   O << "PHI-PREDICATED-INSTRUCTION ";
+  printAsOperand(O, SlotTracker);
+  O << " = ";
   printOperands(O, SlotTracker);
 }
 

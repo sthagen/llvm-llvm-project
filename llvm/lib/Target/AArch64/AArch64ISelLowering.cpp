@@ -693,6 +693,7 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::PREFETCH, MVT::Other, Custom);
 
   setOperationAction(ISD::FLT_ROUNDS_, MVT::i32, Custom);
+  setOperationAction(ISD::SET_ROUNDING, MVT::Other, Custom);
 
   setOperationAction(ISD::ATOMIC_CMP_SWAP, MVT::i128, Custom);
   setOperationAction(ISD::ATOMIC_LOAD_SUB, MVT::i32, Custom);
@@ -1124,6 +1125,11 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::VECREDUCE_UMAX, VT, Custom);
       setOperationAction(ISD::VECREDUCE_SMIN, VT, Custom);
       setOperationAction(ISD::VECREDUCE_SMAX, VT, Custom);
+
+      setOperationAction(ISD::MULHU, VT, Expand);
+      setOperationAction(ISD::MULHS, VT, Expand);
+      setOperationAction(ISD::UMUL_LOHI, VT, Expand);
+      setOperationAction(ISD::SMUL_LOHI, VT, Expand);
     }
 
     // Illegal unpacked integer vector types.
@@ -3450,6 +3456,50 @@ SDValue AArch64TargetLowering::LowerFLT_ROUNDS_(SDValue Op,
   return DAG.getMergeValues({AND, Chain}, dl);
 }
 
+SDValue AArch64TargetLowering::LowerSET_ROUNDING(SDValue Op,
+                                                 SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Chain = Op->getOperand(0);
+  SDValue RMValue = Op->getOperand(1);
+
+  // The rounding mode is in bits 23:22 of the FPCR.
+  // The llvm.set.rounding argument value to the rounding mode in FPCR mapping
+  // is 0->3, 1->0, 2->1, 3->2. The formula we use to implement this is
+  // ((arg - 1) & 3) << 22).
+  //
+  // The argument of llvm.set.rounding must be within the segment [0, 3], so
+  // NearestTiesToAway (4) is not handled here. It is responsibility of the code
+  // generated llvm.set.rounding to ensure this condition.
+
+  // Calculate new value of FPCR[23:22].
+  RMValue = DAG.getNode(ISD::SUB, DL, MVT::i32, RMValue,
+                        DAG.getConstant(1, DL, MVT::i32));
+  RMValue = DAG.getNode(ISD::AND, DL, MVT::i32, RMValue,
+                        DAG.getConstant(0x3, DL, MVT::i32));
+  RMValue =
+      DAG.getNode(ISD::SHL, DL, MVT::i32, RMValue,
+                  DAG.getConstant(AArch64::RoundingBitsPos, DL, MVT::i32));
+  RMValue = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i64, RMValue);
+
+  // Get current value of FPCR.
+  SDValue Ops[] = {
+      Chain, DAG.getTargetConstant(Intrinsic::aarch64_get_fpcr, DL, MVT::i64)};
+  SDValue FPCR =
+      DAG.getNode(ISD::INTRINSIC_W_CHAIN, DL, {MVT::i64, MVT::Other}, Ops);
+  Chain = FPCR.getValue(1);
+  FPCR = FPCR.getValue(0);
+
+  // Put new rounding mode into FPSCR[23:22].
+  const int RMMask = ~(AArch64::Rounding::rmMask << AArch64::RoundingBitsPos);
+  FPCR = DAG.getNode(ISD::AND, DL, MVT::i64, FPCR,
+                     DAG.getConstant(RMMask, DL, MVT::i64));
+  FPCR = DAG.getNode(ISD::OR, DL, MVT::i64, FPCR, RMValue);
+  SDValue Ops2[] = {
+      Chain, DAG.getTargetConstant(Intrinsic::aarch64_set_fpcr, DL, MVT::i64),
+      FPCR};
+  return DAG.getNode(ISD::INTRINSIC_VOID, DL, MVT::Other, Ops2);
+}
+
 SDValue AArch64TargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
 
@@ -4373,6 +4423,8 @@ SDValue AArch64TargetLowering::LowerOperation(SDValue Op,
     return LowerFSINCOS(Op, DAG);
   case ISD::FLT_ROUNDS_:
     return LowerFLT_ROUNDS_(Op, DAG);
+  case ISD::SET_ROUNDING:
+    return LowerSET_ROUNDING(Op, DAG);
   case ISD::MUL:
     return LowerMUL(Op, DAG);
   case ISD::INTRINSIC_WO_CHAIN:
@@ -6707,13 +6759,26 @@ SDValue AArch64TargetLowering::LowerSELECT_CC(ISD::CondCode CC, SDValue LHS,
     assert((LHS.getValueType() == RHS.getValueType()) &&
            (LHS.getValueType() == MVT::i32 || LHS.getValueType() == MVT::i64));
 
+    ConstantSDNode *CFVal = dyn_cast<ConstantSDNode>(FVal);
+    ConstantSDNode *CTVal = dyn_cast<ConstantSDNode>(TVal);
+    ConstantSDNode *RHSC = dyn_cast<ConstantSDNode>(RHS);
+    // Check for sign pattern (SELECT_CC setgt, iN lhs, -1, 1, -1) and transform
+    // into (OR (ASR lhs, N-1), 1), which requires less instructions for the
+    // supported types.
+    if (CC == ISD::SETGT && RHSC && RHSC->isAllOnesValue() && CTVal && CFVal &&
+        CTVal->isOne() && CFVal->isAllOnesValue() &&
+        LHS.getValueType() == TVal.getValueType()) {
+      EVT VT = LHS.getValueType();
+      SDValue Shift =
+          DAG.getNode(ISD::SRA, dl, VT, LHS,
+                      DAG.getConstant(VT.getSizeInBits() - 1, dl, VT));
+      return DAG.getNode(ISD::OR, dl, VT, Shift, DAG.getConstant(1, dl, VT));
+    }
+
     unsigned Opcode = AArch64ISD::CSEL;
 
     // If both the TVal and the FVal are constants, see if we can swap them in
     // order to for a CSINV or CSINC out of them.
-    ConstantSDNode *CFVal = dyn_cast<ConstantSDNode>(FVal);
-    ConstantSDNode *CTVal = dyn_cast<ConstantSDNode>(TVal);
-
     if (CTVal && CFVal && CTVal->isAllOnesValue() && CFVal->isNullValue()) {
       std::swap(TVal, FVal);
       std::swap(CTVal, CFVal);
@@ -6916,7 +6981,7 @@ SDValue AArch64TargetLowering::LowerSELECT(SDValue Op,
   if (CCVal.getOpcode() == ISD::SETCC) {
     LHS = CCVal.getOperand(0);
     RHS = CCVal.getOperand(1);
-    CC = cast<CondCodeSDNode>(CCVal->getOperand(2))->get();
+    CC = cast<CondCodeSDNode>(CCVal.getOperand(2))->get();
   } else {
     LHS = CCVal;
     RHS = DAG.getConstant(0, DL, CCVal.getValueType());
@@ -11551,6 +11616,8 @@ bool AArch64TargetLowering::isFMAFasterThanFMulAndFAdd(
     return false;
 
   switch (VT.getSimpleVT().SimpleTy) {
+  case MVT::f16:
+    return Subtarget->hasFullFP16();
   case MVT::f32:
   case MVT::f64:
     return true;
@@ -11570,6 +11637,11 @@ bool AArch64TargetLowering::isFMAFasterThanFMulAndFAdd(const Function &F,
   default:
     return false;
   }
+}
+
+bool AArch64TargetLowering::generateFMAsInMachineCombiner(
+    EVT VT, CodeGenOpt::Level OptLevel) const {
+  return (OptLevel >= CodeGenOpt::Aggressive) && !VT.isScalableVector();
 }
 
 const MCPhysReg *
@@ -14970,6 +15042,39 @@ static SDValue performVSelectCombine(SDNode *N, SelectionDAG &DAG) {
   SDValue N0 = N->getOperand(0);
   EVT CCVT = N0.getValueType();
 
+  // Check for sign pattern (VSELECT setgt, iN lhs, -1, 1, -1) and transform
+  // into (OR (ASR lhs, N-1), 1), which requires less instructions for the
+  // supported types.
+  SDValue SetCC = N->getOperand(0);
+  if (SetCC.getOpcode() == ISD::SETCC &&
+      SetCC.getOperand(2) == DAG.getCondCode(ISD::SETGT)) {
+    SDValue CmpLHS = SetCC.getOperand(0);
+    EVT VT = CmpLHS.getValueType();
+    SDNode *CmpRHS = SetCC.getOperand(1).getNode();
+    SDNode *SplatLHS = N->getOperand(1).getNode();
+    SDNode *SplatRHS = N->getOperand(2).getNode();
+    APInt SplatLHSVal;
+    if (CmpLHS.getValueType() == N->getOperand(1).getValueType() &&
+        VT.isSimple() &&
+        is_contained(
+            makeArrayRef({MVT::v8i8, MVT::v16i8, MVT::v4i16, MVT::v8i16,
+                          MVT::v2i32, MVT::v4i32, MVT::v2i64}),
+            VT.getSimpleVT().SimpleTy) &&
+        ISD::isConstantSplatVector(SplatLHS, SplatLHSVal) &&
+        SplatLHSVal.isOneValue() && ISD::isConstantSplatVectorAllOnes(CmpRHS) &&
+        ISD::isConstantSplatVectorAllOnes(SplatRHS)) {
+      unsigned NumElts = VT.getVectorNumElements();
+      SmallVector<SDValue, 8> Ops(
+          NumElts, DAG.getConstant(VT.getScalarSizeInBits() - 1, SDLoc(N),
+                                   VT.getScalarType()));
+      SDValue Val = DAG.getBuildVector(VT, SDLoc(N), Ops);
+
+      auto Shift = DAG.getNode(ISD::SRA, SDLoc(N), VT, CmpLHS, Val);
+      auto Or = DAG.getNode(ISD::OR, SDLoc(N), VT, Shift, N->getOperand(1));
+      return Or;
+    }
+  }
+
   if (N0.getOpcode() != ISD::SETCC || CCVT.getVectorNumElements() != 1 ||
       CCVT.getVectorElementType() != MVT::i1)
     return SDValue();
@@ -14983,10 +15088,9 @@ static SDValue performVSelectCombine(SDNode *N, SelectionDAG &DAG) {
 
   SDValue IfTrue = N->getOperand(1);
   SDValue IfFalse = N->getOperand(2);
-  SDValue SetCC =
-      DAG.getSetCC(SDLoc(N), CmpVT.changeVectorElementTypeToInteger(),
-                   N0.getOperand(0), N0.getOperand(1),
-                   cast<CondCodeSDNode>(N0.getOperand(2))->get());
+  SetCC = DAG.getSetCC(SDLoc(N), CmpVT.changeVectorElementTypeToInteger(),
+                       N0.getOperand(0), N0.getOperand(1),
+                       cast<CondCodeSDNode>(N0.getOperand(2))->get());
   return DAG.getNode(ISD::VSELECT, SDLoc(N), ResVT, SetCC,
                      IfTrue, IfFalse);
 }
