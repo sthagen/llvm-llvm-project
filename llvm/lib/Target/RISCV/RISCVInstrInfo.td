@@ -852,9 +852,7 @@ def sexti32 : ComplexPattern<i64, 1, "selectSExti32">;
 def assertzexti32 : PatFrag<(ops node:$src), (assertzext node:$src), [{
   return cast<VTSDNode>(N->getOperand(1))->getVT().bitsLE(MVT::i32);
 }]>;
-def zexti32 : PatFrags<(ops node:$src),
-                       [(and node:$src, 0xffffffff),
-                        (assertzexti32 node:$src)]>;
+def zexti32 : ComplexPattern<i64, 1, "selectZExti32">;
 
 def SRLIWPat : PatFrag<(ops node:$A, node:$B),
                        (srl (and node:$A, imm), node:$B), [{
@@ -991,6 +989,10 @@ def : Pat<(brcond GPR:$cond, bb:$imm12), (BNE GPR:$cond, X0, bb:$imm12)>;
 // `brcond` only uses the lowest bit.
 def : Pat<(brcond (XLenVT (xor GPR:$cond, 1)), bb:$imm12),
           (BEQ GPR:$cond, X0, bb:$imm12)>;
+
+// Match X > -1, the canonical form of X >= 0, to the bgez pattern.
+def : Pat<(brcond (XLenVT (setgt GPR:$rs1, -1)), bb:$imm12),
+          (BGE GPR:$rs1, X0, bb:$imm12)>;
 
 let isBarrier = 1, isBranch = 1, isTerminator = 1 in
 def PseudoBR : Pseudo<(outs), (ins simm21_lsb0_jal:$imm20), [(br bb:$imm20)]>,
