@@ -121,7 +121,6 @@ public:
 
   /// The source location the operation was defined or derived from.
   Location getLoc() { return state->getLoc(); }
-  void setLoc(Location loc) { state->setLoc(loc); }
 
   /// Return all of the attributes on this operation.
   LLVM_ATTRIBUTE_DEPRECATED(
@@ -130,21 +129,17 @@ public:
     return state->getAttrs();
   }
 
-  /// A utility iterator that filters out non-dialect attributes.
-  using dialect_attr_iterator = Operation::dialect_attr_iterator;
-  using dialect_attr_range = Operation::dialect_attr_range;
-
-  /// Set the dialect attributes for this operation, and preserve all dependent.
-  template <typename DialectAttrs>
-  void setDialectAttrs(DialectAttrs &&attrs) {
-    state->setDialectAttrs(std::forward<DialectAttrs>(attrs));
-  }
-
   /// Remove the attribute with the specified name if it exists. Return the
   /// attribute that was erased, or nullptr if there was no attribute with such
   /// name.
-  Attribute removeAttr(Identifier name) { return state->removeAttr(name); }
-  Attribute removeAttr(StringRef name) {
+  LLVM_ATTRIBUTE_DEPRECATED(
+      Attribute removeAttr(Identifier name),
+      "Use Operation::removeAttr() instead (replace '.' with '->').") {
+    return state->removeAttr(name);
+  }
+  LLVM_ATTRIBUTE_DEPRECATED(
+      Attribute removeAttr(StringRef name),
+      "Use Operation::removeAttr() instead (replace '.' with '->').") {
     return state->removeAttr(Identifier::get(name, getContext()));
   }
 
