@@ -3979,8 +3979,8 @@ static void renderDebugOptions(const ToolChain &TC, const Driver &D,
       }
     }
 
-  if (T.isOSBinFormatELF() && !SplitDWARFInlining)
-    CmdArgs.push_back("-fno-split-dwarf-inlining");
+  if (T.isOSBinFormatELF() && SplitDWARFInlining)
+    CmdArgs.push_back("-fsplit-dwarf-inlining");
 
   // After we've dealt with all combinations of things that could
   // make DebugInfoKind be other than None or DebugLineTablesOnly,
@@ -4925,9 +4925,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Enable -mconstructor-aliases except on darwin, where we have to work around
-  // a linker bug (see <rdar://problem/7651567>), and CUDA device code, where
-  // aliases aren't supported. Similarly, aliases aren't yet supported for AIX.
-  if (!RawTriple.isOSDarwin() && !RawTriple.isNVPTX() && !RawTriple.isOSAIX())
+  // a linker bug (see <rdar://problem/7651567>), and CUDA/AMDGPU device code,
+  // where aliases aren't supported. Similarly, aliases aren't yet supported
+  // for AIX.
+  if (!RawTriple.isOSDarwin() && !RawTriple.isNVPTX() &&
+      !RawTriple.isAMDGPU() && !RawTriple.isOSAIX())
     CmdArgs.push_back("-mconstructor-aliases");
 
   // Darwin's kernel doesn't support guard variables; just die if we
@@ -6435,7 +6437,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     handleAMDGPUCodeObjectVersionOptions(D, Args, CmdArgs);
 
     if (Args.hasFlag(options::OPT_munsafe_fp_atomics,
-                     options::OPT_mno_unsafe_fp_atomics))
+                     options::OPT_mno_unsafe_fp_atomics, /*Default=*/false))
       CmdArgs.push_back("-munsafe-fp-atomics");
   }
 
@@ -7076,14 +7078,19 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
 
   if (Arg *A = Args.getLastArg(options::OPT__SLASH_guard)) {
     StringRef GuardArgs = A->getValue();
-    // The only valid options are "cf", "cf,nochecks", and "cf-".
+    // The only valid options are "cf", "cf,nochecks", "cf-", "ehcont" and
+    // "ehcont-".
     if (GuardArgs.equals_lower("cf")) {
       // Emit CFG instrumentation and the table of address-taken functions.
       CmdArgs.push_back("-cfguard");
     } else if (GuardArgs.equals_lower("cf,nochecks")) {
       // Emit only the table of address-taken functions.
       CmdArgs.push_back("-cfguard-no-checks");
-    } else if (GuardArgs.equals_lower("cf-")) {
+    } else if (GuardArgs.equals_lower("ehcont")) {
+      // Emit EH continuation table.
+      CmdArgs.push_back("-ehcontguard");
+    } else if (GuardArgs.equals_lower("cf-") ||
+               GuardArgs.equals_lower("ehcont-")) {
       // Do nothing, but we might want to emit a security warning in future.
     } else {
       D.Diag(diag::err_drv_invalid_value) << A->getSpelling() << GuardArgs;

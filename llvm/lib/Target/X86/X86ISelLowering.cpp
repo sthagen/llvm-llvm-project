@@ -2318,7 +2318,7 @@ EVT X86TargetLowering::getOptimalMemOpType(
 bool X86TargetLowering::isSafeMemOpType(MVT VT) const {
   if (VT == MVT::f32)
     return X86ScalarSSEf32;
-  else if (VT == MVT::f64)
+  if (VT == MVT::f64)
     return X86ScalarSSEf64;
   return true;
 }
@@ -2385,8 +2385,8 @@ void X86TargetLowering::markLibCallAttributes(MachineFunction *MF, unsigned CC,
     ParamRegs = M->getNumberRegisterParameters();
 
   // Mark the first N int arguments as having reg
-  for (unsigned Idx = 0; Idx < Args.size(); Idx++) {
-    Type *T = Args[Idx].Ty;
+  for (auto &Arg : Args) {
+    Type *T = Arg.Ty;
     if (T->isIntOrPtrTy())
       if (MF->getDataLayout().getTypeAllocSize(T) <= 8) {
         unsigned numRegs = 1;
@@ -2395,7 +2395,7 @@ void X86TargetLowering::markLibCallAttributes(MachineFunction *MF, unsigned CC,
         if (ParamRegs < numRegs)
           return;
         ParamRegs -= numRegs;
-        Args[Idx].IsInReg = true;
+        Arg.IsInReg = true;
       }
   }
 }
@@ -22035,12 +22035,9 @@ static bool matchScalarReduction(SDValue Op, ISD::NodeType BinOp,
       SrcMask->push_back(SrcOpMap[SrcOp]);
   } else {
     // Quit if not all elements are used.
-    for (DenseMap<SDValue, APInt>::const_iterator I = SrcOpMap.begin(),
-                                                  E = SrcOpMap.end();
-         I != E; ++I) {
-      if (!I->second.isAllOnesValue())
+    for (const auto &I : SrcOpMap)
+      if (!I.second.isAllOnesValue())
         return false;
-    }
   }
 
   return true;
@@ -36553,12 +36550,15 @@ static SDValue combineX86ShufflesRecursively(
   // Remove unused/repeated shuffle source ops.
   resolveTargetShuffleInputsAndMask(Ops, Mask);
 
-  // Handle the all undef/zero cases early.
+  // Handle the all undef/zero/ones cases early.
   if (all_of(Mask, [](int Idx) { return Idx == SM_SentinelUndef; }))
     return DAG.getUNDEF(Root.getValueType());
   if (all_of(Mask, [](int Idx) { return Idx < 0; }))
     return getZeroVector(Root.getSimpleValueType(), Subtarget, DAG,
                          SDLoc(Root));
+  if (Ops.size() == 1 && ISD::isBuildVectorAllOnes(Ops[0].getNode()) &&
+      none_of(Mask, [](int M) { return M == SM_SentinelZero; }))
+    return getOnesVector(Root.getValueType(), DAG, SDLoc(Root));
 
   assert(!Ops.empty() && "Shuffle with no inputs detected");
   HasVariableMask |= IsOpVariableMask;
@@ -36887,28 +36887,53 @@ static SDValue combineCommutableSHUFP(SDValue N, MVT VT, const SDLoc &DL,
   return SDValue();
 }
 
-// Canonicalize UNARYSHUFFLE(XOR(X,-1)) -> XOR(UNARYSHUFFLE(X),-1) to
-// help expose the 'NOT' pattern further up the DAG.
-// TODO: This might be beneficial for any binop with a 'splattable' operand.
+// Canonicalize SHUFFLE(BINOP(X,C)) -> BINOP(SHUFFLE(X),SHUFFLE(C)).
 static SDValue canonicalizeShuffleWithBinOps(SDValue N, SelectionDAG &DAG,
                                              const SDLoc &DL) {
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   EVT ShuffleVT = N.getValueType();
+
+  auto IsMergeableWithShuffle = [](SDValue Op) {
+    // AllZeros/AllOnes constants are freely shuffled.
+    return ISD::isBuildVectorAllOnes(Op.getNode()) ||
+           ISD::isBuildVectorAllZeros(Op.getNode());
+  };
+  auto IsSafeToMoveShuffle = [ShuffleVT](SDValue Op, unsigned BinOp) {
+    // Ensure we only shuffle whole vector src elements, unless its logical
+    // binops where we can more aggressively move shuffles from dst to src.
+    return BinOp == ISD::AND || BinOp == ISD::OR || BinOp == ISD::XOR ||
+           (Op.getScalarValueSizeInBits() <= ShuffleVT.getScalarSizeInBits());
+  };
+
   unsigned Opc = N.getOpcode();
   switch (Opc) {
+  case X86ISD::VBROADCAST:
   case X86ISD::MOVDDUP:
   case X86ISD::PSHUFD: {
-    SDValue N0 = N.getOperand(0);
-    if (N->isOnlyUserOf(N.getOperand(0).getNode())) {
-      if (SDValue Not = IsNOT(N0, DAG, /*OneUse*/ true)) {
-        Not = DAG.getBitcast(ShuffleVT, Not);
-        Not = Opc == X86ISD::MOVDDUP
-                  ? DAG.getNode(Opc, DL, ShuffleVT, Not)
-                  : DAG.getNode(Opc, DL, ShuffleVT, Not, N.getOperand(1));
-        EVT IntVT = Not.getValueType().changeTypeToInteger();
-        SDValue AllOnes = DAG.getConstant(-1, DL, IntVT);
-        Not = DAG.getBitcast(IntVT, Not);
-        Not = DAG.getNode(ISD::XOR, DL, IntVT, Not, AllOnes);
-        return DAG.getBitcast(ShuffleVT, Not);
+    if (N.getOperand(0).getValueType() == ShuffleVT &&
+        N->isOnlyUserOf(N.getOperand(0).getNode())) {
+      SDValue N0 = peekThroughOneUseBitcasts(N.getOperand(0));
+      unsigned SrcOpcode = N0.getOpcode();
+      if (TLI.isBinOp(SrcOpcode) && IsSafeToMoveShuffle(N0, SrcOpcode)) {
+        SDValue Op00 = N0.getOperand(0);
+        SDValue Op01 = N0.getOperand(1);
+        if (IsMergeableWithShuffle(Op00) || IsMergeableWithShuffle(Op01)) {
+          SDValue LHS, RHS;
+          Op00 = DAG.getBitcast(ShuffleVT, Op00);
+          Op01 = DAG.getBitcast(ShuffleVT, Op01);
+          if (N.getNumOperands() == 2) {
+            LHS = DAG.getNode(Opc, DL, ShuffleVT, Op00, N.getOperand(1));
+            RHS = DAG.getNode(Opc, DL, ShuffleVT, Op01, N.getOperand(1));
+          } else {
+            LHS = DAG.getNode(Opc, DL, ShuffleVT, Op00);
+            RHS = DAG.getNode(Opc, DL, ShuffleVT, Op01);
+          }
+          EVT OpVT = N0.getValueType();
+          return DAG.getBitcast(ShuffleVT,
+                                DAG.getNode(SrcOpcode, DL, OpVT,
+                                            DAG.getBitcast(OpVT, LHS),
+                                            DAG.getBitcast(OpVT, RHS)));
+        }
       }
     }
     break;
@@ -38003,19 +38028,6 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
 
     if (SDValue HAddSub = foldShuffleOfHorizOp(N, DAG))
       return HAddSub;
-
-    // Fold shuffle(not(x),undef) -> not(shuffle(x,undef)).
-    if (N->getOpcode() == ISD::VECTOR_SHUFFLE &&
-        N->getOperand(0).getOpcode() == ISD::XOR &&
-        N->getOperand(1).isUndef() &&
-        N->isOnlyUserOf(N->getOperand(0).getNode())) {
-      if (SDValue Not = IsNOT(N->getOperand(0), DAG, true)) {
-        SDValue NewShuffle = DAG.getVectorShuffle(
-            VT, dl, DAG.getBitcast(VT, Not), DAG.getUNDEF(VT),
-            cast<ShuffleVectorSDNode>(N)->getMask());
-        return DAG.getNOT(dl, NewShuffle, VT);
-      }
-    }
   }
 
   // Attempt to combine into a vector load/broadcast.
@@ -49895,11 +49907,16 @@ static SDValue combineScalarToVector(SDNode *N, SelectionDAG &DAG) {
 
   // See if we're broadcasting the scalar value, in which case just reuse that.
   // Ensure the same SDValue from the SDNode use is being used.
-  // TODO: Handle different vector sizes when we have test coverage.
   for (SDNode *User : Src->uses())
-    if (User->getOpcode() == X86ISD::VBROADCAST && Src == User->getOperand(0) &&
-        User->getValueSizeInBits(0).getFixedSize() == VT.getFixedSizeInBits())
-      return SDValue(User, 0);
+    if (User->getOpcode() == X86ISD::VBROADCAST && Src == User->getOperand(0)) {
+      unsigned SizeInBits = VT.getFixedSizeInBits();
+      unsigned BroadcastSizeInBits = User->getValueSizeInBits(0).getFixedSize();
+      if (BroadcastSizeInBits == SizeInBits)
+        return SDValue(User, 0);
+      if (BroadcastSizeInBits > SizeInBits)
+        return extractSubVector(SDValue(User, 0), 0, DAG, DL, SizeInBits);
+      // TODO: Handle BroadcastSizeInBits < SizeInBits when we have test coverage.
+    }
 
   return SDValue();
 }

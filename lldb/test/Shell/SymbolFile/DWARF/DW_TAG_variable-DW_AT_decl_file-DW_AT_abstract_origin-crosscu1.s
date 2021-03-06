@@ -11,10 +11,11 @@
 # file_names[  1]: name: "inlinevar2.c"
 # file_names[  2]: name: "inlinevar.h"
 
-# REQUIRES: x86
+# UNSUPPORTED: system-darwin, system-windows
+# REQUIRES: target-x86_64
 
-// RUN: %clang -o %t --target=x86_64-pc-linux %s \
-// RUN:   %S/Inputs/DW_TAG_variable-DW_AT_decl_file-DW_AT_abstract_origin-crosscu2.s
+# RUN: %clang_host -o %t %s \
+# RUN:   %S/Inputs/DW_TAG_variable-DW_AT_decl_file-DW_AT_abstract_origin-crosscu2.s
 
 # RUN: %lldb %t \
 # RUN:   -o 'b other' -o r -o disas -o 'frame variable --show-declaration' \

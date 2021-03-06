@@ -344,7 +344,8 @@ static Optional<Type> convertTensorType(const spirv::TargetEnv &targetEnv,
 static Optional<Type> convertMemrefType(const spirv::TargetEnv &targetEnv,
                                         MemRefType type) {
   Optional<spirv::StorageClass> storageClass =
-      SPIRVTypeConverter::getStorageClassForMemorySpace(type.getMemorySpace());
+      SPIRVTypeConverter::getStorageClassForMemorySpace(
+          type.getMemorySpaceAsInt());
   if (!storageClass) {
     LLVM_DEBUG(llvm::dbgs()
                << type << " illegal: cannot convert memory space\n");
@@ -526,7 +527,7 @@ void mlir::populateBuiltinFuncToSPIRVPatterns(
 static spirv::GlobalVariableOp getBuiltinVariable(Block &body,
                                                   spirv::BuiltIn builtin) {
   // Look through all global variables in the given `body` block and check if
-  // there is a spv.globalVariable that has the same `builtin` attribute.
+  // there is a spv.GlobalVariable that has the same `builtin` attribute.
   for (auto varOp : body.getOps<spirv::GlobalVariableOp>()) {
     if (auto builtinAttr = varOp->getAttrOfType<StringAttr>(
             spirv::SPIRVDialect::getAttributeName(
