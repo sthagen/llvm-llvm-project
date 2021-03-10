@@ -99,8 +99,8 @@ int InputFile::idCount = 0;
 // Open a given file path and return it as a memory-mapped file.
 Optional<MemoryBufferRef> macho::readFile(StringRef path) {
   // Open a file.
-  auto mbOrErr = MemoryBuffer::getFile(path);
-  if (auto ec = mbOrErr.getError()) {
+  ErrorOr<std::unique_ptr<MemoryBuffer>> mbOrErr = MemoryBuffer::getFile(path);
+  if (std::error_code ec = mbOrErr.getError()) {
     error("cannot open " + path + ": " + ec.message());
     return None;
   }
@@ -339,10 +339,9 @@ static macho::Symbol *createDefined(const structs::nlist_64 &sym,
 }
 
 // Checks if the version specified in `cmd` is compatible with target
-// version in `config`. IOW, check if cmd's version >= config's version.
+// version. IOW, check if cmd's version >= config's version.
 static bool hasCompatVersion(const InputFile *input,
-                             const build_version_command *cmd,
-                             const Configuration *config) {
+                             const build_version_command *cmd) {
 
   if (config->target.Platform != static_cast<PlatformKind>(cmd->platform)) {
     error(toString(input) + " has platform " +
@@ -512,7 +511,7 @@ ObjFile::ObjFile(MemoryBufferRef mb, uint32_t modTime, StringRef archiveName)
 
   if (const auto *cmd =
           findCommand<build_version_command>(hdr, LC_BUILD_VERSION)) {
-    if (!hasCompatVersion(this, cmd, config))
+    if (!hasCompatVersion(this, cmd))
       return;
   }
 
@@ -673,7 +672,7 @@ DylibFile::DylibFile(MemoryBufferRef mb, DylibFile *umbrella,
 
   if (const build_version_command *cmd =
           findCommand<build_version_command>(hdr, LC_BUILD_VERSION)) {
-    if (!hasCompatVersion(this, cmd, config))
+    if (!hasCompatVersion(this, cmd))
       return;
   }
 
@@ -750,7 +749,7 @@ DylibFile::DylibFile(const InterfaceFile &interface, DylibFile *umbrella,
   };
   // TODO(compnerd) filter out symbols based on the target platform
   // TODO: handle weak defs, thread locals
-  for (const auto symbol : interface.symbols()) {
+  for (const auto *symbol : interface.symbols()) {
     if (!symbol->getArchitectures().has(config->target.Arch))
       continue;
 
@@ -777,7 +776,7 @@ DylibFile::DylibFile(const InterfaceFile &interface, DylibFile *umbrella,
       interface.getParent() == nullptr ? &interface : interface.getParent();
 
   for (InterfaceFileRef intfRef : interface.reexportedLibraries()) {
-    auto targets = intfRef.targets();
+    InterfaceFile::const_target_range targets = intfRef.targets();
     if (is_contained(targets, config->target))
       loadReexport(intfRef.getInstallName(), exportingFile, topLevel);
   }

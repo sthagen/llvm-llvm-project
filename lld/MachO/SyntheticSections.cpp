@@ -86,6 +86,9 @@ void MachHeaderSection::writeTo(uint8_t *buf) const {
   if (config->outputType == MachO::MH_DYLIB && !config->hasReexports)
     hdr->flags |= MachO::MH_NO_REEXPORTED_DYLIBS;
 
+  if (config->markDeadStrippableDylib)
+    hdr->flags |= MachO::MH_DEAD_STRIPPABLE_DYLIB;
+
   if (config->outputType == MachO::MH_EXECUTE && config->isPic)
     hdr->flags |= MachO::MH_PIE;
 
@@ -372,11 +375,11 @@ void WeakBindingSection::finalizeContents() {
                return a.target.getVA() < b.target.getVA();
              });
   for (const WeakBindingEntry &b : bindings) {
-    if (auto *isec = b.target.section.dyn_cast<const InputSection *>()) {
+    if (const auto *isec = b.target.section.dyn_cast<const InputSection *>()) {
       encodeBinding(b.symbol, isec->parent, isec->outSecOff + b.target.offset,
                     b.addend, /*isWeakBinding=*/true, lastBinding, os);
     } else {
-      auto *osec = b.target.section.get<const OutputSection *>();
+      const auto *osec = b.target.section.get<const OutputSection *>();
       encodeBinding(b.symbol, osec, b.target.offset, b.addend,
                     /*isWeakBinding=*/true, lastBinding, os);
     }
@@ -601,8 +604,14 @@ void ExportSection::finalizeContents() {
   trieBuilder.setImageBase(in.header->addr);
   for (const Symbol *sym : symtab->getSymbols()) {
     if (const auto *defined = dyn_cast<Defined>(sym)) {
-      if (defined->privateExtern)
-        continue;
+      if (config->exportedSymbols.empty()) {
+        if (defined->privateExtern ||
+            config->unexportedSymbols.match(defined->getName()))
+          continue;
+      } else {
+        if (!config->exportedSymbols.match(defined->getName()))
+          continue;
+      }
       trieBuilder.addSymbol(*defined);
       hasWeakSymbol = hasWeakSymbol || sym->isWeakDef();
     }
@@ -611,6 +620,34 @@ void ExportSection::finalizeContents() {
 }
 
 void ExportSection::writeTo(uint8_t *buf) const { trieBuilder.writeTo(buf); }
+
+FunctionStartsSection::FunctionStartsSection()
+    : LinkEditSection(segment_names::linkEdit, section_names::functionStarts_) {
+}
+
+void FunctionStartsSection::finalizeContents() {
+  raw_svector_ostream os{contents};
+  uint64_t addr = in.header->addr;
+  for (const Symbol *sym : symtab->getSymbols()) {
+    if (const auto *defined = dyn_cast<Defined>(sym)) {
+      if (!defined->isec || !isCodeSection(defined->isec))
+        continue;
+      // TODO: Add support for thumbs, in that case
+      // the lowest bit of nextAddr needs to be set to 1.
+      uint64_t nextAddr = defined->getVA();
+      uint64_t delta = nextAddr - addr;
+      if (delta == 0)
+        continue;
+      encodeULEB128(delta, os);
+      addr = nextAddr;
+    }
+  }
+  os << '\0';
+}
+
+void FunctionStartsSection::writeTo(uint8_t *buf) const {
+  memcpy(buf, contents.data(), contents.size());
+}
 
 SymtabSection::SymtabSection(StringTableSection &stringTableSection)
     : LinkEditSection(segment_names::linkEdit, section_names::symbolTable),

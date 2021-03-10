@@ -106,6 +106,23 @@ private:
   ClangdServer::Callbacks *ServerCallbacks;
 };
 
+class DraftStoreFS : public ThreadsafeFS {
+public:
+  DraftStoreFS(const ThreadsafeFS &Base, const DraftStore &Drafts)
+      : Base(Base), DirtyFiles(Drafts) {}
+
+private:
+  llvm::IntrusiveRefCntPtr<llvm::vfs::FileSystem> viewImpl() const override {
+    auto OFS = llvm::makeIntrusiveRefCnt<llvm::vfs::OverlayFileSystem>(
+        Base.view(llvm::None));
+    OFS->pushOverlay(DirtyFiles.asVFS());
+    return OFS;
+  }
+
+  const ThreadsafeFS &Base;
+  const DraftStore &DirtyFiles;
+};
+
 } // namespace
 
 ClangdServer::Options ClangdServer::optsForTest() {
@@ -132,7 +149,8 @@ ClangdServer::ClangdServer(const GlobalCompilationDatabase &CDB,
     : FeatureModules(Opts.FeatureModules), CDB(CDB), TFS(TFS),
       DynamicIdx(Opts.BuildDynamicSymbolIndex ? new FileIndex() : nullptr),
       ClangTidyProvider(Opts.ClangTidyProvider),
-      WorkspaceRoot(Opts.WorkspaceRoot) {
+      WorkspaceRoot(Opts.WorkspaceRoot),
+      DirtyFS(std::make_unique<DraftStoreFS>(TFS, DraftMgr)) {
   // Pass a callback into `WorkScheduler` to extract symbols from a newly
   // parsed file and rebuild the file index synchronously each time an AST
   // is parsed.
@@ -220,14 +238,14 @@ void ClangdServer::reparseOpenFilesIfNeeded(
   for (const Path &FilePath : DraftMgr.getActiveFiles())
     if (Filter(FilePath))
       if (auto Draft = DraftMgr.getDraft(FilePath)) // else disappeared in race?
-        addDocument(FilePath, std::move(Draft->Contents), Draft->Version,
+        addDocument(FilePath, *Draft->Contents, Draft->Version,
                     WantDiagnostics::Auto);
 }
 
-llvm::Optional<std::string> ClangdServer::getDraft(PathRef File) const {
+std::shared_ptr<const std::string> ClangdServer::getDraft(PathRef File) const {
   auto Draft = DraftMgr.getDraft(File);
   if (!Draft)
-    return llvm::None;
+    return nullptr;
   return std::move(Draft->Contents);
 }
 
@@ -472,9 +490,10 @@ void ClangdServer::prepareRename(PathRef File, Position Pos,
       return CB(InpAST.takeError());
     // prepareRename is latency-sensitive: we don't query the index, as we
     // only need main-file references
-    auto Results = clangd::rename(
-        {Pos, NewName.getValueOr("__clangd_rename_dummy"), InpAST->AST, File,
-         /*Index=*/nullptr, RenameOpts});
+    auto Results =
+        clangd::rename({Pos, NewName.getValueOr("__clangd_rename_dummy"),
+                        InpAST->AST, File, /*FS=*/nullptr,
+                        /*Index=*/nullptr, RenameOpts});
     if (!Results) {
       // LSP says to return null on failure, but that will result in a generic
       // failure message. If we send an LSP error response, clients can surface
@@ -489,25 +508,16 @@ void ClangdServer::prepareRename(PathRef File, Position Pos,
 void ClangdServer::rename(PathRef File, Position Pos, llvm::StringRef NewName,
                           const RenameOptions &Opts,
                           Callback<RenameResult> CB) {
-  // A snapshot of all file dirty buffers.
-  llvm::StringMap<std::string> Snapshot = WorkScheduler->getAllFileContents();
   auto Action = [File = File.str(), NewName = NewName.str(), Pos, Opts,
-                 CB = std::move(CB), Snapshot = std::move(Snapshot),
+                 CB = std::move(CB),
                  this](llvm::Expected<InputsAndAST> InpAST) mutable {
     // Tracks number of files edited per invocation.
     static constexpr trace::Metric RenameFiles("rename_files",
                                                trace::Metric::Distribution);
     if (!InpAST)
       return CB(InpAST.takeError());
-    auto GetDirtyBuffer =
-        [&Snapshot](PathRef AbsPath) -> llvm::Optional<std::string> {
-      auto It = Snapshot.find(AbsPath);
-      if (It == Snapshot.end())
-        return llvm::None;
-      return It->second;
-    };
-    auto R = clangd::rename(
-        {Pos, NewName, InpAST->AST, File, Index, Opts, GetDirtyBuffer});
+    auto R = clangd::rename({Pos, NewName, InpAST->AST, File,
+                             DirtyFS->view(llvm::None), Index, Opts});
     if (!R)
       return CB(R.takeError());
 

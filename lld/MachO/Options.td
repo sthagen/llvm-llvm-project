@@ -335,8 +335,7 @@ def dylinker_install_name : Separate<["-"], "dylinker_install_name">,
      Flags<[HelpHidden]>,
      Group<grp_dylib>;
 def mark_dead_strippable_dylib : Flag<["-"], "mark_dead_strippable_dylib">,
-     HelpText<"Clients can discard this dylib if it is unreferenced">,
-     Flags<[HelpHidden]>,
+     HelpText<"Mark output dylib as dead-strippable: When a client links against it but does not use any of its symbols, the dylib will not be added to the client's list of needed dylibs">,
      Group<grp_dylib>;
 def compatibility_version : Separate<["-"], "compatibility_version">,
      MetaVarName<"<version>">,
@@ -406,25 +405,21 @@ def d : Flag<["-"], "d">,
 
 def grp_resolve : OptionGroup<"resolve">, HelpText<"SYMBOL RESOLUTION">;
 
-def exported_symbols_list : Separate<["-"], "exported_symbols_list">,
-     MetaVarName<"<file>">,
-     HelpText<"Symbols specified in <file> remain global, while others become private externs">,
-     Flags<[HelpHidden]>,
-     Group<grp_resolve>;
 def exported_symbol : Separate<["-"], "exported_symbol">,
      MetaVarName<"<symbol>">,
      HelpText<"<symbol> remains global, while others become private externs">,
-     Flags<[HelpHidden]>,
      Group<grp_resolve>;
-def unexported_symbols_list : Separate<["-"], "unexported_symbols_list">,
+def exported_symbols_list : Separate<["-"], "exported_symbols_list">,
      MetaVarName<"<file>">,
-     HelpText<"Global symbols specified in <file> become private externs">,
-     Flags<[HelpHidden]>,
+     HelpText<"Symbols specified in <file> remain global, while others become private externs">,
      Group<grp_resolve>;
 def unexported_symbol : Separate<["-"], "unexported_symbol">,
      MetaVarName<"<symbol>">,
      HelpText<"Global <symbol> becomes private extern">,
-     Flags<[HelpHidden]>,
+     Group<grp_resolve>;
+def unexported_symbols_list : Separate<["-"], "unexported_symbols_list">,
+     MetaVarName<"<file>">,
+     HelpText<"Global symbols specified in <file> become private externs">,
      Group<grp_resolve>;
 def reexported_symbols_list : Separate<["-"], "reexported_symbols_list">,
      MetaVarName<"<file>">,
