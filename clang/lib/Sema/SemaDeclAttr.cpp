@@ -390,10 +390,10 @@ appendDiagnostics(const Sema::SemaDiagnosticBuilder &Bldr, T &&ExtraArg,
                            std::forward<DiagnosticArgs>(ExtraArgs)...);
 }
 
-/// Add an attribute {@code AttrType} to declaration {@code D}, provided that
-/// {@code PassesCheck} is true.
-/// Otherwise, emit diagnostic {@code DiagID}, passing in all parameters
-/// specified in {@code ExtraArgs}.
+/// Add an attribute @c AttrType to declaration @c D, provided that
+/// @c PassesCheck is true.
+/// Otherwise, emit diagnostic @c DiagID, passing in all parameters
+/// specified in @c ExtraArgs.
 template <typename AttrType, typename... DiagnosticArgs>
 static void handleSimpleAttributeOrDiagnose(Sema &S, Decl *D,
                                             const AttributeCommonInfo &CI,
@@ -2836,8 +2836,10 @@ static void handleSentinelAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
     QualType Ty = V->getType();
     if (Ty->isBlockPointerType() || Ty->isFunctionPointerType()) {
       const FunctionType *FT = Ty->isFunctionPointerType()
-       ? D->getFunctionType()
-       : Ty->castAs<BlockPointerType>()->getPointeeType()->getAs<FunctionType>();
+                                   ? D->getFunctionType()
+                                   : Ty->castAs<BlockPointerType>()
+                                         ->getPointeeType()
+                                         ->castAs<FunctionType>();
       if (!cast<FunctionProtoType>(FT)->isVariadic()) {
         int m = Ty->isFunctionPointerType() ? 0 : 1;
         S.Diag(AL.getLoc(), diag::warn_attribute_sentinel_not_variadic) << m;
@@ -5836,7 +5838,7 @@ static void checkSwiftAsyncErrorBlock(Sema &S, Decl *D,
   // handleSwiftAsyncAttr already verified the type is correct, so no need to
   // double-check it here.
   const auto *FuncTy = HandlerParam->getType()
-                           ->getAs<BlockPointerType>()
+                           ->castAs<BlockPointerType>()
                            ->getPointeeType()
                            ->getAs<FunctionProtoType>();
   ArrayRef<QualType> BlockParams;
@@ -6313,8 +6315,8 @@ static void handleSwiftAsyncAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
       return;
     }
     QualType BlockTy =
-        CompletionBlockType->getAs<BlockPointerType>()->getPointeeType();
-    if (!BlockTy->getAs<FunctionType>()->getReturnType()->isVoidType()) {
+        CompletionBlockType->castAs<BlockPointerType>()->getPointeeType();
+    if (!BlockTy->castAs<FunctionType>()->getReturnType()->isVoidType()) {
       S.Diag(CompletionBlock->getLocation(),
              diag::err_swift_async_bad_block_type)
           << CompletionBlock->getType();

@@ -730,7 +730,8 @@ def XRayLogArgs : InheritableAttr {
 
 def PatchableFunctionEntry
     : InheritableAttr,
-      TargetSpecificAttr<TargetArch<["aarch64", "aarch64_be", "x86", "x86_64"]>> {
+      TargetSpecificAttr<TargetArch<
+          ["aarch64", "aarch64_be", "riscv32", "riscv64", "x86", "x86_64"]>> {
   let Spellings = [GCC<"patchable_function_entry">];
   let Subjects = SubjectList<[Function, ObjCMethod]>;
   let Args = [UnsignedArgument<"Count">, DefaultIntArgument<"Offset", 0>];
@@ -1671,6 +1672,14 @@ def NoDebug : InheritableAttr {
   let Spellings = [GCC<"nodebug">];
   let Subjects = SubjectList<[TypedefName, FunctionLike, ObjCMethod, NonParmVar]>;
   let Documentation = [NoDebugDocs];
+}
+
+def StandaloneDebug : InheritableAttr {
+  let Spellings = [Clang<"standalone_debug", /*allowInC =*/0>];
+  let Subjects = SubjectList<[CXXRecord]>;
+  let Documentation = [StandaloneDebugDocs];
+  let SimpleHandler = 1;
+  let LangOpts = [CPlusPlus];
 }
 
 def NoDuplicate : InheritableAttr {

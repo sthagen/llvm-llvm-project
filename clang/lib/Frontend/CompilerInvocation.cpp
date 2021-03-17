@@ -466,6 +466,11 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
     LangOpts.NewAlignOverride = 0;
   }
 
+  // Prevent the user from specifying both -fsycl-is-device and -fsycl-is-host.
+  if (LangOpts.SYCLIsDevice && LangOpts.SYCLIsHost)
+    Diags.Report(diag::err_drv_argument_not_allowed_with) << "-fsycl-is-device"
+                                                          << "-fsycl-is-host";
+
   if (Args.hasArg(OPT_fgnu89_inline) && LangOpts.CPlusPlus)
     Diags.Report(diag::err_drv_argument_not_allowed_with)
         << "-fgnu89-inline" << GetInputKindName(IK);
@@ -663,7 +668,7 @@ static bool RoundTrip(ParseFn Parse, GenerateFn Generate,
   // Generate arguments from the dummy invocation. If Generate is the
   // inverse of Parse, the newly generated arguments must have the same
   // semantics as the original.
-  SmallVector<const char *, 16> GeneratedArgs1;
+  SmallVector<const char *> GeneratedArgs1;
   Generate(DummyInvocation, GeneratedArgs1, SA);
 
   // Run the second parse, now on the generated arguments, and with the real
@@ -683,7 +688,7 @@ static bool RoundTrip(ParseFn Parse, GenerateFn Generate,
 
   // Generate arguments again, this time from the options we will end up using
   // for the rest of the compilation.
-  SmallVector<const char *, 16> GeneratedArgs2;
+  SmallVector<const char *> GeneratedArgs2;
   Generate(RealInvocation, GeneratedArgs2, SA);
 
   // Compares two lists of generated arguments.

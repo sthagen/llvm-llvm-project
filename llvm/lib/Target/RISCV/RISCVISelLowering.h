@@ -36,6 +36,7 @@ enum NodeType : unsigned {
   /// The lhs and rhs are XLenVT integers. The true and false values can be
   /// integer or floating point.
   SELECT_CC,
+  BR_CC,
   BuildPairF64,
   SplitF64,
   TAIL,
@@ -120,6 +121,10 @@ enum NodeType : unsigned {
   // and the fifth the VL.
   VSLIDEUP_VL,
   VSLIDEDOWN_VL,
+  // Matches the semantics of vslide1up. The first operand is the source
+  // vector, the second is the XLenVT scalar value. The third and fourth
+  // operands are the mask and VL operands.
+  VSLIDE1UP_VL,
   // Matches the semantics of the vid.v instruction, with a mask and VL
   // operand.
   VID_VL,
@@ -174,6 +179,7 @@ enum NodeType : unsigned {
   FABS_VL,
   FSQRT_VL,
   FMA_VL,
+  FCOPYSIGN_VL,
   SMIN_VL,
   SMAX_VL,
   UMIN_VL,
@@ -248,6 +254,10 @@ public:
   bool isCheapToSpeculateCtlz() const override;
   bool isFPImmLegal(const APFloat &Imm, EVT VT,
                     bool ForCodeSize) const override;
+
+  /// Return true if the given shuffle mask can be codegen'd directly, or if it
+  /// should be stack expanded.
+  bool isShuffleMaskLegal(ArrayRef<int> M, EVT VT) const override;
 
   bool hasBitPreservingFPLogic(EVT VT) const override;
   bool
@@ -397,6 +407,17 @@ public:
       MachineMemOperand::Flags Flags = MachineMemOperand::MONone,
       bool *Fast = nullptr) const override;
 
+  bool splitValueIntoRegisterParts(SelectionDAG &DAG, const SDLoc &DL,
+                                   SDValue Val, SDValue *Parts,
+                                   unsigned NumParts, MVT PartVT,
+                                   Optional<CallingConv::ID> CC) const override;
+
+  SDValue
+  joinRegisterPartsIntoValue(SelectionDAG &DAG, const SDLoc &DL,
+                             const SDValue *Parts, unsigned NumParts,
+                             MVT PartVT, EVT ValueVT,
+                             Optional<CallingConv::ID> CC) const override;
+
   static RISCVVLMUL getLMUL(MVT VT);
   static unsigned getRegClassIDForLMUL(RISCVVLMUL LMul);
   static unsigned getSubregIndexByMVT(MVT VT, unsigned Index);
@@ -432,6 +453,7 @@ private:
   SDValue lowerJumpTable(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerGlobalTLSAddress(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerSELECT(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerBRCOND(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerVASTART(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerFRAMEADDR(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerRETURNADDR(SDValue Op, SelectionDAG &DAG) const;
@@ -451,8 +473,14 @@ private:
   SDValue lowerEXTRACT_SUBVECTOR(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerVECTOR_REVERSE(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerABS(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerFixedLengthVectorFCOPYSIGNToRVV(SDValue Op,
+                                               SelectionDAG &DAG) const;
   SDValue lowerFixedLengthVectorLoadToRVV(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerFixedLengthVectorStoreToRVV(SDValue Op, SelectionDAG &DAG) const;
+  SDValue lowerFixedLengthVectorMaskedLoadToRVV(SDValue Op,
+                                                SelectionDAG &DAG) const;
+  SDValue lowerFixedLengthVectorMaskedStoreToRVV(SDValue Op,
+                                                 SelectionDAG &DAG) const;
   SDValue lowerFixedLengthVectorSetccToRVV(SDValue Op, SelectionDAG &DAG) const;
   SDValue lowerFixedLengthVectorLogicOpToRVV(SDValue Op, SelectionDAG &DAG,
                                              unsigned MaskOpc,

@@ -745,10 +745,6 @@ if (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
 
   # Enable -Wstring-conversion to catch misuse of string literals.
   add_flag_if_supported("-Wstring-conversion" STRING_CONVERSION_FLAG)
-
-  # Enable -Werror=return-type if available, to catch functions that contain
-  # control paths that do not return a value.
-  add_flag_if_supported("-Werror=return-type" WERROR_RETURN_TYPE)
 endif (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
 
 if (LLVM_COMPILER_IS_GCC_COMPATIBLE AND NOT LLVM_ENABLE_WARNINGS)
@@ -1179,4 +1175,12 @@ if(LLVM_USE_RELATIVE_PATHS_IN_FILES)
   append_if(SUPPORTS_FFILE_PREFIX_MAP "-ffile-prefix-map=${CMAKE_BINARY_DIR}=${relative_root}" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   append_if(SUPPORTS_FFILE_PREFIX_MAP "-ffile-prefix-map=${source_root}/=${LLVM_SOURCE_PREFIX}" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
   add_flag_if_supported("-no-canonical-prefixes" NO_CANONICAL_PREFIXES)
+endif()
+
+if(LLVM_INCLUDE_TESTS)
+  # Lit test suite requires at least python 3.6
+  set(LLVM_MINIMUM_PYTHON_VERSION 3.6)
+else()
+  # FIXME: it is unknown if this is the actual minimum bound
+  set(LLVM_MINIMUM_PYTHON_VERSION 3.0)
 endif()

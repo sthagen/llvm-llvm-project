@@ -189,7 +189,7 @@ public:
         seg->lastSection()->addr + seg->lastSection()->getSize() - c->vmaddr;
     c->nsects = seg->numNonHiddenSections();
 
-    for (OutputSection *osec : seg->getSections()) {
+    for (const OutputSection *osec : seg->getSections()) {
       if (!isZeroFill(osec->flags)) {
         assert(osec->fileOff >= seg->fileOff);
         c->filesize = std::max(
@@ -444,7 +444,7 @@ public:
 
 static void prepareSymbolRelocation(lld::macho::Symbol *sym,
                                     const InputSection *isec, const Reloc &r) {
-  const TargetInfo::RelocAttrs &relocAttrs = target->getRelocAttrs(r.type);
+  const RelocAttrs &relocAttrs = target->getRelocAttrs(r.type);
 
   if (relocAttrs.hasAttr(RelocAttrBits::BRANCH)) {
     prepareBranchTarget(sym);
@@ -484,8 +484,7 @@ void Writer::scanRelocations() {
         if (auto *undefined = dyn_cast<Undefined>(sym))
           treatUndefinedSymbol(*undefined);
         // treatUndefinedSymbol() can replace sym with a DylibSymbol; re-check.
-        if (!isa<Undefined>(sym) &&
-            target->validateSymbolRelocation(sym, isec, r))
+        if (!isa<Undefined>(sym) && validateSymbolRelocation(sym, isec, r))
           prepareSymbolRelocation(sym, isec, r);
       } else {
         assert(r.referent.is<InputSection *>());
@@ -552,7 +551,7 @@ void Writer::createLoadCommands() {
   for (InputFile *file : inputFiles) {
     if (auto *dylibFile = dyn_cast<DylibFile>(file)) {
       if (dylibFile->isBundleLoader) {
-        dylibFile->ordinal = MachO::BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE;
+        dylibFile->ordinal = BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE;
         // Shortcut since bundle-loader does not re-export the symbols.
 
         dylibFile->reexport = false;
@@ -616,7 +615,7 @@ static DenseMap<const InputSection *, size_t> buildInputSectionPriorities() {
   };
 
   // TODO: Make sure this handles weak symbols correctly.
-  for (InputFile *file : inputFiles)
+  for (const InputFile *file : inputFiles)
     if (isa<ObjFile>(file))
       for (lld::macho::Symbol *sym : file->symbols)
         if (auto *d = dyn_cast<Defined>(sym))
@@ -672,11 +671,12 @@ static int sectionOrder(OutputSection *osec) {
     }
   } else if (segname == segment_names::linkEdit) {
     return StringSwitch<int>(osec->name)
-        .Case(section_names::rebase, -8)
-        .Case(section_names::binding, -7)
-        .Case(section_names::weakBinding, -6)
-        .Case(section_names::lazyBinding, -5)
-        .Case(section_names::export_, -4)
+        .Case(section_names::rebase, -9)
+        .Case(section_names::binding, -8)
+        .Case(section_names::weakBinding, -7)
+        .Case(section_names::lazyBinding, -6)
+        .Case(section_names::export_, -5)
+        .Case(section_names::functionStarts, -4)
         .Case(section_names::symbolTable, -3)
         .Case(section_names::indirectSymbolTable, -2)
         .Case(section_names::stringTable, -1)
@@ -828,8 +828,8 @@ void Writer::openFile() {
 
 void Writer::writeSections() {
   uint8_t *buf = buffer->getBufferStart();
-  for (OutputSegment *seg : outputSegments)
-    for (OutputSection *osec : seg->getSections())
+  for (const OutputSegment *seg : outputSegments)
+    for (const OutputSection *osec : seg->getSections())
       osec->writeTo(buf + osec->fileOff);
 }
 

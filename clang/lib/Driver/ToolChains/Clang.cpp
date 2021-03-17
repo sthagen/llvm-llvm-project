@@ -4251,7 +4251,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (Args.hasFlag(options::OPT_fsycl, options::OPT_fno_sycl, false)) {
-    CmdArgs.push_back("-fsycl");
     CmdArgs.push_back("-fsycl-is-device");
 
     if (Arg *A = Args.getLastArg(options::OPT_sycl_std_EQ)) {
@@ -4868,6 +4867,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_ffine_grained_bitfield_accesses,
                   options::OPT_fno_fine_grained_bitfield_accesses);
+
+  Args.AddLastArg(CmdArgs, options::OPT_fexperimental_relative_cxx_abi_vtables,
+                  options::OPT_fno_experimental_relative_cxx_abi_vtables);
 
   // Handle segmented stacks.
   if (Args.hasArg(options::OPT_fsplit_stack))
@@ -5611,8 +5613,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Arg *A = Args.getLastArg(options::OPT_fpatchable_function_entry_EQ)) {
     StringRef S0 = A->getValue(), S = S0;
     unsigned Size, Offset = 0;
-    if (!Triple.isAArch64() && Triple.getArch() != llvm::Triple::x86 &&
-        Triple.getArch() != llvm::Triple::x86_64)
+    if (!Triple.isAArch64() && !Triple.isRISCV() && !Triple.isX86())
       D.Diag(diag::err_drv_unsupported_opt_for_target)
           << A->getAsString(Args) << TripleStr;
     else if (S.consumeInteger(10, Size) ||
