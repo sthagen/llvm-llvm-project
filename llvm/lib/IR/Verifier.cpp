@@ -813,6 +813,9 @@ void Verifier::visitMDNode(const MDNode &MD, AreDebugLocsAllowed AllowLocs) {
   if (!MDNodes.insert(&MD).second)
     return;
 
+  Assert(&MD.getContext() == &Context,
+         "MDNode context does not match Module context!", &MD);
+
   switch (MD.getMetadataID()) {
   default:
     llvm_unreachable("Invalid MDNode subclass");
@@ -1629,6 +1632,7 @@ static bool isFuncOnlyAttr(Attribute::AttrKind Kind) {
   case Attribute::InlineHint:
   case Attribute::StackAlignment:
   case Attribute::UWTable:
+  case Attribute::VScaleRange:
   case Attribute::NonLazyBind:
   case Attribute::ReturnsTwice:
   case Attribute::SanitizeAddress:
@@ -1809,6 +1813,11 @@ void Verifier::verifyParameterAttrs(AttributeSet Attrs, Type *Ty,
       Assert(Attrs.getPreallocatedType() == PTy->getElementType(),
              "Attribute 'preallocated' type does not match parameter!", V);
     }
+
+    if (Attrs.hasAttribute(Attribute::InAlloca)) {
+      Assert(Attrs.getInAllocaType() == PTy->getElementType(),
+             "Attribute 'inalloca' type does not match parameter!", V);
+    }
   } else {
     Assert(!Attrs.hasAttribute(Attribute::ByVal),
            "Attribute 'byval' only applies to parameters with pointer type!",
@@ -1985,6 +1994,14 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
 
     if (Args.second && !CheckParam("number of elements", *Args.second))
       return;
+  }
+
+  if (Attrs.hasFnAttribute(Attribute::VScaleRange)) {
+    std::pair<unsigned, unsigned> Args =
+        Attrs.getVScaleRangeArgs(AttributeList::FunctionIndex);
+
+    if (Args.first > Args.second && Args.second != 0)
+      CheckFailed("'vscale_range' minimum cannot be greater than maximum", V);
   }
 
   if (Attrs.hasFnAttribute("frame-pointer")) {
@@ -4542,7 +4559,8 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
   // know they are legal for the intrinsic!) get the intrinsic name through the
   // usual means.  This allows us to verify the mangling of argument types into
   // the name.
-  const std::string ExpectedName = Intrinsic::getName(ID, ArgTys);
+  const std::string ExpectedName =
+      Intrinsic::getName(ID, ArgTys, IF->getParent(), IFTy);
   Assert(ExpectedName == IF->getName(),
          "Intrinsic name not mangled correctly for type arguments! "
          "Should be: " +
@@ -5183,6 +5201,15 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
       Assert(Stride->getZExtValue() >= NumRows->getZExtValue(),
              "Stride must be greater or equal than the number of rows!", IF);
 
+    break;
+  }
+  case Intrinsic::experimental_stepvector: {
+    VectorType *VecTy = dyn_cast<VectorType>(Call.getType());
+    Assert(VecTy && VecTy->getScalarType()->isIntegerTy() &&
+               VecTy->getScalarSizeInBits() >= 8,
+           "experimental_stepvector only supported for vectors of integers "
+           "with a bitwidth of at least 8.",
+           &Call);
     break;
   }
   case Intrinsic::experimental_vector_insert: {

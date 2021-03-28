@@ -6225,7 +6225,17 @@ void OMPClauseWriter::VisitOMPInitClause(OMPInitClause *C) {
   Record.AddSourceLocation(C->getVarLoc());
 }
 
-void OMPClauseWriter::VisitOMPDestroyClause(OMPDestroyClause *) {}
+void OMPClauseWriter::VisitOMPUseClause(OMPUseClause *C) {
+  Record.AddStmt(C->getInteropVar());
+  Record.AddSourceLocation(C->getLParenLoc());
+  Record.AddSourceLocation(C->getVarLoc());
+}
+
+void OMPClauseWriter::VisitOMPDestroyClause(OMPDestroyClause *C) {
+  Record.AddStmt(C->getInteropVar());
+  Record.AddSourceLocation(C->getLParenLoc());
+  Record.AddSourceLocation(C->getVarLoc());
+}
 
 void OMPClauseWriter::VisitOMPPrivateClause(OMPPrivateClause *C) {
   Record.push_back(C->varlist_size());

@@ -11971,6 +11971,9 @@ OMPClause *OMPClauseReader::readClause() {
   case llvm::omp::OMPC_init:
     C = OMPInitClause::CreateEmpty(Context, Record.readInt());
     break;
+  case llvm::omp::OMPC_use:
+    C = new (Context) OMPUseClause();
+    break;
   case llvm::omp::OMPC_destroy:
     C = new (Context) OMPDestroyClause();
     break;
@@ -12147,7 +12150,17 @@ void OMPClauseReader::VisitOMPInitClause(OMPInitClause *C) {
   C->setVarLoc(Record.readSourceLocation());
 }
 
-void OMPClauseReader::VisitOMPDestroyClause(OMPDestroyClause *) {}
+void OMPClauseReader::VisitOMPUseClause(OMPUseClause *C) {
+  C->setInteropVar(Record.readSubExpr());
+  C->setLParenLoc(Record.readSourceLocation());
+  C->setVarLoc(Record.readSourceLocation());
+}
+
+void OMPClauseReader::VisitOMPDestroyClause(OMPDestroyClause *C) {
+  C->setInteropVar(Record.readSubExpr());
+  C->setLParenLoc(Record.readSourceLocation());
+  C->setVarLoc(Record.readSourceLocation());
+}
 
 void OMPClauseReader::VisitOMPUnifiedAddressClause(OMPUnifiedAddressClause *) {}
 

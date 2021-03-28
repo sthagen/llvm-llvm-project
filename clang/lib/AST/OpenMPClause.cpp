@@ -1801,8 +1801,19 @@ void OMPClausePrinter::VisitOMPInitClause(OMPInitClause *Node) {
   OS << ")";
 }
 
-void OMPClausePrinter::VisitOMPDestroyClause(OMPDestroyClause *) {
+void OMPClausePrinter::VisitOMPUseClause(OMPUseClause *Node) {
+  OS << "use(";
+  Node->getInteropVar()->printPretty(OS, nullptr, Policy);
+  OS << ")";
+}
+
+void OMPClausePrinter::VisitOMPDestroyClause(OMPDestroyClause *Node) {
   OS << "destroy";
+  if (Expr *E = Node->getInteropVar()) {
+    OS << "(";
+    E->printPretty(OS, nullptr, Policy);
+    OS << ")";
+  }
 }
 
 template<typename T>
