@@ -197,6 +197,11 @@ static cl::opt<unsigned> TinyTripCountVectorThreshold(
              "value are vectorized only if no scalar iteration overheads "
              "are incurred."));
 
+static cl::opt<unsigned> PragmaVectorizeMemoryCheckThreshold(
+    "pragma-vectorize-memory-check-threshold", cl::init(128), cl::Hidden,
+    cl::desc("The maximum allowed number of runtime memory checks with a "
+             "vectorize(enable) pragma."));
+
 // Option prefer-predicate-over-epilogue indicates that an epilogue is undesired,
 // that predication is preferred, and this lists all options. I.e., the
 // vectorizer will try to fold the tail-loop (epilogue) into the vector body
@@ -2243,16 +2248,20 @@ void InnerLoopVectorizer::createVectorIntOrFpInductionPHI(
 
   // Multiply the vectorization factor by the step using integer or
   // floating-point arithmetic as appropriate.
-  Value *ConstVF =
-      getSignedIntOrFpConstant(Step->getType(), VF.getKnownMinValue());
-  Value *Mul = Builder.CreateBinOp(MulOp, Step, ConstVF);
+  Type *StepType = Step->getType();
+  if (Step->getType()->isFloatingPointTy())
+    StepType = IntegerType::get(StepType->getContext(),
+                                StepType->getScalarSizeInBits());
+  Value *RuntimeVF = getRuntimeVF(Builder, StepType, VF);
+  if (Step->getType()->isFloatingPointTy())
+    RuntimeVF = Builder.CreateSIToFP(RuntimeVF, Step->getType());
+  Value *Mul = Builder.CreateBinOp(MulOp, Step, RuntimeVF);
 
   // Create a vector splat to use in the induction update.
   //
   // FIXME: If the step is non-constant, we create the vector splat with
   //        IRBuilder. IRBuilder can constant-fold the multiply, but it doesn't
   //        handle a constant vector splat.
-  assert(!VF.isScalable() && "scalable vectors not yet supported.");
   Value *SplatVF = isa<Constant>(Mul)
                        ? ConstantVector::getSplat(VF, cast<Constant>(Mul))
                        : Builder.CreateVectorSplat(VF, Mul);
@@ -2455,8 +2464,6 @@ void InnerLoopVectorizer::widenIntOrFpInduction(PHINode *IV, Value *Start,
 Value *InnerLoopVectorizer::getStepVector(Value *Val, int StartIdx, Value *Step,
                                           Instruction::BinaryOps BinOp) {
   // Create and check the types.
-  assert(isa<FixedVectorType>(Val->getType()) &&
-         "Creation of scalable step vector not yet supported");
   auto *ValVTy = cast<VectorType>(Val->getType());
   ElementCount VLen = ValVTy->getElementCount();
 
@@ -2527,23 +2534,46 @@ void InnerLoopVectorizer::buildScalarSteps(Value *ScalarIV, Value *Step,
   // Determine the number of scalars we need to generate for each unroll
   // iteration. If EntryVal is uniform, we only need to generate the first
   // lane. Otherwise, we generate all VF values.
-  unsigned Lanes =
-      Cost->isUniformAfterVectorization(cast<Instruction>(EntryVal), VF)
-          ? 1
-          : VF.getKnownMinValue();
-  assert((!VF.isScalable() || Lanes == 1) &&
-         "Should never scalarize a scalable vector");
+  bool IsUniform =
+      Cost->isUniformAfterVectorization(cast<Instruction>(EntryVal), VF);
+  unsigned Lanes = IsUniform ? 1 : VF.getKnownMinValue();
   // Compute the scalar steps and save the results in State.
+  Type *IntStepTy = IntegerType::get(ScalarIVTy->getContext(),
+                                     ScalarIVTy->getScalarSizeInBits());
+  Type *VecIVTy = nullptr;
+  Value *UnitStepVec = nullptr, *SplatStep = nullptr, *SplatIV = nullptr;
+  if (!IsUniform && VF.isScalable()) {
+    VecIVTy = VectorType::get(ScalarIVTy, VF);
+    UnitStepVec = Builder.CreateStepVector(VectorType::get(IntStepTy, VF));
+    SplatStep = Builder.CreateVectorSplat(VF, Step);
+    SplatIV = Builder.CreateVectorSplat(VF, ScalarIV);
+  }
+
   for (unsigned Part = 0; Part < UF; ++Part) {
-    for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
-      auto *IntStepTy = IntegerType::get(ScalarIVTy->getContext(),
-                                         ScalarIVTy->getScalarSizeInBits());
-      Value *StartIdx =
-          createStepForVF(Builder, ConstantInt::get(IntStepTy, Part), VF);
+    Value *StartIdx0 =
+        createStepForVF(Builder, ConstantInt::get(IntStepTy, Part), VF);
+
+    if (!IsUniform && VF.isScalable()) {
+      auto *SplatStartIdx = Builder.CreateVectorSplat(VF, StartIdx0);
+      auto *InitVec = Builder.CreateAdd(SplatStartIdx, UnitStepVec);
       if (ScalarIVTy->isFloatingPointTy())
-        StartIdx = Builder.CreateSIToFP(StartIdx, ScalarIVTy);
-      StartIdx = Builder.CreateBinOp(
-          AddOp, StartIdx, getSignedIntOrFpConstant(ScalarIVTy, Lane));
+        InitVec = Builder.CreateSIToFP(InitVec, VecIVTy);
+      auto *Mul = Builder.CreateBinOp(MulOp, InitVec, SplatStep);
+      auto *Add = Builder.CreateBinOp(AddOp, SplatIV, Mul);
+      State.set(Def, Add, Part);
+      recordVectorLoopValueForInductionCast(ID, EntryVal, Add, CastDef, State,
+                                            Part);
+      // It's useful to record the lane values too for the known minimum number
+      // of elements so we do those below. This improves the code quality when
+      // trying to extract the first element, for example.
+    }
+
+    if (ScalarIVTy->isFloatingPointTy())
+      StartIdx0 = Builder.CreateSIToFP(StartIdx0, ScalarIVTy);
+
+    for (unsigned Lane = 0; Lane < Lanes; ++Lane) {
+      Value *StartIdx = Builder.CreateBinOp(
+          AddOp, StartIdx0, getSignedIntOrFpConstant(ScalarIVTy, Lane));
       // The step returned by `createStepForVF` is a runtime-evaluated value
       // when VF is scalable. Otherwise, it should be folded into a Constant.
       assert((VF.isScalable() || isa<Constant>(StartIdx)) &&
@@ -4718,6 +4748,7 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
   case InductionDescriptor::IK_PtrInduction: {
     // Handle the pointer induction variable case.
     assert(P->getType()->isPointerTy() && "Unexpected type.");
+    assert(!VF.isScalable() && "Currently unsupported for scalable vectors");
 
     if (Cost->isScalarAfterVectorization(P, State.VF)) {
       // This is the normalized GEP that starts counting at zero.
@@ -4942,8 +4973,8 @@ void InnerLoopVectorizer::widenCallInstruction(CallInst &I, VPValue *Def,
   bool UseVectorIntrinsic = ID && IntrinsicCost <= CallCost;
   assert((UseVectorIntrinsic || !NeedToScalarize) &&
          "Instruction should be scalarized elsewhere.");
-  assert(IntrinsicCost.isValid() && CallCost.isValid() &&
-         "Cannot have invalid costs while widening");
+  assert((IntrinsicCost.isValid() || CallCost.isValid()) &&
+         "Either the intrinsic cost or vector call cost must be valid");
 
   for (unsigned Part = 0; Part < UF; ++Part) {
     SmallVector<Value *, 4> Args;
@@ -5382,7 +5413,7 @@ void LoopVectorizationCostModel::collectLoopUniforms(ElementCount VF) {
   // here is something which only demands lane 0 of the unrolled iterations;
   // it does not imply that all lanes produce the same value (e.g. this is not
   // the usual meaning of uniform)
-  SmallPtrSet<Value *, 8> HasUniformUse;
+  SetVector<Value *> HasUniformUse;
 
   // Scan the loop for instructions which are either a) known to have only
   // lane 0 demanded or b) are uses which demand only lane 0 of their operand.
@@ -7774,7 +7805,30 @@ LoopVectorizationPlanner::plan(ElementCount UserVF, unsigned UserIC) {
     return VectorizationFactor::Disabled();
 
   // Select the optimal vectorization factor.
-  return CM.selectVectorizationFactor(MaxVF);
+  auto SelectedVF = CM.selectVectorizationFactor(MaxVF);
+
+  // Check if it is profitable to vectorize with runtime checks.
+  unsigned NumRuntimePointerChecks = Requirements.getNumRuntimePointerChecks();
+  if (SelectedVF.Width.getKnownMinValue() > 1 && NumRuntimePointerChecks) {
+    bool PragmaThresholdReached =
+        NumRuntimePointerChecks > PragmaVectorizeMemoryCheckThreshold;
+    bool ThresholdReached =
+        NumRuntimePointerChecks > VectorizerParams::RuntimeMemoryCheckThreshold;
+    if ((ThresholdReached && !Hints.allowReordering()) ||
+        PragmaThresholdReached) {
+      ORE->emit([&]() {
+        return OptimizationRemarkAnalysisAliasing(
+                   DEBUG_TYPE, "CantReorderMemOps", OrigLoop->getStartLoc(),
+                   OrigLoop->getHeader())
+               << "loop not vectorized: cannot prove it is safe to reorder "
+                  "memory operations";
+      });
+      LLVM_DEBUG(dbgs() << "LV: Too many memory checks needed.\n");
+      Hints.emitRemarkWithHints();
+      return VectorizationFactor::Disabled();
+    }
+  }
+  return SelectedVF;
 }
 
 void LoopVectorizationPlanner::setBestPlan(ElementCount VF, unsigned UF) {
@@ -8484,8 +8538,8 @@ VPWidenCallRecipe *VPRecipeBuilder::tryToWidenCall(CallInst *CI, VFRange &Range,
     InstructionCost CallCost = CM.getVectorCallCost(CI, VF, NeedToScalarize);
     InstructionCost IntrinsicCost = ID ? CM.getVectorIntrinsicCost(CI, VF) : 0;
     bool UseVectorIntrinsic = ID && IntrinsicCost <= CallCost;
-    assert(IntrinsicCost.isValid() && CallCost.isValid() &&
-           "Cannot have invalid costs while widening");
+    assert((IntrinsicCost.isValid() || CallCost.isValid()) &&
+           "Either the intrinsic cost or vector call cost must be valid");
     return UseVectorIntrinsic || !NeedToScalarize;
   };
 
@@ -9391,7 +9445,8 @@ static bool processLoopInVPlanNativePath(
     LoopVectorizationLegality *LVL, TargetTransformInfo *TTI,
     TargetLibraryInfo *TLI, DemandedBits *DB, AssumptionCache *AC,
     OptimizationRemarkEmitter *ORE, BlockFrequencyInfo *BFI,
-    ProfileSummaryInfo *PSI, LoopVectorizeHints &Hints) {
+    ProfileSummaryInfo *PSI, LoopVectorizeHints &Hints,
+    LoopVectorizationRequirements &Requirements) {
 
   if (isa<SCEVCouldNotCompute>(PSE.getBackedgeTakenCount())) {
     LLVM_DEBUG(dbgs() << "LV: cannot compute the outer-loop trip count\n");
@@ -9409,7 +9464,8 @@ static bool processLoopInVPlanNativePath(
   // Use the planner for outer loop vectorization.
   // TODO: CM is not used at this point inside the planner. Turn CM into an
   // optional argument if we don't need it in the future.
-  LoopVectorizationPlanner LVP(L, LI, TLI, TTI, LVL, CM, IAI, PSE);
+  LoopVectorizationPlanner LVP(L, LI, TLI, TTI, LVL, CM, IAI, PSE, Hints,
+                               Requirements, ORE);
 
   // Get user vectorization factor.
   ElementCount UserVF = Hints.getWidth();
@@ -9537,7 +9593,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   PredicatedScalarEvolution PSE(*SE, *L);
 
   // Check if it is legal to vectorize the loop.
-  LoopVectorizationRequirements Requirements(*ORE);
+  LoopVectorizationRequirements Requirements;
   LoopVectorizationLegality LVL(L, PSE, DT, TTI, TLI, AA, F, GetLAA, LI, ORE,
                                 &Requirements, &Hints, DB, AC, BFI, PSI);
   if (!LVL.canVectorize(EnableVPlanNativePath)) {
@@ -9558,7 +9614,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   // pipeline.
   if (!L->isInnermost())
     return processLoopInVPlanNativePath(L, PSE, LI, DT, &LVL, TTI, TLI, DB, AC,
-                                        ORE, BFI, PSI, Hints);
+                                        ORE, BFI, PSI, Hints, Requirements);
 
   assert(L->isInnermost() && "Inner loop expected.");
 
@@ -9637,7 +9693,8 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   CM.collectValuesToIgnore();
 
   // Use the planner for vectorization.
-  LoopVectorizationPlanner LVP(L, LI, TLI, TTI, &LVL, CM, IAI, PSE);
+  LoopVectorizationPlanner LVP(L, LI, TLI, TTI, &LVL, CM, IAI, PSE, Hints,
+                               Requirements, ORE);
 
   // Get user vectorization factor and interleave count.
   ElementCount UserVF = Hints.getWidth();
@@ -9658,13 +9715,6 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   // Identify the diagnostic messages that should be produced.
   std::pair<StringRef, std::string> VecDiagMsg, IntDiagMsg;
   bool VectorizeLoop = true, InterleaveLoop = true;
-  if (Requirements.doesNotMeet(F, L, Hints)) {
-    LLVM_DEBUG(dbgs() << "LV: Not vectorizing: loop did not meet vectorization "
-                         "requirements.\n");
-    Hints.emitRemarkWithHints();
-    return false;
-  }
-
   if (VF.Width.isScalar()) {
     LLVM_DEBUG(dbgs() << "LV: Vectorization is possible but not beneficial.\n");
     VecDiagMsg = std::make_pair(

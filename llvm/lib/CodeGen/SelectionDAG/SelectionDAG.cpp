@@ -4847,8 +4847,8 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
     assert(VT.isVector() && "This DAG node is restricted to vector types.");
     assert(Operand.getValueType().bitsLE(VT) &&
            "The input must be the same size or smaller than the result.");
-    assert(VT.getVectorNumElements() <
-             Operand.getValueType().getVectorNumElements() &&
+    assert(VT.getVectorMinNumElements() <
+               Operand.getValueType().getVectorMinNumElements() &&
            "The destination vector type must have fewer lanes than the input.");
     break;
   case ISD::ABS:
@@ -5149,9 +5149,6 @@ SDValue SelectionDAG::FoldConstantArithmetic(unsigned Opcode, const SDLoc &DL,
 
   assert(VT.getVectorNumElements() == Outputs.size() &&
          "Vector size mismatch!");
-
-  // We may have a vector type but a scalar result. Create a splat.
-  Outputs.resize(VT.getVectorNumElements(), Outputs.back());
 
   // Build a big vector out of the scalar elements we generated.
   return getBuildVector(VT, SDLoc(), Outputs);
@@ -6243,7 +6240,7 @@ static SDValue getMemcpyLoadsAndStores(SelectionDAG &DAG, const SDLoc &dl,
     // Don't promote to an alignment that would require dynamic stack
     // realignment.
     const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
-    if (!TRI->needsStackRealignment(MF))
+    if (!TRI->hasStackRealignment(MF))
       while (NewAlign > Alignment && DL.exceedsNaturalStackAlignment(NewAlign))
         NewAlign = NewAlign / 2;
 

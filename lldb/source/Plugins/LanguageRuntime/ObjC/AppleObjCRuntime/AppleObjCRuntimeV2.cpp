@@ -200,6 +200,7 @@ __lldb_apple_objc_v2_get_dynamic_class_info2(void *gdb_objc_realized_classes_ptr
 
     uint32_t count = 0;
     Class* realized_class_list = objc_copyRealizedClassList(&count);
+    DEBUG_PRINTF ("count = %u\n", count);
 
     uint32_t idx = 0;
     for (uint32_t i=0; i<=count; ++i)
@@ -208,6 +209,8 @@ __lldb_apple_objc_v2_get_dynamic_class_info2(void *gdb_objc_realized_classes_ptr
         {
             Class isa = realized_class_list[i];
             const char *name_ptr = objc_debug_class_getNameRaw(isa);
+            if (name_ptr == NULL)
+                continue;
             const char *s = name_ptr;
             uint32_t h = 5381;
             for (unsigned char c = *s; c; c = *++s)
@@ -1551,10 +1554,9 @@ AppleObjCRuntimeV2::SharedCacheClassInfoExtractor::GetClassInfoUtilityFunction(
 }
 
 AppleObjCRuntimeV2::DescriptorMapUpdateResult
-AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
+AppleObjCRuntimeV2::DynamicClassInfoExtractor::UpdateISAToDescriptorMap(
     RemoteNXMapTable &hash_table) {
-  Process *process = GetProcess();
-
+  Process *process = m_runtime.GetProcess();
   if (process == nullptr)
     return DescriptorMapUpdateResult::Fail();
 
@@ -1583,22 +1585,20 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
   Status err;
 
   // Compute which helper we're going to use for this update.
-  const DynamicClassInfoExtractor::Helper helper =
-      m_dynamic_class_info_extractor.ComputeHelper();
+  const DynamicClassInfoExtractor::Helper helper = ComputeHelper();
 
   // Read the total number of classes from the hash table
   const uint32_t num_classes =
       helper == DynamicClassInfoExtractor::gdb_objc_realized_classes
           ? hash_table.GetCount()
-          : m_realized_class_generation_count;
+          : m_runtime.m_realized_class_generation_count;
   if (num_classes == 0) {
     LLDB_LOGF(log, "No dynamic classes found.");
     return DescriptorMapUpdateResult::Success(0);
   }
 
   UtilityFunction *get_class_info_code =
-      m_dynamic_class_info_extractor.GetClassInfoUtilityFunction(exe_ctx,
-                                                                 helper);
+      GetClassInfoUtilityFunction(exe_ctx, helper);
   if (!get_class_info_code) {
     // The callee will have already logged a useful error message.
     return DescriptorMapUpdateResult::Fail();
@@ -1629,7 +1629,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
     return DescriptorMapUpdateResult::Fail();
   }
 
-  std::lock_guard<std::mutex> guard(m_dynamic_class_info_extractor.GetMutex());
+  std::lock_guard<std::mutex> guard(m_mutex);
 
   // Fill in our function argument values
   arguments.GetValueAtIndex(0)->GetScalar() = hash_table.GetTableLoadAddress();
@@ -1649,8 +1649,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
 
   // Write our function arguments into the process so we can run our function
   if (get_class_info_function->WriteFunctionArguments(
-          exe_ctx, m_dynamic_class_info_extractor.GetClassInfoArgs(helper),
-          arguments, diagnostics)) {
+          exe_ctx, GetClassInfoArgs(helper), arguments, diagnostics)) {
     EvaluateExpressionOptions options;
     options.SetUnwindOnError(true);
     options.SetTryAllThreads(false);
@@ -1671,8 +1670,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
 
     // Run the function
     ExpressionResults results = get_class_info_function->ExecuteFunction(
-        exe_ctx, &m_dynamic_class_info_extractor.GetClassInfoArgs(helper),
-        options, diagnostics, return_value);
+        exe_ctx, &GetClassInfoArgs(helper), options, diagnostics, return_value);
 
     if (results == eExpressionCompleted) {
       // The result is the number of ClassInfo structures that were filled in
@@ -1687,7 +1685,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapDynamic(
           DataExtractor class_infos_data(buffer.GetBytes(),
                                          buffer.GetByteSize(),
                                          process->GetByteOrder(), addr_size);
-          ParseClassInfoArray(class_infos_data, num_class_infos);
+          m_runtime.ParseClassInfoArray(class_infos_data, num_class_infos);
         }
       }
       success = true;
@@ -1788,9 +1786,8 @@ bool AppleObjCRuntimeV2::HasSymbol(ConstString Name) {
 }
 
 AppleObjCRuntimeV2::DescriptorMapUpdateResult
-AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
-  Process *process = GetProcess();
-
+AppleObjCRuntimeV2::SharedCacheClassInfoExtractor::UpdateISAToDescriptorMap() {
+  Process *process = m_runtime.GetProcess();
   if (process == nullptr)
     return DescriptorMapUpdateResult::Fail();
 
@@ -1818,15 +1815,14 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
 
   uint32_t num_class_infos = 0;
 
-  const lldb::addr_t objc_opt_ptr = GetSharedCacheReadOnlyAddress();
+  const lldb::addr_t objc_opt_ptr = m_runtime.GetSharedCacheReadOnlyAddress();
 
   if (objc_opt_ptr == LLDB_INVALID_ADDRESS)
     return DescriptorMapUpdateResult::Fail();
 
   const uint32_t num_classes = 128 * 1024;
 
-  UtilityFunction *get_class_info_code =
-      m_shared_cache_class_info_extractor.GetClassInfoUtilityFunction(exe_ctx);
+  UtilityFunction *get_class_info_code = GetClassInfoUtilityFunction(exe_ctx);
   FunctionCaller *get_shared_cache_class_info_function =
       get_class_info_code->GetFunctionCaller();
 
@@ -1853,8 +1849,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
     return DescriptorMapUpdateResult::Fail();
   }
 
-  std::lock_guard<std::mutex> guard(
-      m_shared_cache_class_info_extractor.GetMutex());
+  std::lock_guard<std::mutex> guard(m_mutex);
 
   // Fill in our function argument values
   arguments.GetValueAtIndex(0)->GetScalar() = objc_opt_ptr;
@@ -1873,8 +1868,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
 
   // Write our function arguments into the process so we can run our function
   if (get_shared_cache_class_info_function->WriteFunctionArguments(
-          exe_ctx, m_shared_cache_class_info_extractor.GetClassInfoArgs(),
-          arguments, diagnostics)) {
+          exe_ctx, m_args, arguments, diagnostics)) {
     EvaluateExpressionOptions options;
     options.SetUnwindOnError(true);
     options.SetTryAllThreads(false);
@@ -1896,8 +1890,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
     // Run the function
     ExpressionResults results =
         get_shared_cache_class_info_function->ExecuteFunction(
-            exe_ctx, &m_shared_cache_class_info_extractor.GetClassInfoArgs(),
-            options, diagnostics, return_value);
+            exe_ctx, &m_args, options, diagnostics, return_value);
 
     if (results == eExpressionCompleted) {
       // The result is the number of ClassInfo structures that were filled in
@@ -1923,7 +1916,7 @@ AppleObjCRuntimeV2::UpdateISAToDescriptorMapSharedCache() {
                                          buffer.GetByteSize(),
                                          process->GetByteOrder(), addr_size);
 
-          ParseClassInfoArray(class_infos_data, num_class_infos);
+          m_runtime.ParseClassInfoArray(class_infos_data, num_class_infos);
         }
       } else {
         success = true;
@@ -2007,7 +2000,7 @@ void AppleObjCRuntimeV2::UpdateISAToDescriptorMapIfNeeded() {
 
     // Grab the dynamically loaded Objective-C classes from memory.
     DescriptorMapUpdateResult dynamic_update_result =
-        UpdateISAToDescriptorMapDynamic(hash_table);
+        m_dynamic_class_info_extractor.UpdateISAToDescriptorMap(hash_table);
 
     // Now get the objc classes that are baked into the Objective-C runtime in
     // the shared cache, but only once per process as this data never changes
@@ -2023,7 +2016,7 @@ void AppleObjCRuntimeV2::UpdateISAToDescriptorMapIfNeeded() {
       const uint32_t num_classes_to_warn_at = 500;
 
       DescriptorMapUpdateResult shared_cache_update_result =
-          UpdateISAToDescriptorMapSharedCache();
+          m_shared_cache_class_info_extractor.UpdateISAToDescriptorMap();
 
       LLDB_LOGF(log,
                 "attempted to read objc class data - results: "
@@ -2467,7 +2460,6 @@ ObjCLanguageRuntime::ClassDescriptorSP
 AppleObjCRuntimeV2::TaggedPointerVendorRuntimeAssisted::GetClassDescriptor(
     lldb::addr_t ptr) {
   ClassDescriptorSP actual_class_descriptor_sp;
-  uint64_t data_payload;
   uint64_t unobfuscated = (ptr) ^ m_runtime.GetTaggedPointerObfuscator();
 
   if (!IsPossibleTaggedPointer(unobfuscated))
@@ -2495,12 +2487,15 @@ AppleObjCRuntimeV2::TaggedPointerVendorRuntimeAssisted::GetClassDescriptor(
     m_cache[slot] = actual_class_descriptor_sp;
   }
 
-  data_payload =
+  uint64_t data_payload =
       (((uint64_t)unobfuscated << m_objc_debug_taggedpointer_payload_lshift) >>
        m_objc_debug_taggedpointer_payload_rshift);
-
-  return ClassDescriptorSP(
-      new ClassDescriptorV2Tagged(actual_class_descriptor_sp, data_payload));
+  int64_t data_payload_signed =
+      ((int64_t)((int64_t)unobfuscated
+                 << m_objc_debug_taggedpointer_payload_lshift) >>
+       m_objc_debug_taggedpointer_payload_rshift);
+  return ClassDescriptorSP(new ClassDescriptorV2Tagged(
+      actual_class_descriptor_sp, data_payload, data_payload_signed));
 }
 
 AppleObjCRuntimeV2::TaggedPointerVendorExtended::TaggedPointerVendorExtended(
@@ -2552,7 +2547,6 @@ ObjCLanguageRuntime::ClassDescriptorSP
 AppleObjCRuntimeV2::TaggedPointerVendorExtended::GetClassDescriptor(
     lldb::addr_t ptr) {
   ClassDescriptorSP actual_class_descriptor_sp;
-  uint64_t data_payload;
   uint64_t unobfuscated = (ptr) ^ m_runtime.GetTaggedPointerObfuscator();
 
   if (!IsPossibleTaggedPointer(unobfuscated))
@@ -2583,12 +2577,16 @@ AppleObjCRuntimeV2::TaggedPointerVendorExtended::GetClassDescriptor(
     m_ext_cache[slot] = actual_class_descriptor_sp;
   }
 
-  data_payload = (((uint64_t)unobfuscated
-                   << m_objc_debug_taggedpointer_ext_payload_lshift) >>
-                  m_objc_debug_taggedpointer_ext_payload_rshift);
+  uint64_t data_payload = (((uint64_t)unobfuscated
+                            << m_objc_debug_taggedpointer_ext_payload_lshift) >>
+                           m_objc_debug_taggedpointer_ext_payload_rshift);
+  int64_t data_payload_signed =
+      ((int64_t)((int64_t)unobfuscated
+                 << m_objc_debug_taggedpointer_ext_payload_lshift) >>
+       m_objc_debug_taggedpointer_ext_payload_rshift);
 
-  return ClassDescriptorSP(
-      new ClassDescriptorV2Tagged(actual_class_descriptor_sp, data_payload));
+  return ClassDescriptorSP(new ClassDescriptorV2Tagged(
+      actual_class_descriptor_sp, data_payload, data_payload_signed));
 }
 
 AppleObjCRuntimeV2::NonPointerISACache::NonPointerISACache(

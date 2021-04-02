@@ -513,7 +513,7 @@ static void compileBitcodeFiles() {
 // any CommonSymbols.
 static void replaceCommonSymbols() {
   TimeTraceScope timeScope("Replace common symbols");
-  for (macho::Symbol *sym : symtab->getSymbols()) {
+  for (Symbol *sym : symtab->getSymbols()) {
     auto *common = dyn_cast<CommonSymbol>(sym);
     if (common == nullptr)
       continue;
@@ -531,6 +531,7 @@ static void replaceCommonSymbols() {
     inputSections.push_back(isec);
 
     replaceSymbol<Defined>(sym, sym->getName(), isec->file, isec, /*value=*/0,
+                           /*size=*/0,
                            /*isWeakDef=*/false,
                            /*isExternal=*/true, common->privateExtern);
   }
@@ -722,6 +723,29 @@ static uint32_t parseDylibVersion(const ArgList &args, unsigned id) {
   }
 
   return version.rawValue();
+}
+
+static uint32_t parseProtection(StringRef protStr) {
+  uint32_t prot = 0;
+  for (char c : protStr) {
+    switch (c) {
+    case 'r':
+      prot |= VM_PROT_READ;
+      break;
+    case 'w':
+      prot |= VM_PROT_WRITE;
+      break;
+    case 'x':
+      prot |= VM_PROT_EXECUTE;
+      break;
+    case '-':
+      break;
+    default:
+      error("unknown -segprot letter '" + Twine(c) + "' in " + protStr);
+      return 0;
+    }
+  }
+  return prot;
 }
 
 void SymbolPatterns::clear() {
@@ -966,6 +990,18 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
         validName(arg->getValue(1));
   }
 
+  for (const Arg *arg : args.filtered(OPT_segprot)) {
+    StringRef segName = arg->getValue(0);
+    uint32_t maxProt = parseProtection(arg->getValue(1));
+    uint32_t initProt = parseProtection(arg->getValue(2));
+    if (maxProt != initProt && config->target.Arch != AK_i386)
+      error("invalid argument '" + arg->getAsString(args) +
+            "': max and init must be the same for non-i386 archs");
+    if (segName == segment_names::linkEdit)
+      error("-segprot cannot be used to change __LINKEDIT's protections");
+    config->segmentProtections.push_back({segName, maxProt, initProt});
+  }
+
   handleSymbolPatterns(args, config->exportedSymbols, OPT_exported_symbol,
                        OPT_exported_symbols_list);
   handleSymbolPatterns(args, config->unexportedSymbols, OPT_unexported_symbol,
@@ -1084,12 +1120,9 @@ bool macho::link(ArrayRef<const char *> argsArr, bool canExitEarly,
       TimeTraceScope timeScope("Gathering input sections");
       // Gather all InputSections into one vector.
       for (const InputFile *file : inputFiles) {
-        for (const SubsectionMap &map : file->subsections) {
-          for (const auto &p : map) {
-            InputSection *isec = p.second;
-            inputSections.push_back(isec);
-          }
-        }
+        for (const SubsectionMapping &map : file->subsections)
+          for (const SubsectionEntry &subsectionEntry : map)
+            inputSections.push_back(subsectionEntry.isec);
       }
     }
 
