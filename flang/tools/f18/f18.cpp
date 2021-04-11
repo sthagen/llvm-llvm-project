@@ -511,8 +511,14 @@ int main(int argc, char *const argv[]) {
     } else if (arg == "-fopenmp") {
       options.features.Enable(Fortran::common::LanguageFeature::OpenMP);
       predefinitions.emplace_back("_OPENMP", "201511");
-    } else if (arg == "-Werror") {
-      driver.warningsAreErrors = true;
+    } else if (arg.find("-W") != std::string::npos) {
+      if (arg == "-Werror")
+        driver.warningsAreErrors = true;
+      else {
+        // Only -Werror is supported currently
+        llvm::errs() << "Only `-Werror` is supported currently.\n";
+        return EXIT_FAILURE;
+      }
     } else if (arg == "-ed") {
       options.features.Enable(Fortran::common::LanguageFeature::OldDebugLines);
     } else if (arg == "-E") {
@@ -558,6 +564,13 @@ int main(int argc, char *const argv[]) {
       options.instrumentedParse = true;
     } else if (arg == "-fdebug-no-semantics") {
       driver.debugNoSemantics = true;
+    } else if (arg == "-fdebug-unparse-no-sema") {
+      driver.debugNoSemantics = true;
+      driver.dumpUnparse = true;
+    } else if (arg == "-fdebug-dump-parse-tree-no-sema") {
+      driver.debugNoSemantics = true;
+      driver.dumpParseTree = true;
+      driver.syntaxOnly = true;
     } else if (arg == "-funparse" || arg == "-fdebug-unparse") {
       driver.dumpUnparse = true;
     } else if (arg == "-funparse-with-symbols" ||

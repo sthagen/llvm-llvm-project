@@ -1909,7 +1909,7 @@ private:
     bool aliased = true;
     if (Loc1.Ptr && Loc2.Ptr && isSimple(Inst1) && isSimple(Inst2)) {
       // Do the alias check.
-      aliased = AA->alias(Loc1, Loc2);
+      aliased = !AA->isNoAlias(Loc1, Loc2);
     }
     // Store the result in the cache.
     result = aliased;
@@ -3458,7 +3458,8 @@ computeExtractCost(ArrayRef<Value *> VL, FixedVectorType *VecTy,
                    ArrayRef<int> Mask, TargetTransformInfo &TTI) {
   unsigned NumOfParts = TTI.getNumberOfParts(VecTy);
 
-  if (ShuffleKind != TargetTransformInfo::SK_PermuteSingleSrc || !NumOfParts)
+  if (ShuffleKind != TargetTransformInfo::SK_PermuteSingleSrc || !NumOfParts ||
+      VecTy->getNumElements() < NumOfParts)
     return TTI.getShuffleCost(ShuffleKind, VecTy, Mask);
 
   bool AllConsecutive = true;
@@ -6213,6 +6214,9 @@ bool SLPVectorizerPass::vectorizeStores(ArrayRef<StoreInst *> Stores,
         break;
   }
 
+  // Tracks if we tried to vectorize stores starting from the given tail
+  // already.
+  SmallBitVector TriedTails(E, false);
   // For stores that start but don't end a link in the chain:
   for (int Cnt = E; Cnt > 0; --Cnt) {
     int I = Cnt - 1;
@@ -6229,8 +6233,9 @@ bool SLPVectorizerPass::vectorizeStores(ArrayRef<StoreInst *> Stores,
         // Mark the new end in the chain and go back, if required. It might be
         // required if the original stores come in reversed order, for example.
         if (ConsecutiveChain[I].first != E &&
-            Tails.test(ConsecutiveChain[I].first) &&
+            Tails.test(ConsecutiveChain[I].first) && !TriedTails.test(I) &&
             !VectorizedStores.count(Stores[ConsecutiveChain[I].first])) {
+          TriedTails.set(I);
           Tails.reset(ConsecutiveChain[I].first);
           if (Cnt < ConsecutiveChain[I].first + 2)
             Cnt = ConsecutiveChain[I].first + 2;
@@ -6902,6 +6907,12 @@ public:
     if (!isValidElementType(Ty) || Ty->isPointerTy())
       return false;
 
+    // Though the ultimate reduction may have multiple uses, its condition must
+    // have only single use.
+    if (auto *SI = dyn_cast<SelectInst>(B))
+      if (!SI->getCondition()->hasOneUse())
+        return false;
+
     ReductionRoot = B;
 
     // The opcode for leaf values that we perform a reduction on.
@@ -7165,16 +7176,6 @@ public:
         }
       }
 
-      // Update users. For a min/max reduction that ends with a compare and
-      // select, we also have to RAUW for the compare instruction feeding the
-      // reduction root. That's because the original compare may have extra uses
-      // besides the final select of the reduction.
-      if (auto *ScalarSelect = dyn_cast<SelectInst>(ReductionRoot)) {
-        if (auto *VecSelect = dyn_cast<SelectInst>(VectorizedTree)) {
-          Instruction *ScalarCmp = getCmpForMinMaxReduction(ScalarSelect);
-          ScalarCmp->replaceAllUsesWith(VecSelect->getCondition());
-        }
-      }
       ReductionRoot->replaceAllUsesWith(VectorizedTree);
 
       // Mark all scalar reduction ops for deletion, they are replaced by the
@@ -7498,6 +7499,9 @@ static bool tryToVectorizeHorReductionOrInstOperands(
   // horizontal reduction.
   // Interrupt the process if the Root instruction itself was vectorized or all
   // sub-trees not higher that RecursionMaxDepth were analyzed/vectorized.
+  // Skip the analysis of CmpInsts.Compiler implements postanalysis of the
+  // CmpInsts so we can skip extra attempts in
+  // tryToVectorizeHorReductionOrInstOperands and save compile time.
   SmallVector<std::pair<Instruction *, unsigned>, 8> Stack(1, {Root, 0});
   SmallPtrSet<Value *, 8> VisitedInstrs;
   bool Res = false;
@@ -7534,7 +7538,8 @@ static bool tryToVectorizeHorReductionOrInstOperands(
     // Set P to nullptr to avoid re-analysis of phi node in
     // matchAssociativeReduction function unless this is the root node.
     P = nullptr;
-    if (Vectorize(Inst, R)) {
+    // Do not try to vectorize CmpInst operands, this is done separately.
+    if (!isa<CmpInst>(Inst) && Vectorize(Inst, R)) {
       Res = true;
       continue;
     }
@@ -7546,7 +7551,10 @@ static bool tryToVectorizeHorReductionOrInstOperands(
       for (auto *Op : Inst->operand_values())
         if (VisitedInstrs.insert(Op).second)
           if (auto *I = dyn_cast<Instruction>(Op))
-            if (!isa<PHINode>(I) && !R.isDeleted(I) && I->getParent() == BB)
+            // Do not try to vectorize CmpInst operands,  this is done
+            // separately.
+            if (!isa<PHINode>(I) && !isa<CmpInst>(I) && !R.isDeleted(I) &&
+                I->getParent() == BB)
               Stack.emplace_back(I, Level);
   }
   return Res;
@@ -7604,22 +7612,11 @@ bool SLPVectorizerPass::vectorizeInsertElementInst(InsertElementInst *IEI,
                             BuildVectorInsts);
 }
 
-bool SLPVectorizerPass::vectorizeCmpInst(CmpInst *CI, BasicBlock *BB,
-                                         BoUpSLP &R) {
-  if (tryToVectorizePair(CI->getOperand(0), CI->getOperand(1), R))
-    return true;
-
-  bool OpsChanged = false;
-  for (int Idx = 0; Idx < 2; ++Idx) {
-    OpsChanged |=
-        vectorizeRootInstruction(nullptr, CI->getOperand(Idx), BB, R, TTI);
-  }
-  return OpsChanged;
-}
-
 bool SLPVectorizerPass::vectorizeSimpleInstructions(
-    SmallVectorImpl<Instruction *> &Instructions, BasicBlock *BB, BoUpSLP &R) {
+    SmallVectorImpl<Instruction *> &Instructions, BasicBlock *BB, BoUpSLP &R,
+    bool AtTerminator) {
   bool OpsChanged = false;
+  SmallVector<Instruction *, 4> PostponedCmps;
   for (auto *I : reverse(Instructions)) {
     if (R.isDeleted(I))
       continue;
@@ -7627,10 +7624,29 @@ bool SLPVectorizerPass::vectorizeSimpleInstructions(
       OpsChanged |= vectorizeInsertValueInst(LastInsertValue, BB, R);
     else if (auto *LastInsertElem = dyn_cast<InsertElementInst>(I))
       OpsChanged |= vectorizeInsertElementInst(LastInsertElem, BB, R);
-    else if (auto *CI = dyn_cast<CmpInst>(I))
-      OpsChanged |= vectorizeCmpInst(CI, BB, R);
+    else if (isa<CmpInst>(I))
+      PostponedCmps.push_back(I);
   }
-  Instructions.clear();
+  if (AtTerminator) {
+    // Try to find reductions first.
+    for (Instruction *I : PostponedCmps) {
+      if (R.isDeleted(I))
+        continue;
+      for (Value *Op : I->operands())
+        OpsChanged |= vectorizeRootInstruction(nullptr, Op, BB, R, TTI);
+    }
+    // Try to vectorize operands as vector bundles.
+    for (Instruction *I : PostponedCmps) {
+      if (R.isDeleted(I))
+        continue;
+      OpsChanged |= tryToVectorize(I, R);
+    }
+    Instructions.clear();
+  } else {
+    // Insert in reverse order since the PostponedCmps vector was filled in
+    // reverse order.
+    Instructions.assign(PostponedCmps.rbegin(), PostponedCmps.rend());
+  }
   return OpsChanged;
 }
 
@@ -7708,7 +7724,8 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
     // We may go through BB multiple times so skip the one we have checked.
     if (!VisitedInstrs.insert(&*it).second) {
       if (it->use_empty() && KeyNodes.contains(&*it) &&
-          vectorizeSimpleInstructions(PostProcessInstructions, BB, R)) {
+          vectorizeSimpleInstructions(PostProcessInstructions, BB, R,
+                                      it->isTerminator())) {
         // We would like to start over since some instructions are deleted
         // and the iterator may become invalid value.
         Changed = true;
@@ -7767,7 +7784,8 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       // Start vectorization of post-process list of instructions from the
       // top-tree instructions to try to vectorize as many instructions as
       // possible.
-      OpsChanged |= vectorizeSimpleInstructions(PostProcessInstructions, BB, R);
+      OpsChanged |= vectorizeSimpleInstructions(PostProcessInstructions, BB, R,
+                                                it->isTerminator());
       if (OpsChanged) {
         // We would like to start over since some instructions are deleted
         // and the iterator may become invalid value.

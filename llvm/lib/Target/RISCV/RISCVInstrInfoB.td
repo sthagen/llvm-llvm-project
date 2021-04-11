@@ -17,14 +17,19 @@
 // Operand and SDNode transformation definitions.
 //===----------------------------------------------------------------------===//
 
-def riscv_clzw : SDNode<"RISCVISD::CLZW", SDTIntUnaryOp>;
-def riscv_ctzw : SDNode<"RISCVISD::CTZW", SDTIntUnaryOp>;
-def riscv_rolw : SDNode<"RISCVISD::ROLW", SDTIntShiftOp>;
-def riscv_rorw : SDNode<"RISCVISD::RORW", SDTIntShiftOp>;
-def riscv_fslw : SDNode<"RISCVISD::FSLW", SDTIntShiftDOp>;
-def riscv_fsrw : SDNode<"RISCVISD::FSRW", SDTIntShiftDOp>;
-def riscv_fsl  : SDNode<"RISCVISD::FSL",  SDTIntShiftDOp>;
-def riscv_fsr  : SDNode<"RISCVISD::FSR",  SDTIntShiftDOp>;
+def riscv_clzw   : SDNode<"RISCVISD::CLZW",   SDT_RISCVIntUnaryOpW>;
+def riscv_ctzw   : SDNode<"RISCVISD::CTZW",   SDT_RISCVIntUnaryOpW>;
+def riscv_rolw   : SDNode<"RISCVISD::ROLW",   SDT_RISCVIntBinOpW>;
+def riscv_rorw   : SDNode<"RISCVISD::RORW",   SDT_RISCVIntBinOpW>;
+def riscv_fslw   : SDNode<"RISCVISD::FSLW",   SDT_RISCVIntShiftDOpW>;
+def riscv_fsrw   : SDNode<"RISCVISD::FSRW",   SDT_RISCVIntShiftDOpW>;
+def riscv_fsl    : SDNode<"RISCVISD::FSL",    SDTIntShiftDOp>;
+def riscv_fsr    : SDNode<"RISCVISD::FSR",    SDTIntShiftDOp>;
+def riscv_grevi  : SDNode<"RISCVISD::GREVI",  SDTIntBinOp>;
+def riscv_greviw : SDNode<"RISCVISD::GREVIW", SDT_RISCVIntBinOpW>;
+def riscv_gorci  : SDNode<"RISCVISD::GORCI",  SDTIntBinOp>;
+def riscv_gorciw : SDNode<"RISCVISD::GORCIW", SDT_RISCVIntBinOpW>;
+def riscv_shfli  : SDNode<"RISCVISD::SHFLI",  SDTIntBinOp>;
 
 def UImmLog2XLenHalfAsmOperand : AsmOperandClass {
   let Name = "UImmLog2XLenHalf";
@@ -628,6 +633,27 @@ def : InstAlias<"orc2 $rd, $rs",    (GORCI GPR:$rd, GPR:$rs, 0b111110)>;
 def : InstAlias<"orc $rd, $rs",     (GORCI GPR:$rd, GPR:$rs, 0b111111)>;
 } // Predicates = [HasStdExtZbp, IsRV64]
 
+let Predicates = [HasStdExtZbbOrZbp] in {
+def : InstAlias<"ror $rd, $rs1, $shamt",
+                (RORI  GPR:$rd, GPR:$rs1, uimmlog2xlen:$shamt), 0>;
+} // Predicates = [HasStdExtZbbOrZbp]
+
+let Predicates = [HasStdExtZbbOrZbp, IsRV64] in {
+def : InstAlias<"rorw $rd, $rs1, $shamt",
+                (RORIW  GPR:$rd, GPR:$rs1, uimm5:$shamt), 0>;
+} // Predicates = [HasStdExtZbbOrZbp, IsRV64]
+
+let Predicates = [HasStdExtZbs] in {
+def : InstAlias<"bset $rd, $rs1, $shamt",
+                (BSETI  GPR:$rd, GPR:$rs1, uimmlog2xlen:$shamt), 0>;
+def : InstAlias<"bclr $rd, $rs1, $shamt",
+                (BCLRI GPR:$rd, GPR:$rs1, uimmlog2xlen:$shamt), 0>;
+def : InstAlias<"binv $rd, $rs1, $shamt",
+                (BINVI GPR:$rd, GPR:$rs1, uimmlog2xlen:$shamt), 0>;
+def : InstAlias<"bext $rd, $rs1, $shamt",
+                (BEXTI GPR:$rd, GPR:$rs1, uimmlog2xlen:$shamt), 0>;
+} // Predicates = [HasStdExtZbs]
+
 //===----------------------------------------------------------------------===//
 // Compressed Instruction patterns
 //===----------------------------------------------------------------------===//
@@ -690,21 +716,16 @@ def : Pat<(rotr GPR:$rs1, uimmlog2xlen:$shamt),
           (RORI GPR:$rs1, uimmlog2xlen:$shamt)>;
 def : Pat<(rotl GPR:$rs1, uimmlog2xlen:$shamt),
           (RORI GPR:$rs1, (ImmSubFromXLen uimmlog2xlen:$shamt))>;
-}
 
-def riscv_grevi    : SDNode<"RISCVISD::GREVI", SDTIntBinOp, []>;
-def riscv_greviw   : SDNode<"RISCVISD::GREVIW", SDTIntBinOp, []>;
-def riscv_gorci    : SDNode<"RISCVISD::GORCI", SDTIntBinOp, []>;
-def riscv_gorciw   : SDNode<"RISCVISD::GORCIW", SDTIntBinOp, []>;
-def riscv_shfli    : SDNode<"RISCVISD::SHFLI", SDTIntBinOp, []>;
+// We treat orc.b as a separate instruction, so match it directly. We also
+// lower the Zbb orc.b intrinsic to this.
+def : Pat<(riscv_gorci GPR:$rs1, 7), (ORCB GPR:$rs1)>;
+}
 
 let Predicates = [HasStdExtZbp] in {
 def : Pat<(riscv_shfli GPR:$rs1, timm:$shamt), (SHFLI GPR:$rs1, timm:$shamt)>;
 def : Pat<(riscv_grevi GPR:$rs1, timm:$shamt), (GREVI GPR:$rs1, timm:$shamt)>;
 def : Pat<(riscv_gorci GPR:$rs1, timm:$shamt), (GORCI GPR:$rs1, timm:$shamt)>;
-
-// We treat orc.b as a separate instruction, so match it directly.
-def : Pat<(riscv_gorci GPR:$rs1, 7), (ORCB GPR:$rs1)>;
 } // Predicates = [HasStdExtZbp]
 
 let Predicates = [HasStdExtZbp, IsRV32] in {
@@ -758,11 +779,11 @@ def : Pat<(riscv_fsl GPR:$rs1, GPR:$rs3, GPR:$rs2),
 def : Pat<(riscv_fsr GPR:$rs3, GPR:$rs1, GPR:$rs2),
           (FSR GPR:$rs1, GPR:$rs2, GPR:$rs3)>;
 
-def : Pat<(riscv_fsr GPR:$rs3, GPR:$rs1, uimmlog2xlen:$shamt),
+def : Pat<(fshr GPR:$rs3, GPR:$rs1, uimmlog2xlen:$shamt),
           (FSRI GPR:$rs1, GPR:$rs3, uimmlog2xlen:$shamt)>;
 // We can use FSRI for fshl by immediate if we subtract the immediate from
 // XLen and swap the operands.
-def : Pat<(riscv_fsl GPR:$rs3, GPR:$rs1, uimmlog2xlen:$shamt),
+def : Pat<(fshl GPR:$rs3, GPR:$rs1, uimmlog2xlen:$shamt),
           (FSRI GPR:$rs1, GPR:$rs3, (ImmSubFromXLen uimmlog2xlen:$shamt))>;
 } // Predicates = [HasStdExtZbt]
 
@@ -850,37 +871,37 @@ def : Pat<(i64 (add (SLLIUWPat GPR:$rs1, (i64 3)), GPR:$rs2)),
 } // Predicates = [HasStdExtZba, IsRV64]
 
 let Predicates = [HasStdExtZbbOrZbp, IsRV64] in {
-def : Pat<(i64 (riscv_rolw GPR:$rs1, GPR:$rs2)),
+def : Pat<(riscv_rolw GPR:$rs1, GPR:$rs2),
           (ROLW GPR:$rs1, GPR:$rs2)>;
-def : Pat<(i64 (riscv_rorw GPR:$rs1, GPR:$rs2)),
+def : Pat<(riscv_rorw GPR:$rs1, GPR:$rs2),
           (RORW GPR:$rs1, GPR:$rs2)>;
-def : Pat<(i64 (riscv_rorw GPR:$rs1, uimm5:$rs2)),
+def : Pat<(riscv_rorw GPR:$rs1, uimm5:$rs2),
           (RORIW GPR:$rs1, uimm5:$rs2)>;
-def : Pat<(i64 (riscv_rolw GPR:$rs1, uimm5:$rs2)),
+def : Pat<(riscv_rolw GPR:$rs1, uimm5:$rs2),
           (RORIW GPR:$rs1, (ImmSubFrom32 uimm5:$rs2))>;
 } // Predicates = [HasStdExtZbbOrZbp, IsRV64]
 
 let Predicates = [HasStdExtZbp, IsRV64] in {
-def : Pat<(i64 (riscv_rorw (riscv_greviw GPR:$rs1, 24), (i64 16))), (GREVIW GPR:$rs1, 8)>;
-def : Pat<(i64 (riscv_rolw (riscv_greviw GPR:$rs1, 24), (i64 16))), (GREVIW GPR:$rs1, 8)>;
-def : Pat<(i64 (riscv_greviw GPR:$rs1, timm:$shamt)), (GREVIW GPR:$rs1, timm:$shamt)>;
-def : Pat<(i64 (riscv_gorciw GPR:$rs1, timm:$shamt)), (GORCIW GPR:$rs1, timm:$shamt)>;
+def : Pat<(riscv_rorw (riscv_greviw GPR:$rs1, 24), 16), (GREVIW GPR:$rs1, 8)>;
+def : Pat<(riscv_rolw (riscv_greviw GPR:$rs1, 24), 16), (GREVIW GPR:$rs1, 8)>;
+def : Pat<(riscv_greviw GPR:$rs1, timm:$shamt), (GREVIW GPR:$rs1, timm:$shamt)>;
+def : Pat<(riscv_gorciw GPR:$rs1, timm:$shamt), (GORCIW GPR:$rs1, timm:$shamt)>;
 } // Predicates = [HasStdExtZbp, IsRV64]
 
 let Predicates = [HasStdExtZbt, IsRV64] in {
-def : Pat<(i64 (riscv_fslw GPR:$rs1, GPR:$rs3, GPR:$rs2)),
+def : Pat<(riscv_fslw GPR:$rs1, GPR:$rs3, GPR:$rs2),
           (FSLW GPR:$rs1, GPR:$rs2, GPR:$rs3)>;
-def : Pat<(i64 (riscv_fsrw GPR:$rs3, GPR:$rs1, GPR:$rs2)),
+def : Pat<(riscv_fsrw GPR:$rs3, GPR:$rs1, GPR:$rs2),
           (FSRW GPR:$rs1, GPR:$rs2, GPR:$rs3)>;
-def : Pat<(i64 (riscv_fsrw GPR:$rs3, GPR:$rs1, uimm5:$shamt)),
+def : Pat<(riscv_fsrw GPR:$rs3, GPR:$rs1, uimm5:$shamt),
           (FSRIW GPR:$rs1, GPR:$rs3, uimm5:$shamt)>;
-def : Pat<(i64 (riscv_fslw GPR:$rs3, GPR:$rs1, uimm5:$shamt)),
+def : Pat<(riscv_fslw GPR:$rs3, GPR:$rs1, uimm5:$shamt),
           (FSRIW GPR:$rs1, GPR:$rs3, (ImmSubFrom32 uimm5:$shamt))>;
 } // Predicates = [HasStdExtZbt, IsRV64]
 
 let Predicates = [HasStdExtZbb, IsRV64] in {
-def : Pat<(i64 (riscv_clzw GPR:$rs1)), (CLZW GPR:$rs1)>;
-def : Pat<(i64 (riscv_ctzw GPR:$rs1)), (CTZW GPR:$rs1)>;
+def : Pat<(riscv_clzw GPR:$rs1), (CLZW GPR:$rs1)>;
+def : Pat<(riscv_ctzw GPR:$rs1), (CTZW GPR:$rs1)>;
 def : Pat<(i64 (ctpop (and GPR:$rs1, 0xFFFFFFFF))), (CPOPW GPR:$rs1)>;
 } // Predicates = [HasStdExtZbb, IsRV64]
 
@@ -893,3 +914,23 @@ def : Pat<(i64 (or (and (assertsexti32 GPR:$rs2), 0xFFFFFFFFFFFF0000),
                    (srl (and GPR:$rs1, 0xFFFFFFFF), (i64 16)))),
           (PACKUW GPR:$rs1, GPR:$rs2)>;
 } // Predicates = [HasStdExtZbp, IsRV64]
+
+let Predicates = [HasStdExtZbc] in {
+def : PatGprGpr<int_riscv_clmul, CLMUL>;
+def : PatGprGpr<int_riscv_clmulh, CLMULH>;
+def : PatGprGpr<int_riscv_clmulr, CLMULR>;
+} // Predicates = [HasStdExtZbc]
+
+let Predicates = [HasStdExtZbr] in {
+def : PatGpr<int_riscv_crc32_b, CRC32B>;
+def : PatGpr<int_riscv_crc32_h, CRC32H>;
+def : PatGpr<int_riscv_crc32_w, CRC32W>;
+def : PatGpr<int_riscv_crc32c_b, CRC32CB>;
+def : PatGpr<int_riscv_crc32c_h, CRC32CH>;
+def : PatGpr<int_riscv_crc32c_w, CRC32CW>;
+} // Predicates = [HasStdExtZbr]
+
+let Predicates = [HasStdExtZbr, IsRV64] in {
+def : PatGpr<int_riscv_crc32_d, CRC32D>;
+def : PatGpr<int_riscv_crc32c_d, CRC32CD>;
+} // Predicates = [HasStdExtZbr, IsRV64]

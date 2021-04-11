@@ -1180,6 +1180,13 @@ AArch64TargetLowering::AArch64TargetLowering(const TargetMachine &TM,
 
     for (auto VT : {MVT::nxv2f16, MVT::nxv4f16, MVT::nxv8f16, MVT::nxv2f32,
                     MVT::nxv4f32, MVT::nxv2f64}) {
+      for (auto InnerVT : {MVT::nxv2f16, MVT::nxv4f16, MVT::nxv8f16,
+                           MVT::nxv2f32, MVT::nxv4f32, MVT::nxv2f64}) {
+        // Avoid marking truncating FP stores as legal to prevent the
+        // DAGCombiner from creating unsupported truncating stores.
+        setTruncStoreAction(VT, InnerVT, Expand);
+      }
+
       setOperationAction(ISD::CONCAT_VECTORS, VT, Custom);
       setOperationAction(ISD::INSERT_SUBVECTOR, VT, Custom);
       setOperationAction(ISD::MGATHER, VT, Custom);
@@ -2152,6 +2159,24 @@ MachineBasicBlock *AArch64TargetLowering::EmitInstrWithCustomInserter(
 //===----------------------------------------------------------------------===//
 // Lowering Code
 //===----------------------------------------------------------------------===//
+
+/// isZerosVector - Check whether SDNode N is a zero-filled vector.
+static bool isZerosVector(const SDNode *N) {
+  // Look through a bit convert.
+  while (N->getOpcode() == ISD::BITCAST)
+    N = N->getOperand(0).getNode();
+
+  if (ISD::isConstantSplatVectorAllZeros(N))
+    return true;
+
+  if (N->getOpcode() != AArch64ISD::DUP)
+    return false;
+
+  auto Opnd0 = N->getOperand(0);
+  auto *CINT = dyn_cast<ConstantSDNode>(Opnd0);
+  auto *CFP = dyn_cast<ConstantFPSDNode>(Opnd0);
+  return (CINT && CINT->isNullValue()) || (CFP && CFP->isZero());
+}
 
 /// changeIntCCToAArch64CC - Convert a DAG integer condition code to an AArch64
 /// CC
@@ -3924,9 +3949,13 @@ SDValue AArch64TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                        Op.getOperand(2));
   }
   case Intrinsic::aarch64_neon_sdot:
-  case Intrinsic::aarch64_neon_udot: {
-    unsigned Opcode = IntNo == Intrinsic::aarch64_neon_udot ? AArch64ISD::UDOT
-                                                            : AArch64ISD::SDOT;
+  case Intrinsic::aarch64_neon_udot:
+  case Intrinsic::aarch64_sve_sdot:
+  case Intrinsic::aarch64_sve_udot: {
+    unsigned Opcode = (IntNo == Intrinsic::aarch64_neon_udot ||
+                       IntNo == Intrinsic::aarch64_sve_udot)
+                          ? AArch64ISD::UDOT
+                          : AArch64ISD::SDOT;
     return DAG.getNode(Opcode, dl, Op.getValueType(), Op.getOperand(1),
                        Op.getOperand(2), Op.getOperand(3));
   }
@@ -13340,7 +13369,7 @@ static SDValue performAddDotCombine(SDNode *N, SelectionDAG &DAG) {
   auto isZeroDot = [](SDValue Dot) {
     return (Dot.getOpcode() == AArch64ISD::UDOT ||
             Dot.getOpcode() == AArch64ISD::SDOT) &&
-           ISD::isBuildVectorAllZeros(Dot.getOperand(0).getNode());
+           isZerosVector(Dot.getOperand(0).getNode());
   };
   if (!isZeroDot(Dot))
     std::swap(Dot, A);

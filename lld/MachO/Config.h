@@ -16,9 +16,9 @@
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/Support/GlobPattern.h"
 #include "llvm/Support/VersionTuple.h"
-#include "llvm/TextAPI/MachO/Architecture.h"
-#include "llvm/TextAPI/MachO/Platform.h"
-#include "llvm/TextAPI/MachO/Target.h"
+#include "llvm/TextAPI/Architecture.h"
+#include "llvm/TextAPI/Platform.h"
+#include "llvm/TextAPI/Target.h"
 
 #include <vector>
 
@@ -98,6 +98,7 @@ struct Configuration {
   llvm::StringRef mapFile;
   llvm::StringRef outputFile;
   llvm::StringRef ltoObjPath;
+  llvm::StringRef thinLTOJobs;
   bool demangle = false;
   llvm::MachO::Target target;
   PlatformInfo platformInfo;
@@ -109,6 +110,7 @@ struct Configuration {
   std::vector<llvm::StringRef> librarySearchPaths;
   std::vector<llvm::StringRef> frameworkSearchPaths;
   std::vector<llvm::StringRef> runtimePaths;
+  std::vector<std::string> astPaths;
   std::vector<Symbol *> explicitUndefineds;
   // There are typically very few custom segmentProtections, so use a vector
   // instead of a map.
