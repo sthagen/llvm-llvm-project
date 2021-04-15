@@ -37118,8 +37118,12 @@ static SDValue canonicalizeShuffleWithBinOps(SDValue N, SelectionDAG &DAG,
         SDValue Op10 = peekThroughOneUseBitcasts(N1.getOperand(0));
         SDValue Op01 = peekThroughOneUseBitcasts(N0.getOperand(1));
         SDValue Op11 = peekThroughOneUseBitcasts(N1.getOperand(1));
-        if ((IsMergeableWithShuffle(Op00) && IsMergeableWithShuffle(Op10)) ||
-            (IsMergeableWithShuffle(Op01) && IsMergeableWithShuffle(Op11))) {
+        // Ensure the total number of shuffles doesn't increase by folding this
+        // shuffle through to the source ops.
+        if (((IsMergeableWithShuffle(Op00) && IsMergeableWithShuffle(Op10)) ||
+             (IsMergeableWithShuffle(Op01) && IsMergeableWithShuffle(Op11))) ||
+            ((IsMergeableWithShuffle(Op00) || IsMergeableWithShuffle(Op10)) &&
+             (IsMergeableWithShuffle(Op01) || IsMergeableWithShuffle(Op11)))) {
           SDValue LHS, RHS;
           Op00 = DAG.getBitcast(ShuffleVT, Op00);
           Op10 = DAG.getBitcast(ShuffleVT, Op10);
@@ -48817,15 +48821,28 @@ static SDValue combineCMP(SDNode *N, SelectionDAG &DAG) {
     }
   }
 
-  // Look for a truncate with a single use.
-  if (Op.getOpcode() != ISD::TRUNCATE || !Op.hasOneUse())
+  // Look for a truncate.
+  if (Op.getOpcode() != ISD::TRUNCATE)
     return SDValue();
 
+  SDValue Trunc = Op;
   Op = Op.getOperand(0);
 
-  // Arithmetic op can only have one use.
-  if (!Op.hasOneUse())
-    return SDValue();
+  // See if we can compare with zero against the truncation source,
+  // which should help using the Z flag from many ops. Only do this for
+  // i32 truncated op to prevent partial-reg compares of promoted ops.
+  EVT OpVT = Op.getValueType();
+  APInt UpperBits =
+      APInt::getBitsSetFrom(OpVT.getSizeInBits(), VT.getSizeInBits());
+  if (OpVT == MVT::i32 && DAG.MaskedValueIsZero(Op, UpperBits) &&
+      onlyZeroFlagUsed(SDValue(N, 0))) {
+    return DAG.getNode(X86ISD::CMP, dl, MVT::i32, Op,
+                       DAG.getConstant(0, dl, OpVT));
+  }
+
+  // After this the truncate and arithmetic op must have a single use.
+  if (!Trunc.hasOneUse() || !Op.hasOneUse())
+      return SDValue();
 
   unsigned NewOpc;
   switch (Op.getOpcode()) {
