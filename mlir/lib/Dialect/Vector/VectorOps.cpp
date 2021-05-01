@@ -232,6 +232,45 @@ ArrayAttr vector::getVectorSubscriptAttr(Builder &builder,
 }
 
 //===----------------------------------------------------------------------===//
+// MultiDimReductionOp
+//===----------------------------------------------------------------------===//
+
+void vector::MultiDimReductionOp::build(OpBuilder &builder,
+                                        OperationState &result, Value source,
+                                        ArrayRef<bool> reductionMask,
+                                        CombiningKind kind) {
+  result.addOperands(source);
+  auto sourceVectorType = source.getType().cast<VectorType>();
+  auto targetShape = MultiDimReductionOp::inferDestShape(
+      sourceVectorType.getShape(), reductionMask);
+  auto targetVectorType =
+      VectorType::get(targetShape, sourceVectorType.getElementType());
+  result.addTypes(targetVectorType);
+
+  SmallVector<int64_t> reductionDims;
+  for (auto en : llvm::enumerate(reductionMask))
+    if (en.value())
+      reductionDims.push_back(en.index());
+  result.addAttribute(getReductionDimsAttrName(),
+                      builder.getI64ArrayAttr(reductionDims));
+  result.addAttribute(getKindAttrName(),
+                      CombiningKindAttr::get(kind, builder.getContext()));
+}
+
+static LogicalResult verify(MultiDimReductionOp op) {
+  auto reductionMask = op.getReductionMask();
+  auto targetShape = MultiDimReductionOp::inferDestShape(
+      op.getSourceVectorType().getShape(), reductionMask);
+  auto targetVectorType =
+      VectorType::get(targetShape, op.getSourceVectorType().getElementType());
+  if (targetVectorType != op.getDestVectorType())
+    return op.emitError("invalid output vector type: ")
+           << op.getDestVectorType() << " (expected: " << targetVectorType
+           << ")";
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // ReductionOp
 //===----------------------------------------------------------------------===//
 
@@ -2160,6 +2199,29 @@ void ExtractStridedSliceOp::getCanonicalizationPatterns(
 // TransferReadOp
 //===----------------------------------------------------------------------===//
 
+AffineMap TransferReadOp::insertBroadcasts(AffineMap map, VectorType vt,
+                                           ArrayRef<int64_t> targetShape) {
+  unsigned targetRank = targetShape.size();
+  assert(vt.getShape().size() <= targetRank && "mismatching ranks");
+  if (vt.getShape().size() == targetRank)
+    return map;
+  MLIRContext *ctx = map.getContext();
+  SmallVector<AffineExpr> exprs;
+  exprs.reserve(targetRank);
+  for (unsigned idx = 0, vtidx = 0; idx < targetRank; ++idx) {
+    // If shapes match, just keep the existing indexing and advance ranks.
+    if (vtidx < vt.getShape().size() &&
+        vt.getShape()[vtidx] == targetShape[idx]) {
+      exprs.push_back(map.getResult(vtidx));
+      ++vtidx;
+      continue;
+    }
+    // Otherwise insert a broadcast.
+    exprs.push_back(getAffineConstantExpr(0, ctx));
+  }
+  return AffineMap::get(map.getNumDims(), /*numSymbols=*/0, exprs, ctx);
+}
+
 template <typename EmitFun>
 static LogicalResult verifyPermutationMap(AffineMap permutationMap,
                                           EmitFun emitOpError) {
@@ -2512,7 +2574,35 @@ static LogicalResult foldTransferInBoundsAttribute(TransferOp op) {
   return success();
 }
 
+///  ```
+///  %w0 = vector.transfer_write %v0, %arg0[%c1, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+///  %0 = vector.transfer_read %w0[%c1, %c0], %cf0 {in_bounds = [true, true]}
+///    : tensor<4x4xf32>, vector<1x4xf32>
+///  ```
+///  -> Folds into
+///  ```
+///  %v0
+///  ```
+static Value foldRAW(TransferReadOp readOp) {
+  if (!readOp.getShapedType().isa<RankedTensorType>())
+    return {};
+  auto defWrite = readOp.source().getDefiningOp<vector::TransferWriteOp>();
+  while (defWrite) {
+    if (checkSameValueRAW(defWrite, readOp))
+      return defWrite.vector();
+    if (!isDisjointTransferIndices(
+            cast<VectorTransferOpInterface>(defWrite.getOperation()),
+            cast<VectorTransferOpInterface>(readOp.getOperation())))
+      break;
+    defWrite = defWrite.source().getDefiningOp<vector::TransferWriteOp>();
+  }
+  return {};
+}
+
 OpFoldResult TransferReadOp::fold(ArrayRef<Attribute>) {
+  if (Value vec = foldRAW(*this))
+    return vec;
   /// transfer_read(memrefcast) -> transfer_read
   if (succeeded(foldTransferInBoundsAttribute(*this)))
     return getResult();
@@ -2655,6 +2745,11 @@ static LogicalResult verify(TransferWriteOp op) {
   if (llvm::size(op.indices()) != shapedType.getRank())
     return op.emitOpError("requires ") << shapedType.getRank() << " indices";
 
+  // We do not allow broadcast dimensions on TransferWriteOps for the moment,
+  // as the semantics is unclear. This can be revisited later if necessary.
+  if (op.hasBroadcastDim())
+    return op.emitOpError("should not have broadcast dimensions");
+
   if (failed(verifyTransferOp(op.getOperation(), shapedType, vectorType,
                               permutationMap,
                               op.in_bounds() ? *op.in_bounds() : ArrayAttr())))
@@ -2724,9 +2819,46 @@ static LogicalResult foldReadInitWrite(TransferWriteOp write,
   return success();
 }
 
+static bool checkSameValueWAR(vector::TransferReadOp read,
+                              vector::TransferWriteOp write) {
+  return read.source() == write.source() && read.indices() == write.indices() &&
+         read.permutation_map() == write.permutation_map() &&
+         read.getVectorType() == write.getVectorType() && !read.mask() &&
+         !write.mask();
+}
+/// Fold transfer_write write after read:
+/// ```
+///    %t0 = ...
+///    %v = vector.transfer_read %t0[%c0...] :
+///      tensor<static_sizesxf32>, vector<static_sizesxf32>
+///    %t1 = vector.transfer_write %v, %t0[%c0...] :
+///      vector<static_sizesxf32>, tensor<static_sizesxf32>
+/// ```
+///
+/// into:
+///
+/// ```
+///    %t0
+/// ```
+static LogicalResult foldWAR(TransferWriteOp write,
+                             SmallVectorImpl<OpFoldResult> &results) {
+  if (!write.source().getType().isa<RankedTensorType>())
+    return failure();
+  auto read = write.vector().getDefiningOp<vector::TransferReadOp>();
+  if (!read)
+    return failure();
+
+  if (!checkSameValueWAR(read, write))
+    return failure();
+  results.push_back(read.source());
+  return success();
+}
+
 LogicalResult TransferWriteOp::fold(ArrayRef<Attribute> operands,
                                     SmallVectorImpl<OpFoldResult> &results) {
   if (succeeded(foldReadInitWrite(*this, operands, results)))
+    return success();
+  if (succeeded(foldWAR(*this, results)))
     return success();
   if (succeeded(foldTransferInBoundsAttribute(*this)))
     return success();
@@ -2743,6 +2875,67 @@ void TransferWriteOp::getEffects(
   if (getShapedType().isa<MemRefType>())
     effects.emplace_back(MemoryEffects::Write::get(), source(),
                          SideEffects::DefaultResource::get());
+}
+
+namespace {
+/// Remove dead transfer write from the SSA chain so that it an be eliminated by
+/// DCE
+/// ```
+///  %w0 = vector.transfer_write %v0, %arg0[%c1, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+///  %w1 = vector.transfer_write %v0, %w0[%c2, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+///  %w2 = vector.transfer_write %v1, %w1[%c1, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+/// ```
+///
+/// into:
+///
+/// ```
+///  %w0 = vector.transfer_write %v0, %arg0[%c1, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+///  %w1 = vector.transfer_write %v0, %arg0[%c2, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+///  %w2 = vector.transfer_write %v1, %w1[%c1, %c0] {in_bounds = [true, true]}
+///    : vector<1x4xf32>, tensor<4x4xf32>
+/// ```
+///
+/// `%w0 = vector.transfer_write` op will be removed by DCE if it doesn't have
+/// any other uses.
+class foldWAW final : public OpRewritePattern<TransferWriteOp> {
+public:
+  using OpRewritePattern<TransferWriteOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(TransferWriteOp writeOp,
+                                PatternRewriter &rewriter) const override {
+    if (!writeOp.getShapedType().isa<RankedTensorType>())
+      return failure();
+    vector::TransferWriteOp writeToModify = writeOp;
+
+    auto defWrite = writeOp.source().getDefiningOp<vector::TransferWriteOp>();
+    while (defWrite) {
+      if (checkSameValueWAW(writeOp, defWrite)) {
+        writeToModify.sourceMutable().assign(defWrite.source());
+        return success();
+      }
+      if (!isDisjointTransferIndices(
+              cast<VectorTransferOpInterface>(defWrite.getOperation()),
+              cast<VectorTransferOpInterface>(writeOp.getOperation())))
+        break;
+      // If the previous write op doesn't have any other use we an safely look
+      // at the previous store to see if it can be removed.
+      if (!defWrite->hasOneUse())
+        break;
+      writeToModify = defWrite;
+      defWrite = defWrite.source().getDefiningOp<vector::TransferWriteOp>();
+    }
+    return failure();
+  }
+};
+} // namespace
+
+void TransferWriteOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                  MLIRContext *context) {
+  results.add<foldWAW>(context);
 }
 
 //===----------------------------------------------------------------------===//

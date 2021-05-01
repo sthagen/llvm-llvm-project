@@ -242,6 +242,16 @@ struct ScalarEnumerationTraits<FormatStyle::BreakInheritanceListStyle> {
 };
 
 template <>
+struct ScalarEnumerationTraits<FormatStyle::EmptyLineAfterAccessModifierStyle> {
+  static void
+  enumeration(IO &IO, FormatStyle::EmptyLineAfterAccessModifierStyle &Value) {
+    IO.enumCase(Value, "Never", FormatStyle::ELAAMS_Never);
+    IO.enumCase(Value, "Leave", FormatStyle::ELAAMS_Leave);
+    IO.enumCase(Value, "Always", FormatStyle::ELAAMS_Always);
+  }
+};
+
+template <>
 struct ScalarEnumerationTraits<
     FormatStyle::EmptyLineBeforeAccessModifierStyle> {
   static void
@@ -436,6 +446,18 @@ struct ScalarEnumerationTraits<FormatStyle::SortJavaStaticImportOptions> {
   }
 };
 
+template <> struct ScalarEnumerationTraits<FormatStyle::SpacesInAnglesStyle> {
+  static void enumeration(IO &IO, FormatStyle::SpacesInAnglesStyle &Value) {
+    IO.enumCase(Value, "Never", FormatStyle::SIAS_Never);
+    IO.enumCase(Value, "Always", FormatStyle::SIAS_Always);
+    IO.enumCase(Value, "Leave", FormatStyle::SIAS_Leave);
+
+    // For backward compatibility.
+    IO.enumCase(Value, "false", FormatStyle::SIAS_Never);
+    IO.enumCase(Value, "true", FormatStyle::SIAS_Always);
+  }
+};
+
 template <> struct MappingTraits<FormatStyle> {
   static void mapping(IO &IO, FormatStyle &Style) {
     // When reading, read the language first, we need it for getPredefinedStyle.
@@ -584,6 +606,8 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("DeriveLineEnding", Style.DeriveLineEnding);
     IO.mapOptional("DerivePointerAlignment", Style.DerivePointerAlignment);
     IO.mapOptional("DisableFormat", Style.DisableFormat);
+    IO.mapOptional("EmptyLineAfterAccessModifier",
+                   Style.EmptyLineAfterAccessModifier);
     IO.mapOptional("EmptyLineBeforeAccessModifier",
                    Style.EmptyLineBeforeAccessModifier);
     IO.mapOptional("ExperimentalAutoDetectBinPacking",
@@ -974,6 +998,7 @@ FormatStyle getLLVMStyle(FormatStyle::LanguageKind Language) {
   LLVMStyle.Cpp11BracedListStyle = true;
   LLVMStyle.DeriveLineEnding = true;
   LLVMStyle.DerivePointerAlignment = false;
+  LLVMStyle.EmptyLineAfterAccessModifier = FormatStyle::ELAAMS_Never;
   LLVMStyle.EmptyLineBeforeAccessModifier = FormatStyle::ELBAMS_LogicalBlock;
   LLVMStyle.ExperimentalAutoDetectBinPacking = false;
   LLVMStyle.FixNamespaceComments = true;
@@ -1033,7 +1058,7 @@ FormatStyle getLLVMStyle(FormatStyle::LanguageKind Language) {
   LLVMStyle.SpaceBeforeCpp11BracedList = false;
   LLVMStyle.SpaceBeforeSquareBrackets = false;
   LLVMStyle.BitFieldColonSpacing = FormatStyle::BFCS_Both;
-  LLVMStyle.SpacesInAngles = false;
+  LLVMStyle.SpacesInAngles = FormatStyle::SIAS_Never;
   LLVMStyle.SpacesInConditionalStatement = false;
 
   LLVMStyle.PenaltyBreakAssignment = prec::Assignment;
@@ -3041,7 +3066,7 @@ llvm::Expected<FormatStyle> getStyle(StringRef StyleName, StringRef FileName,
 
           LLVM_DEBUG(llvm::dbgs() << "Applying child configurations\n");
 
-          for (const auto& MemBuf : llvm::reverse(ChildFormatTextToApply)){
+          for (const auto &MemBuf : llvm::reverse(ChildFormatTextToApply)) {
             auto Ec = parseConfiguration(*MemBuf, &Style, AllowUnknownOptions,
                                          dropDiagnosticHandler);
             // It was already correctly parsed.

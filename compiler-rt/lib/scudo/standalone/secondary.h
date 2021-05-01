@@ -69,7 +69,7 @@ public:
                 UNUSED LargeBlock::Header **H, UNUSED bool *Zeroed) {
     return false;
   }
-  void store(UNUSED Options Options, UNUSED LargeBlock::Header *H) { unmap(H); }
+  void store(UNUSED Options Options, LargeBlock::Header *H) { unmap(H); }
   bool canCache(UNUSED uptr Size) { return false; }
   void disable() {}
   void enable() {}
@@ -170,7 +170,7 @@ public:
       if (Config::SecondaryCacheQuarantineSize &&
           useMemoryTagging<Config>(Options)) {
         QuarantinePos =
-            (QuarantinePos + 1) % Config::SecondaryCacheQuarantineSize;
+            (QuarantinePos + 1) % Max(Config::SecondaryCacheQuarantineSize, 1u);
         if (!Quarantine[QuarantinePos].CommitBase) {
           Quarantine[QuarantinePos] = Entry;
           return;

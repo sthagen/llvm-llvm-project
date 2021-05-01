@@ -85,21 +85,28 @@ public:
 
 protected:
   Symbol(Kind k, StringRefZ name, InputFile *file)
-      : symbolKind(k), nameData(name.data), nameSize(name.size), file(file) {}
+      : symbolKind(k), nameData(name.data), nameSize(name.size), file(file),
+        isUsedInRegularObj(!file || isa<ObjFile>(file)) {}
 
   Kind symbolKind;
   const char *nameData;
   mutable uint32_t nameSize;
   InputFile *file;
+
+public:
+  // True if this symbol was referenced by a regular (non-bitcode) object.
+  bool isUsedInRegularObj;
 };
 
 class Defined : public Symbol {
 public:
   Defined(StringRefZ name, InputFile *file, InputSection *isec, uint64_t value,
-          uint64_t size, bool isWeakDef, bool isExternal, bool isPrivateExtern)
+          uint64_t size, bool isWeakDef, bool isExternal, bool isPrivateExtern,
+          bool isThumb)
       : Symbol(DefinedKind, name, file), isec(isec), value(value), size(size),
         overridesWeakDef(false), privateExtern(isPrivateExtern),
-        includeInSymtab(true), weakDef(isWeakDef), external(isExternal) {}
+        includeInSymtab(true), thumb(isThumb), weakDef(isWeakDef),
+        external(isExternal) {}
 
   bool isWeakDef() const override { return weakDef; }
   bool isExternalWeakDef() const {
@@ -129,6 +136,8 @@ public:
   bool privateExtern : 1;
   // Whether this symbol should appear in the output symbol table.
   bool includeInSymtab : 1;
+  // Only relevant when compiling for Thumb-supporting arm32 archs.
+  bool thumb : 1;
 
 private:
   const bool weakDef : 1;
@@ -249,7 +258,10 @@ T *replaceSymbol(Symbol *s, ArgT &&...arg) {
   assert(static_cast<Symbol *>(static_cast<T *>(nullptr)) == nullptr &&
          "Not a Symbol");
 
-  return new (s) T(std::forward<ArgT>(arg)...);
+  bool isUsedInRegularObj = s->isUsedInRegularObj;
+  T *sym = new (s) T(std::forward<ArgT>(arg)...);
+  sym->isUsedInRegularObj |= isUsedInRegularObj;
+  return sym;
 }
 
 } // namespace macho

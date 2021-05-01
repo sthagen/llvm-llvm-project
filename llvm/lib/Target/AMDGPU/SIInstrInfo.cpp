@@ -3986,7 +3986,8 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
     const int OpIndices[] = { Src0Idx, Src1Idx, Src2Idx };
 
     unsigned ConstantBusCount = 0;
-    unsigned LiteralCount = 0;
+    bool UsesLiteral = false;
+    const MachineOperand *LiteralVal = nullptr;
 
     if (AMDGPU::getNamedOperandIdx(Opcode, AMDGPU::OpName::imm) != -1)
       ++ConstantBusCount;
@@ -4008,8 +4009,15 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
             SGPRsUsed.push_back(SGPRUsed);
           }
         } else {
-          ++ConstantBusCount;
-          ++LiteralCount;
+          if (!UsesLiteral) {
+            ++ConstantBusCount;
+            UsesLiteral = true;
+            LiteralVal = &MO;
+          } else if (!MO.isIdenticalTo(*LiteralVal)) {
+            assert(isVOP3(MI));
+            ErrInfo = "VOP3 instruction uses more than one literal";
+            return false;
+          }
         }
       }
     }
@@ -4033,15 +4041,9 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
       return false;
     }
 
-    if (isVOP3(MI) && LiteralCount) {
-      if (!ST.hasVOP3Literal()) {
-        ErrInfo = "VOP3 instruction uses literal";
-        return false;
-      }
-      if (LiteralCount > 1) {
-        ErrInfo = "VOP3 instruction uses more than one literal";
-        return false;
-      }
+    if (isVOP3(MI) && UsesLiteral && !ST.hasVOP3Literal()) {
+      ErrInfo = "VOP3 instruction uses literal";
+      return false;
     }
   }
 
@@ -4242,7 +4244,7 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
       unsigned AddrComponents = (BaseOpcode->Coordinates ? Dim->NumCoords : 0) +
                                 (BaseOpcode->LodOrClampOrMip ? 1 : 0);
       if (IsA16)
-        AddrWords += (AddrComponents + 1) / 2;
+        AddrWords += divideCeil(AddrComponents, 2);
       else
         AddrWords += AddrComponents;
 
@@ -4250,7 +4252,7 @@ bool SIInstrInfo::verifyInstruction(const MachineInstr &MI,
         if (PackDerivatives)
           // There are two gradients per coordinate, we pack them separately.
           // For the 3d case, we get (dy/du, dx/du) (-, dz/du) (dy/dv, dx/dv) (-, dz/dv)
-          AddrWords += (Dim->NumGradients / 2 + 1) / 2 * 2;
+          AddrWords += alignTo<2>(Dim->NumGradients / 2);
         else
           AddrWords += Dim->NumGradients;
       }

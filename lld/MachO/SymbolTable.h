@@ -39,7 +39,7 @@ class SymbolTable {
 public:
   Defined *addDefined(StringRef name, InputFile *, InputSection *,
                       uint64_t value, uint64_t size, bool isWeakDef,
-                      bool isPrivateExtern);
+                      bool isPrivateExtern, bool isThumb);
 
   Symbol *addUndefined(StringRef name, InputFile *, bool isWeakRef);
 
@@ -60,7 +60,7 @@ public:
   Symbol *find(StringRef name) { return find(llvm::CachedHashStringRef(name)); }
 
 private:
-  std::pair<Symbol *, bool> insert(StringRef name);
+  std::pair<Symbol *, bool> insert(StringRef name, const InputFile *);
   llvm::DenseMap<llvm::CachedHashStringRef, int> symMap;
   std::vector<Symbol *> symVector;
 };

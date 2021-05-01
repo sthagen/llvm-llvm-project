@@ -11,7 +11,6 @@
 // CHECK-NEXT: gpu
 // CHECK-NEXT: linalg
 // CHECK-NEXT: llvm
-// CHECK-NEXT: llvm_arm_sve
 // CHECK-NEXT: math
 // CHECK-NEXT: memref
 // CHECK-NEXT: nvvm
@@ -23,6 +22,7 @@
 // CHECK-NEXT: scf
 // CHECK-NEXT: sdbm
 // CHECK-NEXT: shape
+// CHECK-NEXT: sparse
 // CHECK-NEXT: spv
 // CHECK-NEXT: std
 // CHECK-NEXT: tensor
