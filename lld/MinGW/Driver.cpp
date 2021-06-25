@@ -83,7 +83,7 @@ public:
 } // namespace
 
 static void printHelp(const char *argv0) {
-  MinGWOptTable().PrintHelp(
+  MinGWOptTable().printHelp(
       lld::outs(), (std::string(argv0) + " [options] file...").c_str(), "lld",
       false /*ShowHidden*/, true /*ShowAllAliases*/);
   lld::outs() << "\n";
@@ -290,6 +290,11 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     add("-debug:dwarf");
   }
 
+  if (args.hasFlag(OPT_fatal_warnings, OPT_no_fatal_warnings, false))
+    add("-WX");
+  else
+    add("-WX:no");
+
   if (args.hasArg(OPT_shared))
     add("-dll");
   if (args.hasArg(OPT_verbose))
@@ -396,7 +401,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
   for (auto *a : args) {
     switch (a->getOption().getID()) {
     case OPT_INPUT:
-      if (StringRef(a->getValue()).endswith_lower(".def"))
+      if (StringRef(a->getValue()).endswith_insensitive(".def"))
         add("-def:" + StringRef(a->getValue()));
       else
         add(prefix + StringRef(a->getValue()));
@@ -423,7 +428,7 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
     return false;
 
   if (args.hasArg(OPT_verbose) || args.hasArg(OPT__HASH_HASH_HASH))
-    lld::outs() << llvm::join(linkArgs, " ") << "\n";
+    lld::errs() << llvm::join(linkArgs, " ") << "\n";
 
   if (args.hasArg(OPT__HASH_HASH_HASH))
     return true;
@@ -432,5 +437,8 @@ bool mingw::link(ArrayRef<const char *> argsArr, bool canExitEarly,
   std::vector<const char *> vec;
   for (const std::string &s : linkArgs)
     vec.push_back(s.c_str());
-  return coff::link(vec, true, stdoutOS, stderrOS);
+  // Pass the actual binary name, to make error messages be printed with
+  // the right prefix.
+  vec[0] = argsArr[0];
+  return coff::link(vec, canExitEarly, stdoutOS, stderrOS);
 }

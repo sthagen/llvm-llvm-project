@@ -279,9 +279,28 @@ InstCombinerImpl::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
       Idx = Builder.CreateTrunc(Idx, IntPtrTy);
   }
 
+  // If inbounds keyword is not present, Idx * ElementSize can overflow.
+  // Let's assume that ElementSize is 2 and the wanted value is at offset 0.
+  // Then, there are two possible values for Idx to match offset 0:
+  // 0x00..00, 0x80..00.
+  // Emitting 'icmp eq Idx, 0' isn't correct in this case because the
+  // comparison is false if Idx was 0x80..00.
+  // We need to erase the highest countTrailingZeros(ElementSize) bits of Idx.
+  unsigned ElementSize =
+      DL.getTypeAllocSize(Init->getType()->getArrayElementType());
+  auto MaskIdx = [&](Value* Idx){
+    if (!GEP->isInBounds() && countTrailingZeros(ElementSize) != 0) {
+      Value *Mask = ConstantInt::get(Idx->getType(), -1);
+      Mask = Builder.CreateLShr(Mask, countTrailingZeros(ElementSize));
+      Idx = Builder.CreateAnd(Idx, Mask);
+    }
+    return Idx;
+  };
+
   // If the comparison is only true for one or two elements, emit direct
   // comparisons.
   if (SecondTrueElement != Overdefined) {
+    Idx = MaskIdx(Idx);
     // None true -> false.
     if (FirstTrueElement == Undefined)
       return replaceInstUsesWith(ICI, Builder.getFalse());
@@ -302,6 +321,7 @@ InstCombinerImpl::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
   // If the comparison is only false for one or two elements, emit direct
   // comparisons.
   if (SecondFalseElement != Overdefined) {
+    Idx = MaskIdx(Idx);
     // None false -> true.
     if (FirstFalseElement == Undefined)
       return replaceInstUsesWith(ICI, Builder.getTrue());
@@ -323,6 +343,7 @@ InstCombinerImpl::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
   // where it is true, emit the range check.
   if (TrueRangeEnd != Overdefined) {
     assert(TrueRangeEnd != FirstTrueElement && "Should emit single compare");
+    Idx = MaskIdx(Idx);
 
     // Generate (i-FirstTrue) <u (TrueRangeEnd-FirstTrue+1).
     if (FirstTrueElement) {
@@ -338,6 +359,7 @@ InstCombinerImpl::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
   // False range check.
   if (FalseRangeEnd != Overdefined) {
     assert(FalseRangeEnd != FirstFalseElement && "Should emit single compare");
+    Idx = MaskIdx(Idx);
     // Generate (i-FirstFalse) >u (FalseRangeEnd-FirstFalse).
     if (FirstFalseElement) {
       Value *Offs = ConstantInt::get(Idx->getType(), -FirstFalseElement);
@@ -364,6 +386,7 @@ InstCombinerImpl::foldCmpLoadFromIndexedGlobal(GetElementPtrInst *GEP,
       Ty = DL.getSmallestLegalIntType(Init->getContext(), ArrayElementCount);
 
     if (Ty) {
+      Idx = MaskIdx(Idx);
       Value *V = Builder.CreateIntCast(Idx, Ty, false);
       V = Builder.CreateLShr(ConstantInt::get(Ty, MagicBitvector), V);
       V = Builder.CreateAnd(ConstantInt::get(Ty, 1), V);
@@ -479,7 +502,7 @@ static Value *evaluateGEPOffsetExpression(User *GEP, InstCombinerImpl &IC,
 /// Returns true if we can rewrite Start as a GEP with pointer Base
 /// and some integer offset. The nodes that need to be re-written
 /// for this transformation will be added to Explored.
-static bool canRewriteGEPAsOffset(Value *Start, Value *Base,
+static bool canRewriteGEPAsOffset(Type *ElemTy, Value *Start, Value *Base,
                                   const DataLayout &DL,
                                   SetVector<Value *> &Explored) {
   SmallVector<Value *, 16> WorkList(1, Start);
@@ -527,7 +550,7 @@ static bool canRewriteGEPAsOffset(Value *Start, Value *Base,
         // the original pointer type. We could handle more cases in the
         // future.
         if (GEP->getNumIndices() != 1 || !GEP->isInBounds() ||
-            GEP->getType() != Start->getType())
+            GEP->getSourceElementType() != ElemTy)
           return false;
 
         if (Explored.count(GEP->getOperand(0)) == 0)
@@ -603,7 +626,7 @@ static void setInsertionPoint(IRBuilder<> &Builder, Value *V,
 
 /// Returns a re-written value of Start as an indexed GEP using Base as a
 /// pointer.
-static Value *rewriteGEPAsOffset(Value *Start, Value *Base,
+static Value *rewriteGEPAsOffset(Type *ElemTy, Value *Start, Value *Base,
                                  const DataLayout &DL,
                                  SetVector<Value *> &Explored) {
   // Perform all the substitutions. This is a bit tricky because we can
@@ -705,8 +728,7 @@ static Value *rewriteGEPAsOffset(Value *Start, Value *Base,
                                                Start->getName() + "to.ptr");
 
     Value *GEP = Builder.CreateInBoundsGEP(
-        Start->getType()->getPointerElementType(), NewBase,
-        makeArrayRef(NewInsts[Val]), Val->getName() + ".ptr");
+        ElemTy, NewBase, makeArrayRef(NewInsts[Val]), Val->getName() + ".ptr");
 
     if (!Val->getType()->isPointerTy()) {
       Value *Cast = Builder.CreatePointerCast(GEP, Val->getType(),
@@ -723,7 +745,7 @@ static Value *rewriteGEPAsOffset(Value *Start, Value *Base,
 /// the input Value as a constant indexed GEP. Returns a pair containing
 /// the GEPs Pointer and Index.
 static std::pair<Value *, Value *>
-getAsConstantIndexedAddress(Value *V, const DataLayout &DL) {
+getAsConstantIndexedAddress(Type *ElemTy, Value *V, const DataLayout &DL) {
   Type *IndexType = IntegerType::get(V->getContext(),
                                      DL.getIndexTypeSizeInBits(V->getType()));
 
@@ -735,7 +757,7 @@ getAsConstantIndexedAddress(Value *V, const DataLayout &DL) {
       if (!GEP->isInBounds())
         break;
       if (GEP->hasAllConstantIndices() && GEP->getNumIndices() == 1 &&
-          GEP->getType() == V->getType()) {
+          GEP->getSourceElementType() == ElemTy) {
         V = GEP->getOperand(0);
         Constant *GEPIndex = static_cast<Constant *>(GEP->getOperand(1));
         Index = ConstantExpr::getAdd(
@@ -774,17 +796,14 @@ static Instruction *transformToIndexedCompare(GEPOperator *GEPLHS, Value *RHS,
   if (!GEPLHS->hasAllConstantIndices())
     return nullptr;
 
-  // Make sure the pointers have the same type.
-  if (GEPLHS->getType() != RHS->getType())
-    return nullptr;
-
+  Type *ElemTy = GEPLHS->getSourceElementType();
   Value *PtrBase, *Index;
-  std::tie(PtrBase, Index) = getAsConstantIndexedAddress(GEPLHS, DL);
+  std::tie(PtrBase, Index) = getAsConstantIndexedAddress(ElemTy, GEPLHS, DL);
 
   // The set of nodes that will take part in this transformation.
   SetVector<Value *> Nodes;
 
-  if (!canRewriteGEPAsOffset(RHS, PtrBase, DL, Nodes))
+  if (!canRewriteGEPAsOffset(ElemTy, RHS, PtrBase, DL, Nodes))
     return nullptr;
 
   // We know we can re-write this as
@@ -793,7 +812,7 @@ static Instruction *transformToIndexedCompare(GEPOperator *GEPLHS, Value *RHS,
   // can't have overflow on either side. We can therefore re-write
   // this as:
   //   OFFSET1 cmp OFFSET2
-  Value *NewRHS = rewriteGEPAsOffset(RHS, PtrBase, DL, Nodes);
+  Value *NewRHS = rewriteGEPAsOffset(ElemTy, RHS, PtrBase, DL, Nodes);
 
   // RewriteGEPAsOffset has replaced RHS and all of its uses with a re-written
   // GEP having PtrBase as the pointer base, and has returned in NewRHS the
@@ -1498,6 +1517,12 @@ Instruction *InstCombinerImpl::foldICmpWithDominatingICmp(ICmpInst &Cmp) {
     bool UnusedBit;
     bool IsSignBit = isSignBitCheck(Pred, *C, UnusedBit);
     if (Cmp.isEquality() || (IsSignBit && hasBranchUse(Cmp)))
+      return nullptr;
+
+    // Avoid an infinite loop with min/max canonicalization.
+    // TODO: This will be unnecessary if we canonicalize to min/max intrinsics.
+    if (Cmp.hasOneUse() &&
+        match(Cmp.user_back(), m_MaxOrMin(m_Value(), m_Value())))
       return nullptr;
 
     if (const APInt *EqC = Intersection.getSingleElement())
@@ -2273,6 +2298,16 @@ Instruction *InstCombinerImpl::foldICmpShrConstant(ICmpInst &Cmp,
   //  (X & 4) >> 1 == 2  --> (X & 4) == 4.
   if (Shr->isExact())
     return new ICmpInst(Pred, X, ConstantInt::get(ShrTy, C << ShAmtVal));
+
+  if (C.isNullValue()) {
+    // == 0 is u< 1.
+    if (Pred == CmpInst::ICMP_EQ)
+      return new ICmpInst(CmpInst::ICMP_ULT, X,
+                          ConstantInt::get(ShrTy, (C + 1).shl(ShAmtVal)));
+    else
+      return new ICmpInst(CmpInst::ICMP_UGT, X,
+                          ConstantInt::get(ShrTy, (C + 1).shl(ShAmtVal) - 1));
+  }
 
   if (Shr->hasOneUse()) {
     // Canonicalize the shift into an 'and':
@@ -3251,14 +3286,24 @@ Instruction *InstCombinerImpl::foldICmpInstWithConstantNotInt(ICmpInst &I) {
     // constant folded and the select turned into a bitwise or.
     Value *Op1 = nullptr, *Op2 = nullptr;
     ConstantInt *CI = nullptr;
-    if (Constant *C = dyn_cast<Constant>(LHSI->getOperand(1))) {
-      Op1 = ConstantExpr::getICmp(I.getPredicate(), C, RHSC);
+
+    auto SimplifyOp = [&](Value *V) {
+      Value *Op = nullptr;
+      if (Constant *C = dyn_cast<Constant>(V)) {
+        Op = ConstantExpr::getICmp(I.getPredicate(), C, RHSC);
+      } else if (RHSC->isNullValue()) {
+        // If null is being compared, check if it can be further simplified.
+        Op = SimplifyICmpInst(I.getPredicate(), V, RHSC, SQ);
+      }
+      return Op;
+    };
+    Op1 = SimplifyOp(LHSI->getOperand(1));
+    if (Op1)
       CI = dyn_cast<ConstantInt>(Op1);
-    }
-    if (Constant *C = dyn_cast<Constant>(LHSI->getOperand(2))) {
-      Op2 = ConstantExpr::getICmp(I.getPredicate(), C, RHSC);
+
+    Op2 = SimplifyOp(LHSI->getOperand(2));
+    if (Op2)
       CI = dyn_cast<ConstantInt>(Op2);
-    }
 
     // We only want to perform this transformation if it will not lead to
     // additional code. This is true if either both sides of the select

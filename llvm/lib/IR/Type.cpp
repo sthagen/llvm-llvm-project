@@ -25,8 +25,8 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/MathExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TypeSize.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <utility>
 
@@ -690,12 +690,29 @@ PointerType *PointerType::get(Type *EltTy, unsigned AddressSpace) {
 
   LLVMContextImpl *CImpl = EltTy->getContext().pImpl;
 
+  if (CImpl->ForceOpaquePointers)
+    return get(EltTy->getContext(), AddressSpace);
+
   // Since AddressSpace #0 is the common case, we special case it.
   PointerType *&Entry = AddressSpace == 0 ? CImpl->PointerTypes[EltTy]
      : CImpl->ASPointerTypes[std::make_pair(EltTy, AddressSpace)];
 
   if (!Entry)
     Entry = new (CImpl->Alloc) PointerType(EltTy, AddressSpace);
+  return Entry;
+}
+
+PointerType *PointerType::get(LLVMContext &C, unsigned AddressSpace) {
+  LLVMContextImpl *CImpl = C.pImpl;
+
+  // Since AddressSpace #0 is the common case, we special case it.
+  PointerType *&Entry =
+      AddressSpace == 0
+          ? CImpl->PointerTypes[nullptr]
+          : CImpl->ASPointerTypes[std::make_pair(nullptr, AddressSpace)];
+
+  if (!Entry)
+    Entry = new (CImpl->Alloc) PointerType(C, AddressSpace);
   return Entry;
 }
 
@@ -706,14 +723,25 @@ PointerType::PointerType(Type *E, unsigned AddrSpace)
   setSubclassData(AddrSpace);
 }
 
-PointerType *Type::getPointerTo(unsigned addrs) const {
-  return PointerType::get(const_cast<Type*>(this), addrs);
+PointerType::PointerType(LLVMContext &C, unsigned AddrSpace)
+    : Type(C, PointerTyID), PointeeTy(nullptr) {
+  setSubclassData(AddrSpace);
+}
+
+PointerType *Type::getPointerTo(unsigned AddrSpace) const {
+  // Pointer to opaque pointer is opaque pointer.
+  if (auto *PTy = dyn_cast<PointerType>(this))
+    if (PTy->isOpaque())
+      return PointerType::get(getContext(), AddrSpace);
+
+  return PointerType::get(const_cast<Type*>(this), AddrSpace);
 }
 
 bool PointerType::isValidElementType(Type *ElemTy) {
   return !ElemTy->isVoidTy() && !ElemTy->isLabelTy() &&
          !ElemTy->isMetadataTy() && !ElemTy->isTokenTy() &&
-         !ElemTy->isX86_AMXTy();
+         !ElemTy->isX86_AMXTy() &&
+         !(ElemTy->isPointerTy() && cast<PointerType>(ElemTy)->isOpaque());
 }
 
 bool PointerType::isLoadableOrStorableType(Type *ElemTy) {

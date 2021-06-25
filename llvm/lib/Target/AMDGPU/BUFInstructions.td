@@ -110,6 +110,10 @@ class MTBUF_Real <MTBUF_Pseudo ps> :
   let isPseudo = 0;
   let isCodeGenOnly = 0;
 
+  let VM_CNT = 1;
+  let EXP_CNT = 1;
+  let MTBUF = 1;
+
   // copy relevant pseudo op flags
   let UseNamedOperandTable = ps.UseNamedOperandTable;
   let SubtargetPredicate = ps.SubtargetPredicate;
@@ -118,6 +122,10 @@ class MTBUF_Real <MTBUF_Pseudo ps> :
   let DisableEncoding    = ps.DisableEncoding;
   let TSFlags            = ps.TSFlags;
   let SchedRW            = ps.SchedRW;
+  let mayLoad            = ps.mayLoad;
+  let mayStore           = ps.mayStore;
+  let IsAtomicRet        = ps.IsAtomicRet;
+  let IsAtomicNoRet      = ps.IsAtomicNoRet;
 
   bits<12> offset;
   bits<5>  cpol;
@@ -332,6 +340,7 @@ class MUBUF_Pseudo <string opName, dag outs, dag ins,
   bits<4> elements    = 0;
   bits<1> has_sccb    = 1;
   bits<1> sccb_value  = 0;
+  bits<1> IsBufferInv = 0;
 }
 
 class MUBUF_Real <MUBUF_Pseudo ps> :
@@ -339,6 +348,10 @@ class MUBUF_Real <MUBUF_Pseudo ps> :
 
   let isPseudo = 0;
   let isCodeGenOnly = 0;
+
+  let VM_CNT = 1;
+  let EXP_CNT = 1;
+  let MUBUF = 1;
 
   // copy relevant pseudo op flags
   let SubtargetPredicate   = ps.SubtargetPredicate;
@@ -349,6 +362,10 @@ class MUBUF_Real <MUBUF_Pseudo ps> :
   let TSFlags              = ps.TSFlags;
   let UseNamedOperandTable = ps.UseNamedOperandTable;
   let SchedRW              = ps.SchedRW;
+  let mayLoad              = ps.mayLoad;
+  let mayStore             = ps.mayStore;
+  let IsAtomicRet          = ps.IsAtomicRet;
+  let IsAtomicNoRet        = ps.IsAtomicNoRet;
 
   bits<12> offset;
   bits<5>  cpol;
@@ -374,7 +391,8 @@ class MUBUF_Invalidate <string opName, SDPatternOperator node = null_frag> :
   let mayLoad = 0;
   let mayStore = 0;
 
-  // Set everything to 0.
+  let IsBufferInv = 1;
+  // Set everything else to 0.
   let offen       = 0;
   let idxen       = 0;
   let addr64      = 0;
@@ -1906,13 +1924,6 @@ class MUBUF_Real_gfx6_gfx7<bits<8> op, MUBUF_Pseudo ps> :
 //===----------------------------------------------------------------------===//
 
 let AssemblerPredicate = isGFX10Plus, DecoderNamespace = "GFX10" in {
-  multiclass MUBUF_Real_gfx10_with_name<bits<8> op, string opName,
-                                        string asmName> {
-    def _gfx10 : MUBUF_Real_gfx10<op, !cast<MUBUF_Pseudo>(opName)> {
-      MUBUF_Pseudo ps = !cast<MUBUF_Pseudo>(opName);
-      let AsmString = asmName # ps.AsmOperands;
-    }
-  }
   multiclass MUBUF_Real_AllAddr_gfx10<bits<8> op> {
     def _BOTHEN_gfx10 :
       MUBUF_Real_gfx10<op, !cast<MUBUF_Pseudo>(NAME#"_BOTHEN")>;
@@ -2606,7 +2617,10 @@ let SubtargetPredicate = HasPackedD16VMem in {
 def MUBUFInfoTable : GenericTable {
   let FilterClass = "MUBUF_Pseudo";
   let CppTypeName = "MUBUFInfo";
-  let Fields = ["Opcode", "BaseOpcode", "elements", "has_vaddr", "has_srsrc", "has_soffset"];
+  let Fields = [
+    "Opcode", "BaseOpcode", "elements", "has_vaddr", "has_srsrc", "has_soffset",
+    "IsBufferInv"
+  ];
 
   let PrimaryKey = ["Opcode"];
   let PrimaryKeyName = "getMUBUFOpcodeHelper";

@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "InlayHints.h"
+#include "HeuristicResolver.h"
 #include "ParsedAST.h"
 #include "support/Logger.h"
 #include "clang/AST/DeclarationName.h"
@@ -20,11 +21,17 @@ class InlayHintVisitor : public RecursiveASTVisitor<InlayHintVisitor> {
 public:
   InlayHintVisitor(std::vector<InlayHint> &Results, ParsedAST &AST)
       : Results(Results), AST(AST.getASTContext()),
-        MainFileID(AST.getSourceManager().getMainFileID()) {
+        MainFileID(AST.getSourceManager().getMainFileID()),
+        Resolver(AST.getHeuristicResolver()),
+        TypeHintPolicy(this->AST.getPrintingPolicy()) {
     bool Invalid = false;
     llvm::StringRef Buf =
         AST.getSourceManager().getBufferData(MainFileID, &Invalid);
     MainFileBuf = Invalid ? StringRef{} : Buf;
+
+    TypeHintPolicy.SuppressScope = true; // keep type names short
+    TypeHintPolicy.AnonymousTagLocations =
+        false; // do not print lambda locations
   }
 
   bool VisitCXXConstructExpr(CXXConstructExpr *E) {
@@ -50,9 +57,51 @@ public:
     if (isa<CXXOperatorCallExpr>(E) || isa<UserDefinedLiteral>(E))
       return true;
 
-    processCall(E->getRParenLoc(),
-                dyn_cast_or_null<FunctionDecl>(E->getCalleeDecl()),
-                {E->getArgs(), E->getNumArgs()});
+    auto CalleeDecls = Resolver->resolveCalleeOfCallExpr(E);
+    if (CalleeDecls.size() != 1)
+      return true;
+    const FunctionDecl *Callee = nullptr;
+    if (const auto *FD = dyn_cast<FunctionDecl>(CalleeDecls[0]))
+      Callee = FD;
+    else if (const auto *FTD = dyn_cast<FunctionTemplateDecl>(CalleeDecls[0]))
+      Callee = FTD->getTemplatedDecl();
+    if (!Callee)
+      return true;
+
+    processCall(E->getRParenLoc(), Callee, {E->getArgs(), E->getNumArgs()});
+    return true;
+  }
+
+  bool VisitFunctionDecl(FunctionDecl *D) {
+    if (auto *AT = D->getReturnType()->getContainedAutoType()) {
+      QualType Deduced = AT->getDeducedType();
+      if (!Deduced.isNull()) {
+        addInlayHint(D->getFunctionTypeLoc().getRParenLoc(),
+                     InlayHintKind::TypeHint,
+                     "-> " + D->getReturnType().getAsString(TypeHintPolicy));
+      }
+    }
+
+    return true;
+  }
+
+  bool VisitVarDecl(VarDecl *D) {
+    // Do not show hints for the aggregate in a structured binding.
+    // In the future, we may show hints for the individual bindings.
+    if (isa<DecompositionDecl>(D))
+      return true;
+
+    if (D->getType()->getContainedAutoType()) {
+      if (!D->getType()->isDependentType()) {
+        // Our current approach is to place the hint on the variable
+        // and accordingly print the full type
+        // (e.g. for `const auto& x = 42`, print `const int&`).
+        // Alternatively, we could place the hint on the `auto`
+        // (and then just print the type deduced for the `auto`).
+        addInlayHint(D->getLocation(), InlayHintKind::TypeHint,
+                     ": " + D->getType().getAsString(TypeHintPolicy));
+      }
+    }
     return true;
   }
 
@@ -107,7 +156,7 @@ private:
       return false;
 
     StringRef Name = getSimpleName(*Callee);
-    if (!Name.startswith_lower("set"))
+    if (!Name.startswith_insensitive("set"))
       return false;
 
     // In addition to checking that the function has one parameter and its
@@ -119,10 +168,10 @@ private:
     // This currently doesn't handle cases where params use snake_case
     // and functions don't, e.g.
     //   void setExceptionHandler(EHFunc exception_handler);
-    // We could improve this by replacing `equals_lower` with some
+    // We could improve this by replacing `equals_insensitive` with some
     // `sloppy_equals` which ignores case and also skips underscores.
     StringRef WhatItIsSetting = Name.substr(3).ltrim("_");
-    return WhatItIsSetting.equals_lower(ParamNames[0]);
+    return WhatItIsSetting.equals_insensitive(ParamNames[0]);
   }
 
   bool shouldHint(const Expr *Arg, StringRef ParamName) {
@@ -266,6 +315,8 @@ private:
   ASTContext &AST;
   FileID MainFileID;
   StringRef MainFileBuf;
+  const HeuristicResolver *Resolver;
+  PrintingPolicy TypeHintPolicy;
 };
 
 std::vector<InlayHint> inlayHints(ParsedAST &AST) {

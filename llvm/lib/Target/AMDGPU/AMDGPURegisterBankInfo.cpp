@@ -443,9 +443,8 @@ static bool isScalarLoadLegal(const MachineInstr &MI) {
   const unsigned AS = MMO->getAddrSpace();
   const bool IsConst = AS == AMDGPUAS::CONSTANT_ADDRESS ||
                        AS == AMDGPUAS::CONSTANT_ADDRESS_32BIT;
-
-  // There are no extending SMRD/SMEM loads, and they require 4-byte alignment.
-  return MMO->getSize() >= 4 && MMO->getAlign() >= Align(4) &&
+  // Require 4-byte alignment.
+  return MMO->getAlign() >= Align(4) &&
          // Can't do a scalar atomic load.
          !MMO->isAtomic() &&
          // Don't use scalar loads for volatile accesses to non-constant address
@@ -1134,7 +1133,7 @@ static LLT widen96To128(LLT Ty) {
 
   LLT EltTy = Ty.getElementType();
   assert(128 % EltTy.getSizeInBits() == 0);
-  return LLT::vector(128 / EltTy.getSizeInBits(), EltTy);
+  return LLT::fixed_vector(128 / EltTy.getSizeInBits(), EltTy);
 }
 
 bool AMDGPURegisterBankInfo::applyMappingLoad(MachineInstr &MI,
@@ -1145,34 +1144,61 @@ bool AMDGPURegisterBankInfo::applyMappingLoad(MachineInstr &MI,
   unsigned LoadSize = LoadTy.getSizeInBits();
   const unsigned MaxNonSmrdLoadSize = 128;
 
-  const RegisterBank *PtrBank =
-    OpdMapper.getInstrMapping().getOperandMapping(1).BreakDown[0].RegBank;
-  if (PtrBank == &AMDGPU::SGPRRegBank) {
-    // If the pointer is an SGPR, we ordinarily have nothing to do.
-    if (LoadSize != 96)
+  const RegisterBank *DstBank =
+      OpdMapper.getInstrMapping().getOperandMapping(0).BreakDown[0].RegBank;
+  if (DstBank == &AMDGPU::SGPRRegBank) {
+    // There are some special cases that we need to look at for 32 bit and 96
+    // bit SGPR loads otherwise we have nothing to do.
+    if (LoadSize != 32 && LoadSize != 96)
       return false;
 
     MachineMemOperand *MMO = *MI.memoperands_begin();
+    const unsigned MemSize = 8 * MMO->getSize();
+    // Scalar loads of size 8 or 16 bit with proper alignment may be widened to
+    // 32 bit. Check to see if we need to widen the memory access, 8 or 16 bit
+    // scalar loads should have a load size of 32 but memory access size of less
+    // than 32.
+    if (LoadSize == 32 &&
+        (MemSize == 32 || LoadTy.isVector() || !isScalarLoadLegal(MI)))
+      return false;
+
     Register PtrReg = MI.getOperand(1).getReg();
-    // 96-bit loads are only available for vector loads. We need to split this
-    // into a 64-bit part, and 32 (unless we can widen to a 128-bit load).
 
     ApplyRegBankMapping O(*this, MRI, &AMDGPU::SGPRRegBank);
     MachineIRBuilder B(MI, O);
 
-    if (MMO->getAlign() < Align(16)) {
-      LLT Part64, Part32;
-      std::tie(Part64, Part32) = splitUnequalType(LoadTy, 64);
-      auto Load0 = B.buildLoadFromOffset(Part64, PtrReg, *MMO, 0);
-      auto Load1 = B.buildLoadFromOffset(Part32, PtrReg, *MMO, 8);
-
-      auto Undef = B.buildUndef(LoadTy);
-      auto Ins0 = B.buildInsert(LoadTy, Undef, Load0, 0);
-      B.buildInsert(MI.getOperand(0), Ins0, Load1, 64);
+    if (LoadSize == 32) {
+      // This is an extending load from a sub-dword size. Widen the memory
+      // access size to 4 bytes and clear the extra high bits appropriately
+      const LLT S32 = LLT::scalar(32);
+      if (MI.getOpcode() == AMDGPU::G_SEXTLOAD) {
+        // Must extend the sign bit into higher bits for a G_SEXTLOAD
+        auto WideLoad = B.buildLoadFromOffset(S32, PtrReg, *MMO, 0);
+        B.buildSExtInReg(MI.getOperand(0), WideLoad, MemSize);
+      } else if (MI.getOpcode() == AMDGPU::G_ZEXTLOAD) {
+        // Must extend zero into higher bits with an AND for a G_ZEXTLOAD
+        auto WideLoad = B.buildLoadFromOffset(S32, PtrReg, *MMO, 0);
+        B.buildZExtInReg(MI.getOperand(0), WideLoad, MemSize);
+      } else
+        // We do not need to touch the higher bits for regular loads.
+        B.buildLoadFromOffset(MI.getOperand(0), PtrReg, *MMO, 0);
     } else {
-      LLT WiderTy = widen96To128(LoadTy);
-      auto WideLoad = B.buildLoadFromOffset(WiderTy, PtrReg, *MMO, 0);
-      B.buildExtract(MI.getOperand(0), WideLoad, 0);
+      // 96-bit loads are only available for vector loads. We need to split this
+      // into a 64-bit part, and 32 (unless we can widen to a 128-bit load).
+      if (MMO->getAlign() < Align(16)) {
+        LLT Part64, Part32;
+        std::tie(Part64, Part32) = splitUnequalType(LoadTy, 64);
+        auto Load0 = B.buildLoadFromOffset(Part64, PtrReg, *MMO, 0);
+        auto Load1 = B.buildLoadFromOffset(Part32, PtrReg, *MMO, 8);
+
+        auto Undef = B.buildUndef(LoadTy);
+        auto Ins0 = B.buildInsert(LoadTy, Undef, Load0, 0);
+        B.buildInsert(MI.getOperand(0), Ins0, Load1, 64);
+      } else {
+        LLT WiderTy = widen96To128(LoadTy);
+        auto WideLoad = B.buildLoadFromOffset(WiderTy, PtrReg, *MMO, 0);
+        B.buildExtract(MI.getOperand(0), WideLoad, 0);
+      }
     }
 
     MI.eraseFromParent();
@@ -1637,7 +1663,7 @@ Register AMDGPURegisterBankInfo::handleD16VData(MachineIRBuilder &B,
   const LLT S32 = LLT::scalar(32);
   int NumElts = StoreVT.getNumElements();
 
-  return B.buildMerge(LLT::vector(NumElts, S32), WideRegs).getReg(0);
+  return B.buildMerge(LLT::fixed_vector(NumElts, S32), WideRegs).getReg(0);
 }
 
 static std::pair<Register, unsigned>
@@ -1951,6 +1977,22 @@ bool AMDGPURegisterBankInfo::foldExtractEltToCmpSelect(
   return true;
 }
 
+// Insert a cross regbank copy for a register if it already has a bank that
+// differs from the one we want to set.
+static Register constrainRegToBank(MachineRegisterInfo &MRI,
+                                   MachineIRBuilder &B, Register &Reg,
+                                   const RegisterBank &Bank) {
+  const RegisterBank *CurrBank = MRI.getRegBankOrNull(Reg);
+  if (CurrBank && *CurrBank != Bank) {
+    Register Copy = B.buildCopy(MRI.getType(Reg), Reg).getReg(0);
+    MRI.setRegBank(Copy, Bank);
+    return Copy;
+  }
+
+  MRI.setRegBank(Reg, Bank);
+  return Reg;
+}
+
 bool AMDGPURegisterBankInfo::foldInsertEltToCmpSelect(
   MachineInstr &MI, MachineRegisterInfo &MRI,
   const OperandsMapper &OpdMapper) const {
@@ -2014,17 +2056,18 @@ bool AMDGPURegisterBankInfo::foldInsertEltToCmpSelect(
     MRI.setRegBank(Cmp->getOperand(0).getReg(), CCBank);
 
     for (unsigned L = 0; L < NumLanes; ++L) {
-      auto S = B.buildSelect(EltTy, Cmp, InsRegs[L],
-                             UnmergeToEltTy.getReg(I * NumLanes + L));
+      Register Op0 = constrainRegToBank(MRI, B, InsRegs[L], DstBank);
+      Register Op1 = UnmergeToEltTy.getReg(I * NumLanes + L);
+      Op1 = constrainRegToBank(MRI, B, Op1, DstBank);
 
-      for (unsigned N : { 0, 2, 3 })
-        MRI.setRegBank(S->getOperand(N).getReg(), DstBank);
+      Register Select = B.buildSelect(EltTy, Cmp, Op0, Op1).getReg(0);
+      MRI.setRegBank(Select, DstBank);
 
-      Ops[I * NumLanes + L] = S->getOperand(0).getReg();
+      Ops[I * NumLanes + L] = Select;
     }
   }
 
-  LLT MergeTy = LLT::vector(Ops.size(), EltTy);
+  LLT MergeTy = LLT::fixed_vector(Ops.size(), EltTy);
   if (MergeTy == MRI.getType(MI.getOperand(0).getReg())) {
     B.buildBuildVector(MI.getOperand(0), Ops);
   } else {
@@ -2281,6 +2324,24 @@ void AMDGPURegisterBankInfo::applyMappingImpl(
     MI.eraseFromParent();
     return;
   }
+  case AMDGPU::G_ABS: {
+    Register SrcReg = MI.getOperand(1).getReg();
+    const RegisterBank *SrcBank = MRI.getRegBankOrNull(SrcReg);
+
+    // There is no VALU abs instruction so we need to replace it with a sub and
+    // max combination.
+    if (SrcBank && SrcBank == &AMDGPU::VGPRRegBank) {
+      MachineFunction *MF = MI.getParent()->getParent();
+      ApplyRegBankMapping Apply(*this, MRI, &AMDGPU::VGPRRegBank);
+      MachineIRBuilder B(MI, Apply);
+      LegalizerHelper Helper(*MF, Apply, B);
+
+      if (Helper.lowerAbsToMaxNeg(MI) != LegalizerHelper::Legalized)
+        llvm_unreachable("lowerAbsToMaxNeg should have succeeded");
+      return;
+    }
+    LLVM_FALLTHROUGH;
+  }
   case AMDGPU::G_ADD:
   case AMDGPU::G_SUB:
   case AMDGPU::G_MUL:
@@ -2296,7 +2357,7 @@ void AMDGPURegisterBankInfo::applyMappingImpl(
 
     // 16-bit operations are VALU only, but can be promoted to 32-bit SALU.
     // Packed 16-bit operations need to be scalarized and promoted.
-    if (DstTy != LLT::scalar(16) && DstTy != LLT::vector(2, 16))
+    if (DstTy != LLT::scalar(16) && DstTy != LLT::fixed_vector(2, 16))
       break;
 
     const RegisterBank *DstBank =
@@ -2489,7 +2550,7 @@ void AMDGPURegisterBankInfo::applyMappingImpl(
   case AMDGPU::G_BUILD_VECTOR_TRUNC: {
     Register DstReg = MI.getOperand(0).getReg();
     LLT DstTy = MRI.getType(DstReg);
-    if (DstTy != LLT::vector(2, 16))
+    if (DstTy != LLT::fixed_vector(2, 16))
       break;
 
     assert(MI.getNumOperands() == 3 && OpdMapper.getVRegs(0).empty());
@@ -2621,7 +2682,7 @@ void AMDGPURegisterBankInfo::applyMappingImpl(
 
     assert(DstTy.getSizeInBits() == 64);
 
-    LLT Vec32 = LLT::vector(2 * SrcTy.getNumElements(), 32);
+    LLT Vec32 = LLT::fixed_vector(2 * SrcTy.getNumElements(), 32);
 
     auto CastSrc = B.buildBitcast(Vec32, SrcReg);
     auto One = B.buildConstant(S32, 1);
@@ -2738,7 +2799,7 @@ void AMDGPURegisterBankInfo::applyMappingImpl(
     assert(InsTy.getSizeInBits() == 64);
 
     const LLT S32 = LLT::scalar(32);
-    LLT Vec32 = LLT::vector(2 * VecTy.getNumElements(), 32);
+    LLT Vec32 = LLT::fixed_vector(2 * VecTy.getNumElements(), 32);
 
     MachineIRBuilder B(MI);
     auto CastSrc = B.buildBitcast(Vec32, SrcReg);
@@ -3465,6 +3526,7 @@ AMDGPURegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
   case AMDGPU::G_SMAX:
   case AMDGPU::G_UMIN:
   case AMDGPU::G_UMAX:
+  case AMDGPU::G_ABS:
   case AMDGPU::G_SHUFFLE_VECTOR:
     if (isSALUMapping(MI))
       return getDefaultMappingSOP(MI);
@@ -3567,7 +3629,7 @@ AMDGPURegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
   case AMDGPU::G_BUILD_VECTOR:
   case AMDGPU::G_BUILD_VECTOR_TRUNC: {
     LLT DstTy = MRI.getType(MI.getOperand(0).getReg());
-    if (DstTy == LLT::vector(2, 16)) {
+    if (DstTy == LLT::fixed_vector(2, 16)) {
       unsigned DstSize = DstTy.getSizeInBits();
       unsigned SrcSize = MRI.getType(MI.getOperand(1).getReg()).getSizeInBits();
       unsigned Src0BankID = getRegBankID(MI.getOperand(1).getReg(), MRI);
@@ -3923,6 +3985,7 @@ AMDGPURegisterBankInfo::getInstrMapping(const MachineInstr &MI) const {
     case Intrinsic::amdgcn_cvt_pk_u8_f32:
     case Intrinsic::amdgcn_alignbit:
     case Intrinsic::amdgcn_alignbyte:
+    case Intrinsic::amdgcn_perm:
     case Intrinsic::amdgcn_fdot2:
     case Intrinsic::amdgcn_sdot2:
     case Intrinsic::amdgcn_udot2:

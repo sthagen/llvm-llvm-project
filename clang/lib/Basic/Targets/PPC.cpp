@@ -56,7 +56,10 @@ bool PPCTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasP10Vector = true;
     } else if (Feature == "+pcrelative-memops") {
       HasPCRelativeMemops = true;
+    } else if (Feature == "+prefix-instrs") {
+      HasPrefixInstrs = true;
     } else if (Feature == "+spe" || Feature == "+efpu2") {
+      HasStrictFP = false;
       HasSPE = true;
       LongDoubleWidth = LongDoubleAlign = 64;
       LongDoubleFormat = &llvm::APFloat::IEEEdouble();
@@ -78,10 +81,34 @@ bool PPCTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
   return true;
 }
 
+static void defineXLCompatMacros(MacroBuilder &Builder) {
+  Builder.defineMacro("__popcntb", "__builtin_ppc_popcntb");
+  Builder.defineMacro("__eieio", "__builtin_ppc_eieio");
+  Builder.defineMacro("__iospace_eieio", "__builtin_ppc_iospace_eieio");
+  Builder.defineMacro("__isync", "__builtin_ppc_isync");
+  Builder.defineMacro("__lwsync", "__builtin_ppc_lwsync");
+  Builder.defineMacro("__iospace_lwsync", "__builtin_ppc_iospace_lwsync");
+  Builder.defineMacro("__sync", "__builtin_ppc_sync");
+  Builder.defineMacro("__iospace_sync", "__builtin_ppc_iospace_sync");
+  Builder.defineMacro("__dcbfl", "__builtin_ppc_dcbfl");
+  Builder.defineMacro("__dcbflp", "__builtin_ppc_dcbflp");
+  Builder.defineMacro("__dcbst", "__builtin_ppc_dcbst");
+  Builder.defineMacro("__dcbt", "__builtin_ppc_dcbt");
+  Builder.defineMacro("__dcbtst", "__builtin_ppc_dcbtst");
+  Builder.defineMacro("__dcbz", "__builtin_ppc_dcbz");
+  Builder.defineMacro("__icbt", "__builtin_ppc_icbt");
+  Builder.defineMacro("__compare_and_swap", "__builtin_ppc_compare_and_swap");
+  Builder.defineMacro("__compare_and_swaplp",
+                      "__builtin_ppc_compare_and_swaplp");
+}
+
 /// PPCTargetInfo::getTargetDefines - Return a set of the PowerPC-specific
 /// #defines that are not tied to a specific subtarget.
 void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
                                      MacroBuilder &Builder) const {
+
+  defineXLCompatMacros(Builder);
+
   // Target identification.
   Builder.defineMacro("__ppc__");
   Builder.defineMacro("__PPC__");
@@ -394,6 +421,7 @@ void PPCTargetInfo::addP10SpecificFeatures(
   Features["mma"] = true;
   Features["power10-vector"] = true;
   Features["pcrelative-memops"] = true;
+  Features["prefix-instrs"] = true;
   return;
 }
 
@@ -419,6 +447,7 @@ bool PPCTargetInfo::hasFeature(StringRef Feature) const {
       .Case("paired-vector-memops", PairedVectorMemops)
       .Case("power10-vector", HasP10Vector)
       .Case("pcrelative-memops", HasPCRelativeMemops)
+      .Case("prefix-instrs", HasPrefixInstrs)
       .Case("spe", HasSPE)
       .Case("mma", HasMMA)
       .Case("rop-protect", HasROPProtect)
@@ -451,6 +480,8 @@ void PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
       Features["power8-vector"] = Features["power9-vector"] = true;
     if (Name == "pcrel")
       Features["pcrelative-memops"] = true;
+    else if (Name == "prefixed")
+      Features["prefix-instrs"] = true;
     else
       Features[Name] = true;
   } else {
@@ -471,6 +502,8 @@ void PPCTargetInfo::setFeatureEnabled(llvm::StringMap<bool> &Features,
           Features["power10-vector"] = false;
     if (Name == "pcrel")
       Features["pcrelative-memops"] = false;
+    else if (Name == "prefixed")
+      Features["prefix-instrs"] = false;
     else
       Features[Name] = false;
   }

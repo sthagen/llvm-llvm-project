@@ -36,6 +36,8 @@ static const unsigned X86AddrSpaceMap[] = {
     0,   // cuda_constant
     0,   // cuda_shared
     0,   // sycl_global
+    0,   // sycl_global_device
+    0,   // sycl_global_host
     0,   // sycl_local
     0,   // sycl_private
     270, // ptr32_sptr
@@ -335,6 +337,10 @@ public:
   unsigned multiVersionSortPriority(StringRef Name) const override;
 
   bool setFPMath(StringRef Name) override;
+
+  bool supportsExtendIntArgs() const override {
+    return getTriple().getArch() != llvm::Triple::x86;
+  }
 
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
     // Most of the non-ARM calling conventions are i386 conventions.
@@ -655,7 +661,7 @@ class LLVM_LIBRARY_VISIBILITY X86_64TargetInfo : public X86TargetInfo {
 public:
   X86_64TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
       : X86TargetInfo(Triple, Opts) {
-    const bool IsX32 = getTriple().getEnvironment() == llvm::Triple::GNUX32;
+    const bool IsX32 = getTriple().isX32();
     bool IsWinCOFF =
         getTriple().isOSWindows() && getTriple().isOSBinFormatCOFF();
     LongWidth = LongAlign = PointerWidth = PointerAlign = IsX32 ? 32 : 64;
