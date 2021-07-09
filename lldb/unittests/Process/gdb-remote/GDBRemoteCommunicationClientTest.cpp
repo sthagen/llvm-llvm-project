@@ -98,7 +98,7 @@ TEST_F(GDBRemoteCommunicationClientTest, WriteRegisterNoSuffix) {
   });
 
   Handle_QThreadSuffixSupported(server, false);
-  HandlePacket(server, "Hg47", "OK");
+  HandlePacket(server, "Hg0000000000000047", "OK");
   HandlePacket(server, "P4=" + one_register_hex, "OK");
   ASSERT_TRUE(write_result.get());
 
@@ -143,7 +143,7 @@ TEST_F(GDBRemoteCommunicationClientTest, SaveRestoreRegistersNoSuffix) {
     return client.SaveRegisterState(tid, save_id);
   });
   Handle_QThreadSuffixSupported(server, false);
-  HandlePacket(server, "Hg47", "OK");
+  HandlePacket(server, "Hg0000000000000047", "OK");
   HandlePacket(server, "QSaveRegisterState", "1");
   ASSERT_TRUE(async_result.get());
   EXPECT_EQ(1u, save_id);
@@ -465,7 +465,7 @@ TEST_F(GDBRemoteCommunicationClientTest, GetQOffsets) {
   EXPECT_EQ(llvm::None, GetQOffsets("TextSeg=0x1234"));
   EXPECT_EQ(llvm::None, GetQOffsets("TextSeg=12345678123456789"));
 }
-#if 0
+
 static void
 check_qmemtags(TestClient &client, MockServer &server, size_t read_len,
                const char *packet, llvm::StringRef response,
@@ -530,4 +530,3 @@ TEST_F(GDBRemoteCommunicationClientTest, ReadMemoryTags) {
   check_qmemtags(client, server, 32, "qMemTags:def0,20:1", "m01020",
                  llvm::None);
 }
-#endif

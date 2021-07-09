@@ -228,7 +228,7 @@ static bool canProveExitOnFirstIteration(Loop *L, DominatorTree &DT,
   SmallPtrSet<BasicBlock *, 4> LiveBlocks;
   // Edges that are reachable on the 1st iteration.
   DenseSet<BasicBlockEdge> LiveEdges;
-  LiveBlocks.insert(L->getHeader());
+  LiveBlocks.insert(Header);
 
   SmallPtrSet<BasicBlock *, 4> Visited;
   auto MarkLiveEdge = [&](BasicBlock *From, BasicBlock *To) {
@@ -286,7 +286,7 @@ static bool canProveExitOnFirstIteration(Loop *L, DominatorTree &DT,
   //     iteration, mark this successor live.
   // 3b. If we cannot prove it, conservatively assume that all successors are
   //     live.
-  auto &DL = L->getHeader()->getModule()->getDataLayout();
+  auto &DL = Header->getModule()->getDataLayout();
   const SimplifyQuery SQ(DL);
   for (auto *BB : RPOT) {
     Visited.insert(BB);
@@ -333,13 +333,35 @@ static bool canProveExitOnFirstIteration(Loop *L, DominatorTree &DT,
     // Can we prove constant true or false for this condition?
     LHS = getValueOnFirstIteration(LHS, FirstIterValue, SQ);
     RHS = getValueOnFirstIteration(RHS, FirstIterValue, SQ);
-    auto *KnownCondition =
-        dyn_cast_or_null<ConstantInt>(SimplifyICmpInst(Pred, LHS, RHS, SQ));
+    auto *KnownCondition = SimplifyICmpInst(Pred, LHS, RHS, SQ);
     if (!KnownCondition) {
+      // Failed to simplify.
       MarkAllSuccessorsLive(BB);
       continue;
     }
-    if (KnownCondition->isAllOnesValue())
+    if (isa<UndefValue>(KnownCondition)) {
+      // TODO: According to langref, branching by undef is undefined behavior.
+      // It means that, theoretically, we should be able to just continue
+      // without marking any successors as live. However, we are not certain
+      // how correct our compiler is at handling such cases. So we are being
+      // very conservative here.
+      //
+      // If there is a non-loop successor, always assume this branch leaves the
+      // loop. Otherwise, arbitrarily take IfTrue.
+      //
+      // Once we are certain that branching by undef is handled correctly by
+      // other transforms, we should not mark any successors live here.
+      if (L->contains(IfTrue) && L->contains(IfFalse))
+        MarkLiveEdge(BB, IfTrue);
+      continue;
+    }
+    auto *ConstCondition = dyn_cast<ConstantInt>(KnownCondition);
+    if (!ConstCondition) {
+      // Non-constant condition, cannot analyze any further.
+      MarkAllSuccessorsLive(BB);
+      continue;
+    }
+    if (ConstCondition->isAllOnesValue())
       MarkLiveEdge(BB, IfTrue);
     else
       MarkLiveEdge(BB, IfFalse);
