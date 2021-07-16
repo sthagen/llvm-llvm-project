@@ -3,18 +3,10 @@
 
 define i1 @logical_and_icmp(<4 x i32> %x) {
 ; CHECK-LABEL: @logical_and_icmp(
-; CHECK-NEXT:    [[X0:%.*]] = extractelement <4 x i32> [[X:%.*]], i32 0
-; CHECK-NEXT:    [[X1:%.*]] = extractelement <4 x i32> [[X]], i32 1
-; CHECK-NEXT:    [[X2:%.*]] = extractelement <4 x i32> [[X]], i32 2
-; CHECK-NEXT:    [[X3:%.*]] = extractelement <4 x i32> [[X]], i32 3
-; CHECK-NEXT:    [[C0:%.*]] = icmp slt i32 [[X0]], 0
-; CHECK-NEXT:    [[C1:%.*]] = icmp slt i32 [[X1]], 0
-; CHECK-NEXT:    [[C2:%.*]] = icmp slt i32 [[X2]], 0
-; CHECK-NEXT:    [[C3:%.*]] = icmp slt i32 [[X3]], 0
-; CHECK-NEXT:    [[S1:%.*]] = select i1 [[C0]], i1 [[C1]], i1 false
-; CHECK-NEXT:    [[S2:%.*]] = select i1 [[S1]], i1 [[C2]], i1 false
-; CHECK-NEXT:    [[S3:%.*]] = select i1 [[S2]], i1 [[C3]], i1 false
-; CHECK-NEXT:    ret i1 [[S3]]
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp slt <4 x i32> [[X:%.*]], zeroinitializer
+; CHECK-NEXT:    [[TMP2:%.*]] = freeze <4 x i1> [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = call i1 @llvm.vector.reduce.and.v4i1(<4 x i1> [[TMP2]])
+; CHECK-NEXT:    ret i1 [[TMP3]]
 ;
   %x0 = extractelement <4 x i32> %x, i32 0
   %x1 = extractelement <4 x i32> %x, i32 1
@@ -32,22 +24,10 @@ define i1 @logical_and_icmp(<4 x i32> %x) {
 
 define i1 @logical_or_icmp(<4 x i32> %x, <4 x i32> %y) {
 ; CHECK-LABEL: @logical_or_icmp(
-; CHECK-NEXT:    [[X0:%.*]] = extractelement <4 x i32> [[X:%.*]], i32 0
-; CHECK-NEXT:    [[X1:%.*]] = extractelement <4 x i32> [[X]], i32 1
-; CHECK-NEXT:    [[X2:%.*]] = extractelement <4 x i32> [[X]], i32 2
-; CHECK-NEXT:    [[X3:%.*]] = extractelement <4 x i32> [[X]], i32 3
-; CHECK-NEXT:    [[Y0:%.*]] = extractelement <4 x i32> [[Y:%.*]], i32 0
-; CHECK-NEXT:    [[Y1:%.*]] = extractelement <4 x i32> [[Y]], i32 1
-; CHECK-NEXT:    [[Y2:%.*]] = extractelement <4 x i32> [[Y]], i32 2
-; CHECK-NEXT:    [[Y3:%.*]] = extractelement <4 x i32> [[Y]], i32 3
-; CHECK-NEXT:    [[C0:%.*]] = icmp slt i32 [[X0]], [[Y0]]
-; CHECK-NEXT:    [[C1:%.*]] = icmp slt i32 [[X1]], [[Y1]]
-; CHECK-NEXT:    [[C2:%.*]] = icmp slt i32 [[X2]], [[Y2]]
-; CHECK-NEXT:    [[C3:%.*]] = icmp slt i32 [[X3]], [[Y3]]
-; CHECK-NEXT:    [[S1:%.*]] = select i1 [[C0]], i1 true, i1 [[C1]]
-; CHECK-NEXT:    [[S2:%.*]] = select i1 [[S1]], i1 true, i1 [[C2]]
-; CHECK-NEXT:    [[S3:%.*]] = select i1 [[S2]], i1 true, i1 [[C3]]
-; CHECK-NEXT:    ret i1 [[S3]]
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp slt <4 x i32> [[X:%.*]], [[Y:%.*]]
+; CHECK-NEXT:    [[TMP2:%.*]] = freeze <4 x i1> [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = call i1 @llvm.vector.reduce.or.v4i1(<4 x i1> [[TMP2]])
+; CHECK-NEXT:    ret i1 [[TMP3]]
 ;
   %x0 = extractelement <4 x i32> %x, i32 0
   %x1 = extractelement <4 x i32> %x, i32 1
@@ -69,18 +49,10 @@ define i1 @logical_or_icmp(<4 x i32> %x, <4 x i32> %y) {
 
 define i1 @logical_and_fcmp(<4 x float> %x) {
 ; CHECK-LABEL: @logical_and_fcmp(
-; CHECK-NEXT:    [[X0:%.*]] = extractelement <4 x float> [[X:%.*]], i32 0
-; CHECK-NEXT:    [[X1:%.*]] = extractelement <4 x float> [[X]], i32 1
-; CHECK-NEXT:    [[X2:%.*]] = extractelement <4 x float> [[X]], i32 2
-; CHECK-NEXT:    [[X3:%.*]] = extractelement <4 x float> [[X]], i32 3
-; CHECK-NEXT:    [[C0:%.*]] = fcmp olt float [[X0]], 0.000000e+00
-; CHECK-NEXT:    [[C1:%.*]] = fcmp olt float [[X1]], 0.000000e+00
-; CHECK-NEXT:    [[C2:%.*]] = fcmp olt float [[X2]], 0.000000e+00
-; CHECK-NEXT:    [[C3:%.*]] = fcmp olt float [[X3]], 0.000000e+00
-; CHECK-NEXT:    [[S1:%.*]] = select i1 [[C0]], i1 [[C1]], i1 false
-; CHECK-NEXT:    [[S2:%.*]] = select i1 [[S1]], i1 [[C2]], i1 false
-; CHECK-NEXT:    [[S3:%.*]] = select i1 [[S2]], i1 [[C3]], i1 false
-; CHECK-NEXT:    ret i1 [[S3]]
+; CHECK-NEXT:    [[TMP1:%.*]] = fcmp olt <4 x float> [[X:%.*]], zeroinitializer
+; CHECK-NEXT:    [[TMP2:%.*]] = freeze <4 x i1> [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = call i1 @llvm.vector.reduce.and.v4i1(<4 x i1> [[TMP2]])
+; CHECK-NEXT:    ret i1 [[TMP3]]
 ;
   %x0 = extractelement <4 x float> %x, i32 0
   %x1 = extractelement <4 x float> %x, i32 1
@@ -98,18 +70,10 @@ define i1 @logical_and_fcmp(<4 x float> %x) {
 
 define i1 @logical_or_fcmp(<4 x float> %x) {
 ; CHECK-LABEL: @logical_or_fcmp(
-; CHECK-NEXT:    [[X0:%.*]] = extractelement <4 x float> [[X:%.*]], i32 0
-; CHECK-NEXT:    [[X1:%.*]] = extractelement <4 x float> [[X]], i32 1
-; CHECK-NEXT:    [[X2:%.*]] = extractelement <4 x float> [[X]], i32 2
-; CHECK-NEXT:    [[X3:%.*]] = extractelement <4 x float> [[X]], i32 3
-; CHECK-NEXT:    [[C0:%.*]] = fcmp olt float [[X0]], 0.000000e+00
-; CHECK-NEXT:    [[C1:%.*]] = fcmp olt float [[X1]], 0.000000e+00
-; CHECK-NEXT:    [[C2:%.*]] = fcmp olt float [[X2]], 0.000000e+00
-; CHECK-NEXT:    [[C3:%.*]] = fcmp olt float [[X3]], 0.000000e+00
-; CHECK-NEXT:    [[S1:%.*]] = select i1 [[C0]], i1 true, i1 [[C1]]
-; CHECK-NEXT:    [[S2:%.*]] = select i1 [[S1]], i1 true, i1 [[C2]]
-; CHECK-NEXT:    [[S3:%.*]] = select i1 [[S2]], i1 true, i1 [[C3]]
-; CHECK-NEXT:    ret i1 [[S3]]
+; CHECK-NEXT:    [[TMP1:%.*]] = fcmp olt <4 x float> [[X:%.*]], zeroinitializer
+; CHECK-NEXT:    [[TMP2:%.*]] = freeze <4 x i1> [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = call i1 @llvm.vector.reduce.or.v4i1(<4 x i1> [[TMP2]])
+; CHECK-NEXT:    ret i1 [[TMP3]]
 ;
   %x0 = extractelement <4 x float> %x, i32 0
   %x1 = extractelement <4 x float> %x, i32 1
@@ -156,18 +120,10 @@ define i1 @logical_and_icmp_diff_preds(<4 x i32> %x) {
 
 define i1 @logical_and_icmp_diff_const(<4 x i32> %x) {
 ; CHECK-LABEL: @logical_and_icmp_diff_const(
-; CHECK-NEXT:    [[X0:%.*]] = extractelement <4 x i32> [[X:%.*]], i32 0
-; CHECK-NEXT:    [[X1:%.*]] = extractelement <4 x i32> [[X]], i32 1
-; CHECK-NEXT:    [[X2:%.*]] = extractelement <4 x i32> [[X]], i32 2
-; CHECK-NEXT:    [[X3:%.*]] = extractelement <4 x i32> [[X]], i32 3
-; CHECK-NEXT:    [[C0:%.*]] = icmp sgt i32 [[X0]], 0
-; CHECK-NEXT:    [[C1:%.*]] = icmp sgt i32 [[X1]], 1
-; CHECK-NEXT:    [[C2:%.*]] = icmp sgt i32 [[X2]], 2
-; CHECK-NEXT:    [[C3:%.*]] = icmp sgt i32 [[X3]], 3
-; CHECK-NEXT:    [[S1:%.*]] = select i1 [[C0]], i1 [[C1]], i1 false
-; CHECK-NEXT:    [[S2:%.*]] = select i1 [[S1]], i1 [[C2]], i1 false
-; CHECK-NEXT:    [[S3:%.*]] = select i1 [[S2]], i1 [[C3]], i1 false
-; CHECK-NEXT:    ret i1 [[S3]]
+; CHECK-NEXT:    [[TMP1:%.*]] = icmp sgt <4 x i32> [[X:%.*]], <i32 0, i32 1, i32 2, i32 3>
+; CHECK-NEXT:    [[TMP2:%.*]] = freeze <4 x i1> [[TMP1]]
+; CHECK-NEXT:    [[TMP3:%.*]] = call i1 @llvm.vector.reduce.and.v4i1(<4 x i1> [[TMP2]])
+; CHECK-NEXT:    ret i1 [[TMP3]]
 ;
   %x0 = extractelement <4 x i32> %x, i32 0
   %x1 = extractelement <4 x i32> %x, i32 1
@@ -210,4 +166,49 @@ define i1 @mixed_logical_icmp(<4 x i32> %x) {
   %s2 = select i1 %s1, i1 true, i1 %c2
   %s3 = select i1 %s2, i1 %c3, i1 false
   ret i1 %s3
+}
+
+; TODO: This is better than all-scalar and still safe,
+;       but we want this to be 2 reductions with glue
+;       logic...or a wide reduction?
+
+define i1 @logical_and_icmp_clamp(<4 x i32> %x) {
+; CHECK-LABEL: @logical_and_icmp_clamp(
+; CHECK-NEXT:    [[TMP1:%.*]] = extractelement <4 x i32> [[X:%.*]], i32 3
+; CHECK-NEXT:    [[TMP2:%.*]] = extractelement <4 x i32> [[X]], i32 2
+; CHECK-NEXT:    [[TMP3:%.*]] = extractelement <4 x i32> [[X]], i32 1
+; CHECK-NEXT:    [[TMP4:%.*]] = extractelement <4 x i32> [[X]], i32 0
+; CHECK-NEXT:    [[TMP5:%.*]] = icmp slt <4 x i32> [[X]], <i32 42, i32 42, i32 42, i32 42>
+; CHECK-NEXT:    [[D0:%.*]] = icmp sgt i32 [[TMP4]], 17
+; CHECK-NEXT:    [[D1:%.*]] = icmp sgt i32 [[TMP3]], 17
+; CHECK-NEXT:    [[D2:%.*]] = icmp sgt i32 [[TMP2]], 17
+; CHECK-NEXT:    [[D3:%.*]] = icmp sgt i32 [[TMP1]], 17
+; CHECK-NEXT:    [[TMP6:%.*]] = freeze <4 x i1> [[TMP5]]
+; CHECK-NEXT:    [[TMP7:%.*]] = call i1 @llvm.vector.reduce.and.v4i1(<4 x i1> [[TMP6]])
+; CHECK-NEXT:    [[S4:%.*]] = select i1 [[TMP7]], i1 [[D0]], i1 false
+; CHECK-NEXT:    [[S5:%.*]] = select i1 [[S4]], i1 [[D1]], i1 false
+; CHECK-NEXT:    [[S6:%.*]] = select i1 [[S5]], i1 [[D2]], i1 false
+; CHECK-NEXT:    [[S7:%.*]] = select i1 [[S6]], i1 [[D3]], i1 false
+; CHECK-NEXT:    ret i1 [[S7]]
+;
+  %x0 = extractelement <4 x i32> %x, i32 0
+  %x1 = extractelement <4 x i32> %x, i32 1
+  %x2 = extractelement <4 x i32> %x, i32 2
+  %x3 = extractelement <4 x i32> %x, i32 3
+  %c0 = icmp slt i32 %x0, 42
+  %c1 = icmp slt i32 %x1, 42
+  %c2 = icmp slt i32 %x2, 42
+  %c3 = icmp slt i32 %x3, 42
+  %d0 = icmp sgt i32 %x0, 17
+  %d1 = icmp sgt i32 %x1, 17
+  %d2 = icmp sgt i32 %x2, 17
+  %d3 = icmp sgt i32 %x3, 17
+  %s1 = select i1 %c0, i1 %c1, i1 false
+  %s2 = select i1 %s1, i1 %c2, i1 false
+  %s3 = select i1 %s2, i1 %c3, i1 false
+  %s4 = select i1 %s3, i1 %d0, i1 false
+  %s5 = select i1 %s4, i1 %d1, i1 false
+  %s6 = select i1 %s5, i1 %d2, i1 false
+  %s7 = select i1 %s6, i1 %d3, i1 false
+  ret i1 %s7
 }

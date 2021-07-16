@@ -1170,12 +1170,14 @@ def IsE500  : Predicate<"Subtarget->isE500()">;
 def HasSPE  : Predicate<"Subtarget->hasSPE()">;
 def HasICBT : Predicate<"Subtarget->hasICBT()">;
 def HasPartwordAtomics : Predicate<"Subtarget->hasPartwordAtomics()">;
+def HasQuadwordAtomics : Predicate<"Subtarget->hasQuadwordAtomics()">;
 def NoNaNsFPMath
     : Predicate<"Subtarget->getTargetMachine().Options.NoNaNsFPMath">;
 def NaNsFPMath
     : Predicate<"!Subtarget->getTargetMachine().Options.NoNaNsFPMath">;
 def HasBPERMD : Predicate<"Subtarget->hasBPERMD()">;
 def HasExtDiv : Predicate<"Subtarget->hasExtDiv()">;
+def IsISA2_07 : Predicate<"Subtarget->isISA2_07()">;
 def IsISA3_0 : Predicate<"Subtarget->isISA3_0()">;
 def HasFPU : Predicate<"Subtarget->hasFPU()">;
 def PCRelativeMemops : Predicate<"Subtarget->hasPCRelativeMemops()">;
@@ -2229,6 +2231,10 @@ def TDI : DForm_base<2, (outs), (ins u5imm:$to, g8rc:$rA, s16imm:$imm),
                      "tdi $to, $rA, $imm", IIC_IntTrapD, []>;
 def TD : XForm_1<31, 68, (outs), (ins u5imm:$to, g8rc:$rA, g8rc:$rB),
                  "td $to, $rA, $rB", IIC_IntTrapD, []>;
+
+def POPCNTB : XForm_11<31, 122, (outs gprc:$rA), (ins gprc:$rS),
+                       "popcntb $rA, $rS", IIC_IntGeneral,
+                       [(set i32:$rA, (int_ppc_popcntb i32:$rS))]>;
 
 //===----------------------------------------------------------------------===//
 // PPC32 Load Instructions.
@@ -5259,6 +5265,25 @@ def SETB : XForm_44<31, 128, (outs gprc:$RT), (ins crrc:$BFA),
                        "setb $RT, $BFA", IIC_IntGeneral>;
 } // IsISA3_0
 
+let Predicates = [IsISA3_0] in {
+def : Pat<(i32 (int_ppc_cmprb i32:$a, gprc:$b, gprc:$c)),
+          (i32 (SETB (CMPRB u1imm:$a, $b, $c)))>;
+}
+def : Pat<(i32 (int_ppc_mulhw gprc:$a, gprc:$b)),
+          (i32 (MULHW $a, $b))>;
+def : Pat<(i32 (int_ppc_mulhwu gprc:$a, gprc:$b)),
+          (i32 (MULHWU $a, $b))>;
+
+def : Pat<(int_ppc_load2r ForceXForm:$ptr),
+          (LHBRX ForceXForm:$ptr)>;
+def : Pat<(int_ppc_load4r ForceXForm:$ptr),
+          (LWBRX ForceXForm:$ptr)>;
+def : Pat<(int_ppc_store2r gprc:$a, ForceXForm:$ptr),
+          (STHBRX gprc:$a, ForceXForm:$ptr)>;
+def : Pat<(int_ppc_store4r gprc:$a, ForceXForm:$ptr),
+          (STWBRX gprc:$a, ForceXForm:$ptr)>;
+
+
 // Fast 32-bit reverse bits algorithm:
 // Step 1: 1-bit swap (swap odd 1-bit and even 1-bit):
 // n = ((n >> 1) & 0x55555555) | ((n << 1) & 0xAAAAAAAA);
@@ -5412,7 +5437,26 @@ def DWBytes3210 {
 def : Pat<(i64 (bitreverse i64:$A)),
   (OR8 (RLDICR DWBytes7654.DWord, 32, 31), DWBytes3210.DWord)>;
 
-def : Pat<(int_ppc_lwarx ForceXForm:$dst),
-          (LWARX ForceXForm:$dst)>;
 def : Pat<(int_ppc_stwcx ForceXForm:$dst, gprc:$A),
           (STWCX gprc:$A, ForceXForm:$dst)>;
+def : Pat<(int_ppc_tw gprc:$A, gprc:$B, i32:$IMM),
+          (TW $IMM, $A, $B)>;
+def : Pat<(int_ppc_trap gprc:$A),
+          (TWI 24, $A, 0)>;
+
+def : Pat<(int_ppc_fcfid f64:$A),
+        (XSCVSXDDP $A)>;
+def : Pat<(int_ppc_fcfud f64:$A),
+        (XSCVUXDDP $A)>;
+def : Pat<(int_ppc_fctid f64:$A),
+        (FCTID $A)>;
+def : Pat<(int_ppc_fctidz f64:$A),
+        (XSCVDPSXDS $A)>;
+def : Pat<(int_ppc_fctiw f64:$A),
+        (FCTIW $A)>;
+def : Pat<(int_ppc_fctiwz f64:$A),
+        (XSCVDPSXWS $A)>;
+def : Pat<(int_ppc_fctudz f64:$A),
+        (XSCVDPUXDS $A)>;
+def : Pat<(int_ppc_fctuwz f64:$A),
+        (XSCVDPUXWS $A)>;

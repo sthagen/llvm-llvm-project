@@ -5,7 +5,6 @@ define dso_local void @test(float* nocapture readonly %Fptr, <4 x float>* nocapt
 ; CHECK-LABEL: test:
 ; CHECK:       # %bb.0: # %entry
 ; CHECK-NEXT:          #DEBUG_VALUE: test:Fptr <- $x3
-; CHECK-NEXT:          #DEBUG_VALUE: test:Fptr <- $x3
 ; CHECK-NEXT:          #DEBUG_VALUE: test:Vptr <- $x4
 ; CHECK-NEXT:          addis 5, 2, .LCPI0_0@toc@ha
 ; CHECK-NEXT:  .Ltmp0:
@@ -30,7 +29,6 @@ define dso_local void @test(float* nocapture readonly %Fptr, <4 x float>* nocapt
 ; CHECK-NEXT:          xvcvdpsp 34, 0
 ; CHECK-NEXT:          xvcvdpsp 35, 1
 ; CHECK-NEXT:          vmrgew 2, 2, 3
-; CHECK-NEXT:          #DEBUG_VALUE: test:Vptr <- $x4
 ; CHECK-NEXT:          .loc    1 3 9 is_stmt 0
 ; CHECK-NEXT:          stvx 2, 0, 4
 ; CHECK-NEXT:          .loc    1 4 1 is_stmt 1

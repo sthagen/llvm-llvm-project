@@ -222,7 +222,7 @@ EXTERN void __kmpc_push_num_threads(kmp_Ident *loc, int32_t global_tid,
                                     int32_t num_threads);
 EXTERN void __kmpc_serialized_parallel(kmp_Ident *loc, uint32_t global_tid);
 EXTERN void __kmpc_end_serialized_parallel(kmp_Ident *loc, uint32_t global_tid);
-EXTERN uint16_t __kmpc_parallel_level(kmp_Ident *loc, uint32_t global_tid);
+EXTERN uint16_t __kmpc_parallel_level();
 
 // proc bind
 EXTERN void __kmpc_push_proc_bind(kmp_Ident *loc, uint32_t global_tid,
@@ -448,6 +448,10 @@ EXTERN void __kmpc_parallel_51(ident_t *ident, kmp_int32 global_tid,
 
 // SPMD execution mode interrogation function.
 EXTERN int8_t __kmpc_is_spmd_exec_mode();
+
+/// Return true if the hardware thread id \p Tid represents the OpenMP main
+/// thread in generic mode outside of a parallel region.
+EXTERN int8_t __kmpc_is_generic_main_thread(kmp_int32 Tid);
 
 EXTERN void __kmpc_get_team_static_memory(int16_t isSPMDExecutionMode,
                                           const void *buf, size_t size,

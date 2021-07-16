@@ -430,13 +430,11 @@ uptr internal_sched_yield() {
   return internal_syscall(SYSCALL(sched_yield));
 }
 
-unsigned int internal_sleep(unsigned int seconds) {
+void internal_usleep(u64 useconds) {
   struct timespec ts;
-  ts.tv_sec = seconds;
-  ts.tv_nsec = 0;
-  int res = internal_syscall(SYSCALL(nanosleep), &ts, &ts);
-  if (res) return ts.tv_sec;
-  return 0;
+  ts.tv_sec = useconds / 1000000;
+  ts.tv_nsec = (useconds % 1000000) * 1000;
+  internal_syscall(SYSCALL(nanosleep), &ts, &ts);
 }
 
 uptr internal_execve(const char *filename, char *const argv[],
@@ -641,11 +639,7 @@ char **GetEnviron() {
 }
 
 #if !SANITIZER_SOLARIS
-enum MutexState {
-  MtxUnlocked = 0,
-  MtxLocked = 1,
-  MtxSleeping = 2
-};
+enum { MtxUnlocked = 0, MtxLocked = 1, MtxSleeping = 2 };
 
 BlockingMutex::BlockingMutex() {
   internal_memset(this, 0, sizeof(*this));
@@ -683,11 +677,11 @@ void BlockingMutex::Unlock() {
   }
 }
 
-void BlockingMutex::CheckLocked() {
-  atomic_uint32_t *m = reinterpret_cast<atomic_uint32_t *>(&opaque_storage_);
+void BlockingMutex::CheckLocked() const {
+  auto m = reinterpret_cast<atomic_uint32_t const *>(&opaque_storage_);
   CHECK_NE(MtxUnlocked, atomic_load(m, memory_order_relaxed));
 }
-#endif // !SANITIZER_SOLARIS
+#  endif  // !SANITIZER_SOLARIS
 
 // ----------------- sanitizer_linux.h
 // The actual size of this structure is specified by d_reclen.
@@ -884,7 +878,7 @@ void internal_sigdelset(__sanitizer_sigset_t *set, int signum) {
   __sanitizer_kernel_sigset_t *k_set = (__sanitizer_kernel_sigset_t *)set;
   const uptr idx = signum / (sizeof(k_set->sig[0]) * 8);
   const uptr bit = signum % (sizeof(k_set->sig[0]) * 8);
-  k_set->sig[idx] &= ~(1 << bit);
+  k_set->sig[idx] &= ~((uptr)1 << bit);
 }
 
 bool internal_sigismember(__sanitizer_sigset_t *set, int signum) {
@@ -894,7 +888,7 @@ bool internal_sigismember(__sanitizer_sigset_t *set, int signum) {
   __sanitizer_kernel_sigset_t *k_set = (__sanitizer_kernel_sigset_t *)set;
   const uptr idx = signum / (sizeof(k_set->sig[0]) * 8);
   const uptr bit = signum % (sizeof(k_set->sig[0]) * 8);
-  return k_set->sig[idx] & (1 << bit);
+  return k_set->sig[idx] & ((uptr)1 << bit);
 }
 #elif SANITIZER_FREEBSD
 void internal_sigdelset(__sanitizer_sigset_t *set, int signum) {
