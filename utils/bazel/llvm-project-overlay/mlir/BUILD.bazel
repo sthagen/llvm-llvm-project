@@ -1459,6 +1459,7 @@ cc_library(
         ":SCFDialect",
         ":SCFPassIncGen",
         ":StandardOps",
+        ":Support",
         ":Transforms",
         "//llvm:Support",
     ],
@@ -2045,6 +2046,7 @@ cc_library(
         ":Affine",
         ":DialectUtils",
         ":IR",
+        ":InferTypeOpInterface",
         ":LinalgInterfacesIncGen",
         ":LinalgStructuredOpsIncGen",
         ":MemRefDialect",
@@ -2442,6 +2444,14 @@ gentbl_cc_library(
         (
             ["-gen-op-interface-defs"],
             "include/mlir/Dialect/LLVMIR/LLVMOpsInterfaces.cpp.inc",
+        ),
+        (
+            ["-gen-type-interface-decls"],
+            "include/mlir/Dialect/LLVMIR/LLVMTypeInterfaces.h.inc",
+        ),
+        (
+            ["-gen-type-interface-defs"],
+            "include/mlir/Dialect/LLVMIR/LLVMTypeInterfaces.cpp.inc",
         ),
     ],
     tblgen = ":mlir-tblgen",
@@ -5854,6 +5864,7 @@ cc_library(
         ":LLVMDialect",
         ":LinalgOps",
         ":LinalgTransforms",
+        ":MemRefToLLVM",
         ":Pass",
         ":SCFDialect",
         ":SCFToStandard",

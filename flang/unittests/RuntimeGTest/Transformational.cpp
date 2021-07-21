@@ -150,6 +150,18 @@ TEST(Transformational, Spread) {
     EXPECT_EQ(*result.ZeroBasedIndexedElement<std::int32_t>(j), 1 + j % 3);
   }
   result.Destroy();
+
+  auto scalar{MakeArray<TypeCategory::Integer, 4>(
+      std::vector<int>{}, std::vector<std::int32_t>{1})};
+  RTNAME(Spread)(result, *scalar, 1, 2, __FILE__, __LINE__);
+  EXPECT_EQ(result.type(), array->type());
+  EXPECT_EQ(result.rank(), 1);
+  EXPECT_EQ(result.GetDimension(0).LowerBound(), 1);
+  EXPECT_EQ(result.GetDimension(0).Extent(), 2);
+  for (int j{0}; j < 2; ++j) {
+    EXPECT_EQ(*result.ZeroBasedIndexedElement<std::int32_t>(j), 1);
+  }
+  result.Destroy();
 }
 
 TEST(Transformational, Transpose) {
@@ -198,6 +210,22 @@ TEST(Transformational, Unpack) {
   static std::int32_t expect[6]{-1, 1, 2, -4, -5, 3};
   for (int j{0}; j < 6; ++j) {
     EXPECT_EQ(*result.ZeroBasedIndexedElement<std::int32_t>(j), expect[j]);
+  }
+  result.Destroy();
+
+  // Test for scalar value of the "field" argument
+  auto scalarField{MakeArray<TypeCategory::Integer, 4>(
+      std::vector<int>{}, std::vector<std::int32_t>{343})};
+  RTNAME(Unpack)(result, *vector, *mask, *scalarField, __FILE__, __LINE__);
+  EXPECT_EQ(result.rank(), 2);
+  EXPECT_EQ(result.GetDimension(0).LowerBound(), 1);
+  EXPECT_EQ(result.GetDimension(0).Extent(), 2);
+  EXPECT_EQ(result.GetDimension(1).LowerBound(), 1);
+  EXPECT_EQ(result.GetDimension(1).Extent(), 3);
+  static std::int32_t scalarExpect[6]{343, 1, 2, 343, 343, 3};
+  for (int j{0}; j < 6; ++j) {
+    EXPECT_EQ(
+        *result.ZeroBasedIndexedElement<std::int32_t>(j), scalarExpect[j]);
   }
   result.Destroy();
 }

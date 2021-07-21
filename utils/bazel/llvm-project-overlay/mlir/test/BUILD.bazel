@@ -227,6 +227,7 @@ cc_library(
         "//mlir:Dialect",
         "//mlir:IR",
         "//mlir:InferTypeOpInterface",
+        "//mlir:LLVMDialect",
         "//mlir:Pass",
         "//mlir:Reducer",
         "//mlir:SideEffects",
@@ -427,6 +428,7 @@ cc_library(
         "//mlir:IR",
         "//mlir:Pass",
         "//mlir:SCFDialect",
+        "//mlir:SCFTransforms",
         "//mlir:TransformUtils",
     ],
 )

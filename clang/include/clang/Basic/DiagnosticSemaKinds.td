@@ -3254,6 +3254,10 @@ def warn_assume_aligned_too_great
     : Warning<"requested alignment must be %0 bytes or smaller; maximum "
               "alignment assumed">,
       InGroup<DiagGroup<"builtin-assume-aligned-alignment">>;
+def warn_not_xl_compatible
+    : Warning<"requesting an alignment of 16 bytes or greater for struct"
+              " members is not binary compatible with AIX XL 16.1 and older">,
+      InGroup<AIXCompat>;
 def warn_redeclaration_without_attribute_prev_attribute_ignored : Warning<
   "%q0 redeclared without %1 attribute: previous %1 ignored">,
   InGroup<MicrosoftInconsistentDllImport>;
@@ -6386,6 +6390,9 @@ def warn_pointer_arith_null_ptr : Warning<
 def warn_gnu_null_ptr_arith : Warning<
   "arithmetic on a null pointer treated as a cast from integer to pointer is a GNU extension">,
   InGroup<NullPointerArithmetic>, DefaultIgnore;
+def warn_pointer_sub_null_ptr : Warning<
+  "performing pointer subtraction with a null pointer %select{has|may have}0 undefined behavior">,
+  InGroup<NullPointerSubtraction>, DefaultIgnore;
 def err_kernel_invalidates_sycl_unique_stable_name
     : Error<"kernel instantiation changes the result of an evaluated "
             "'__builtin_sycl_unique_stable_name'">;
