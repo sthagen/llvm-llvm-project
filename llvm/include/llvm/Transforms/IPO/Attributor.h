@@ -138,6 +138,12 @@ class Function;
 
 /// Abstract Attribute helper functions.
 namespace AA {
+
+/// Return true if \p V is dynamically unique, that is, there are no two
+/// "instances" of \p V at runtime with different values.
+bool isDynamicallyUnique(Attributor &A, const AbstractAttribute &QueryingAA,
+                         const Value &V);
+
 /// Return true if \p V is a valid value in \p Scope, that is a constant or an
 /// instruction/argument of \p Scope.
 bool isValidInScope(const Value &V, const Function *Scope);
@@ -998,9 +1004,9 @@ struct InformationCache {
     const Function &F = *From.getFunction();
     bool Result = true;
     if (From.getFunction() == To.getFunction())
-      Result = isPotentiallyReachable(
-        &From, &To, nullptr, AG.getAnalysis<DominatorTreeAnalysis>(F),
-        AG.getAnalysis<LoopAnalysis>(F));
+      Result = isPotentiallyReachable(&From, &To, nullptr,
+                                      AG.getAnalysis<DominatorTreeAnalysis>(F),
+                                      AG.getAnalysis<LoopAnalysis>(F));
     PotentiallyReachableMap.insert(std::make_pair(KeyPair, Result));
     return Result;
   }
@@ -1487,17 +1493,28 @@ struct Attributor {
   /// triggers deletion of trivially dead istructions.
   void deleteAfterManifest(BasicBlock &BB) { ToBeDeletedBlocks.insert(&BB); }
 
+  // Record that \p BB is added during the manifest of an AA. Added basic blocks
+  // are preserved in the IR.
+  void registerManifestAddedBasicBlock(BasicBlock &BB) {
+    ManifestAddedBlocks.insert(&BB);
+  }
+
   /// Record that \p F is deleted after information was manifested.
   void deleteAfterManifest(Function &F) {
     if (DeleteFns)
       ToBeDeletedFunctions.insert(&F);
   }
 
-  /// If \p V is assumed to be a constant, return it, if it is unclear yet,
+  /// If \p IRP is assumed to be a constant, return it, if it is unclear yet,
   /// return None, otherwise return `nullptr`.
-  Optional<Constant *> getAssumedConstant(const Value &V,
+  Optional<Constant *> getAssumedConstant(const IRPosition &IRP,
                                           const AbstractAttribute &AA,
                                           bool &UsedAssumedInformation);
+  Optional<Constant *> getAssumedConstant(const Value &V,
+                                          const AbstractAttribute &AA,
+                                          bool &UsedAssumedInformation) {
+    return getAssumedConstant(IRPosition::value(V), AA, UsedAssumedInformation);
+  }
 
   /// If \p V is assumed simplified, return it, if it is unclear yet,
   /// return None, otherwise return `nullptr`.
@@ -1979,6 +1996,7 @@ private:
   ///{
   SmallPtrSet<Function *, 8> ToBeDeletedFunctions;
   SmallPtrSet<BasicBlock *, 8> ToBeDeletedBlocks;
+  SmallPtrSet<BasicBlock *, 8> ManifestAddedBlocks;
   SmallDenseSet<WeakVH, 8> ToBeDeletedInsts;
   ///}
 
@@ -3538,6 +3556,10 @@ struct AAHeapToStack : public StateWrapper<BooleanState, AbstractAttribute> {
 
   /// Returns true if HeapToStack conversion is assumed to be possible.
   virtual bool isAssumedHeapToStack(const CallBase &CB) const = 0;
+
+  /// Returns true if HeapToStack conversion is assumed and the CB is a
+  /// callsite to a free operation to be removed.
+  virtual bool isAssumedHeapToStackRemovedFree(CallBase &CB) const = 0;
 
   /// Create an abstract attribute view for the position \p IRP.
   static AAHeapToStack &createForPosition(const IRPosition &IRP, Attributor &A);

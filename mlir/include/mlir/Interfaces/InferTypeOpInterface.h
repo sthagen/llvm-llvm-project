@@ -76,6 +76,10 @@ private:
   Attribute attr;
 };
 
+/// Range of values and shapes (corresponding effectively to Shapes dialect's
+/// ValueShape type concept).
+using ValueShapeRange = ValueRange;
+
 namespace detail {
 // Helper function to infer return tensor returns types given element and shape
 // inference function.
@@ -84,7 +88,7 @@ namespace detail {
 // becomes more common.
 LogicalResult inferReturnTensorTypes(
     function_ref<LogicalResult(
-        MLIRContext *, Optional<Location> location, ValueRange operands,
+        MLIRContext *, Optional<Location> location, ValueShapeRange operands,
         DictionaryAttr attributes, RegionRange regions,
         SmallVectorImpl<ShapedTypeComponents> &retComponents)>
         componentTypeFn,
