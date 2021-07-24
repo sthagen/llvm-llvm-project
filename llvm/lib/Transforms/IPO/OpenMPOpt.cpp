@@ -1573,7 +1573,27 @@ private:
           if (!CanBeMoved(*CI))
             continue;
 
-          CI->moveBefore(&*F.getEntryBlock().getFirstInsertionPt());
+          // If the function is a kernel, dedup will move
+          // the runtime call right after the kernel init callsite. Otherwise,
+          // it will move it to the beginning of the caller function.
+          if (isKernel(F)) {
+            auto &KernelInitRFI = OMPInfoCache.RFIs[OMPRTL___kmpc_target_init];
+            auto *KernelInitUV = KernelInitRFI.getUseVector(F);
+
+            if (KernelInitUV->empty())
+              continue;
+
+            assert(KernelInitUV->size() == 1 &&
+                   "Expected a single __kmpc_target_init in kernel\n");
+
+            CallInst *KernelInitCI =
+                getCallIfRegularCall(*KernelInitUV->front(), &KernelInitRFI);
+            assert(KernelInitCI &&
+                   "Expected a call to __kmpc_target_init in kernel\n");
+
+            CI->moveAfter(KernelInitCI);
+          } else
+            CI->moveBefore(&*F.getEntryBlock().getFirstInsertionPt());
           ReplVal = CI;
           break;
         }
@@ -3678,10 +3698,8 @@ private:
       }
     }
 
-    if (KnownSPMDCount && KnownNonSPMDCount)
-      return indicatePessimisticFixpoint();
-
-    if (AssumedSPMDCount && AssumedNonSPMDCount)
+    if ((AssumedSPMDCount + KnownSPMDCount) &&
+        (AssumedNonSPMDCount + KnownNonSPMDCount))
       return indicatePessimisticFixpoint();
 
     auto &Ctx = getAnchorValue().getContext();
