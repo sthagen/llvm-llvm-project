@@ -617,6 +617,10 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation HashTokenLoc,
         // If this is in a skipping block or if we're already handled this #if
         // block, don't bother parsing the condition.
         if (CondInfo.WasSkipping || CondInfo.FoundNonSkip) {
+          // FIXME: We should probably do at least some minimal parsing of the
+          // condition to verify that it is well-formed. The current state
+          // allows #elif* directives with completely malformed (or missing)
+          // conditions.
           DiscardUntilEndOfDirective();
         } else {
           // Restore the value of LexingRawMode so that identifiers are
@@ -656,6 +660,10 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation HashTokenLoc,
         // If this is in a skipping block or if we're already handled this #if
         // block, don't bother parsing the condition.
         if (CondInfo.WasSkipping || CondInfo.FoundNonSkip) {
+          // FIXME: We should probably do at least some minimal parsing of the
+          // condition to verify that it is well-formed. The current state
+          // allows #elif* directives with completely malformed (or missing)
+          // conditions.
           DiscardUntilEndOfDirective();
         } else {
           // Restore the value of LexingRawMode so that identifiers are
@@ -673,6 +681,8 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation HashTokenLoc,
             // not emitting an error when the #endif is reached.
             continue;
           }
+
+          emitMacroExpansionWarnings(MacroNameTok);
 
           CheckEndOfDirective(IsElifDef ? "elifdef" : "elifndef");
 
@@ -2024,9 +2034,7 @@ Preprocessor::ImportAction Preprocessor::HandleHeaderIncludeOrImport(
 
   // Record the header's filename for later use.
   if (File)
-    CurLexer->addInclude(
-        {FilenameTok.getLiteralData(), FilenameTok.getLength()},
-        File->getFileEntry(), FilenameLoc);
+    CurLexer->addInclude(OriginalFilename, File->getFileEntry(), FilenameLoc);
 
   if (usingPCHWithThroughHeader() && SkippingUntilPCHThroughHeader) {
     if (File && isPCHThroughHeader(&File->getFileEntry()))
@@ -3053,6 +3061,8 @@ void Preprocessor::HandleIfdefDirective(Token &Result,
                                  /*Foundnonskip*/ false, /*FoundElse*/ false);
     return;
   }
+
+  emitMacroExpansionWarnings(MacroNameTok);
 
   // Check to see if this is the last token on the #if[n]def line.
   CheckEndOfDirective(isIfndef ? "ifndef" : "ifdef");

@@ -1502,19 +1502,15 @@ public:
   /// statements.
   class FPFeaturesStateRAII {
   public:
-    FPFeaturesStateRAII(Sema &S) : S(S), OldFPFeaturesState(S.CurFPFeatures) {
-      OldOverrides = S.FpPragmaStack.CurrentValue;
-    }
-    ~FPFeaturesStateRAII() {
-      S.CurFPFeatures = OldFPFeaturesState;
-      S.FpPragmaStack.CurrentValue = OldOverrides;
-    }
+    FPFeaturesStateRAII(Sema &S);
+    ~FPFeaturesStateRAII();
     FPOptionsOverride getOverrides() { return OldOverrides; }
 
   private:
     Sema& S;
     FPOptions OldFPFeaturesState;
     FPOptionsOverride OldOverrides;
+    int OldEvalMethod;
   };
 
   void addImplicitTypedef(StringRef Name, QualType T);
@@ -2334,7 +2330,6 @@ public:
                              const CXXScopeSpec &SS, QualType T,
                              TagDecl *OwnedTagDecl = nullptr);
 
-  QualType getDecltypeForParenthesizedExpr(Expr *E);
   QualType BuildTypeofExprType(Expr *E, SourceLocation Loc);
   /// If AsUnevaluated is false, E is treated as though it were an evaluated
   /// context, such as when building a type for decltype(auto).
@@ -6104,6 +6099,13 @@ public:
   // This is the case for AltiVecVector types as well as with
   // AltiVecPixel and AltiVecBool when -faltivec-src-compat=xl is specified.
   bool ShouldSplatAltivecScalarInCast(const VectorType *VecTy);
+
+  // Checks if the -faltivec-src-compat=gcc option is specified.
+  // If so, AltiVecVector, AltiVecBool and AltiVecPixel types are
+  // treated the same way as they are when trying to initialize
+  // these vectors on gcc (an error is emitted).
+  bool CheckAltivecInitFromScalar(SourceRange R, QualType VecTy,
+                                  QualType SrcTy);
 
   /// ActOnCXXNamedCast - Parse
   /// {dynamic,static,reinterpret,const,addrspace}_cast's.

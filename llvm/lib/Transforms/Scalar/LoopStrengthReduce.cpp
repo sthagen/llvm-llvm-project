@@ -3150,7 +3150,7 @@ void LSRInstance::CollectChains() {
 void LSRInstance::FinalizeChain(IVChain &Chain) {
   assert(!Chain.Incs.empty() && "empty IV chains are not allowed");
   LLVM_DEBUG(dbgs() << "Final Chain: " << *Chain.Incs[0].UserInst << "\n");
-
+  
   for (const IVInc &Inc : Chain) {
     LLVM_DEBUG(dbgs() << "        Inc: " << *Inc.UserInst << "\n");
     auto UseI = find(Inc.UserInst->operands(), Inc.IVOperand);
@@ -5950,7 +5950,7 @@ struct SCEVDbgValueBuilder {
       pushConst(StartInt);
 
     } else if (const SCEVUnknown *U = dyn_cast<SCEVUnknown>(S)) {
-      if(!U->getValue())
+      if (!U->getValue())
         return false;
       pushValue(U->getValue());
 
@@ -6162,6 +6162,9 @@ DbgRewriteSalvageableDVIs(llvm::Loop *L, ScalarEvolution &SE,
   bool Changed = false;
   if (const SCEVAddRecExpr *IVAddRec =
           dyn_cast<SCEVAddRecExpr>(SCEVInductionVar)) {
+    if (!IVAddRec->isAffine())
+      return false;
+
     SCEVDbgValueBuilder IterCountExpr;
     IterCountExpr.pushValue(LSRInductionVar);
     if (!IterCountExpr.SCEVToIterCountExpr(*IVAddRec, SE))
@@ -6180,6 +6183,8 @@ DbgRewriteSalvageableDVIs(llvm::Loop *L, ScalarEvolution &SE,
       // supported by SCEV salvaging. But, we can attempt a salvage by restoring
       // the pre-LSR single-op expression.
       if (DVIRec.DVI->hasArgList()) {
+        if (!DVIRec.DVI->getVariableLocationOp(0))
+          continue;
         llvm::Type *Ty = DVIRec.DVI->getVariableLocationOp(0)->getType();
         DVIRec.DVI->setRawLocation(
             llvm::ValueAsMetadata::get(UndefValue::get(Ty)));
@@ -6207,7 +6212,8 @@ DbgGatherSalvagableDVI(Loop *L, ScalarEvolution &SE,
       if (DVI->hasArgList())
         continue;
 
-      if (!SE.isSCEVable(DVI->getVariableLocationOp(0)->getType()))
+      if (!DVI->getVariableLocationOp(0) ||
+          !SE.isSCEVable(DVI->getVariableLocationOp(0)->getType()))
         continue;
 
       SalvageableDVISCEVs.push_back(
@@ -6232,9 +6238,8 @@ static llvm::PHINode *GetInductionVariable(const Loop &L, ScalarEvolution &SE,
     assert(isa<PHINode>(&*IV) && "Expected PhI node.");
     if (SE.isSCEVable((*IV).getType())) {
       PHINode *Phi = dyn_cast<PHINode>(&*IV);
-      LLVM_DEBUG(const llvm::SCEV *S = SE.getSCEV(Phi);
-                 dbgs() << "scev-salvage: IV : " << *IV << "with SCEV: " << *S
-                 << "\n");
+      LLVM_DEBUG(dbgs() << "scev-salvage: IV : " << *IV
+                        << "with SCEV: " << *SE.getSCEV(Phi) << "\n");
       return Phi;
     }
   }
