@@ -167,25 +167,25 @@ void __tsan_map_shadow(uptr addr, uptr size) {
 }
 
 void __tsan_read(ThreadState *thr, void *addr, void *pc) {
-  MemoryRead(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, kAccessRead);
 }
 
 void __tsan_read_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryRead(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, kAccessRead);
   if (callpc != 0)
     FuncExit(thr);
 }
 
 void __tsan_write(ThreadState *thr, void *addr, void *pc) {
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, kAccessWrite);
 }
 
 void __tsan_write_pc(ThreadState *thr, void *addr, uptr callpc, uptr pc) {
   if (callpc != 0)
     FuncEntry(thr, callpc);
-  MemoryWrite(thr, (uptr)pc, (uptr)addr, kSizeLog1);
+  MemoryAccess(thr, (uptr)pc, (uptr)addr, 1, kAccessWrite);
   if (callpc != 0)
     FuncExit(thr);
 }
@@ -220,7 +220,7 @@ void __tsan_free(uptr p, uptr sz) {
 void __tsan_go_start(ThreadState *parent, ThreadState **pthr, void *pc) {
   ThreadState *thr = AllocGoroutine();
   *pthr = thr;
-  int goid = ThreadCreate(parent, (uptr)pc, 0, true);
+  Tid goid = ThreadCreate(parent, (uptr)pc, 0, true);
   ThreadStart(thr, goid, 0, ThreadType::Regular);
 }
 
