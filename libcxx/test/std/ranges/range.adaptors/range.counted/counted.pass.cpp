@@ -8,7 +8,6 @@
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 // UNSUPPORTED: libcpp-no-concepts
-// UNSUPPORTED: gcc-10
 // UNSUPPORTED: libcpp-has-no-incomplete-ranges
 
 // std::views::counted;
@@ -194,6 +193,10 @@ constexpr bool test() {
                          std::counted_iterator<cpp20_input_iterator<int*>>,
                          std::default_sentinel_t>);
     }
+  }
+
+  {
+    static_assert(std::same_as<decltype(std::views::counted), decltype(std::ranges::views::counted)>);
   }
 
   return true;

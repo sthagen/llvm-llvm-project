@@ -4437,9 +4437,9 @@ Sema::BuildDelegatingInitializer(TypeSourceInfo *TInfo, Expr *Init,
   ExprResult DelegationInit = InitSeq.Perform(*this, DelegationEntity, Kind,
                                               Args, nullptr);
   if (!DelegationInit.isInvalid()) {
-    assert(DelegationInit.get()->containsErrors() ||
-           cast<CXXConstructExpr>(DelegationInit.get())->getConstructor() &&
-               "Delegating constructor with no target?");
+    assert((DelegationInit.get()->containsErrors() ||
+            cast<CXXConstructExpr>(DelegationInit.get())->getConstructor()) &&
+           "Delegating constructor with no target?");
 
     // C++11 [class.base.init]p7:
     //   The initialization of each base and member constitutes a
@@ -16836,10 +16836,7 @@ NamedDecl *Sema::ActOnFriendFunctionDecl(Scope *S, Declarator &D,
     while (DC->isRecord())
       DC = DC->getParent();
 
-    DeclContext *LookupDC = DC;
-    while (LookupDC->isTransparentContext())
-      LookupDC = LookupDC->getParent();
-
+    DeclContext *LookupDC = DC->getNonTransparentContext();
     while (true) {
       LookupQualifiedName(Previous, LookupDC);
 
