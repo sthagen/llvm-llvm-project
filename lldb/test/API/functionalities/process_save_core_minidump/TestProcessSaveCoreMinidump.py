@@ -14,7 +14,8 @@ class ProcessSaveCoreMinidumpTestCase(TestBase):
 
     mydir = TestBase.compute_mydir(__file__)
 
-    @skipUnlessPlatform(['linux'])
+    @skipUnlessArch("x86_64")
+    @skipUnlessPlatform(["linux"])
     def test_save_linux_mini_dump(self):
         """Test that we can save a Linux mini dump."""
         self.build()

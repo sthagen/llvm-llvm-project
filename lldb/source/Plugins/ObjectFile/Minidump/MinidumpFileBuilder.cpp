@@ -60,6 +60,9 @@ Status MinidumpFileBuilder::AddSystemInfo(const llvm::Triple &target_triple) {
   case llvm::Triple::ArchType::arm:
     arch = ProcessorArchitecture::ARM;
     break;
+  case llvm::Triple::ArchType::aarch64:
+    arch = ProcessorArchitecture::ARM64;
+    break;
   case llvm::Triple::ArchType::mips64:
   case llvm::Triple::ArchType::mips64el:
   case llvm::Triple::ArchType::mips:
@@ -457,7 +460,7 @@ Status MinidumpFileBuilder::AddThreadList(const lldb::ProcessSP &process_sp) {
     stack.StartOfMemoryRange = static_cast<llvm::support::ulittle64_t>(addr);
     stack.Memory = stack_memory;
 
-    helper_data.AppendData(data_up->GetBytes(), size);
+    helper_data.AppendData(data_up->GetBytes(), stack_bytes_read);
 
     LocationDescriptor thread_context_memory_locator;
     thread_context_memory_locator.DataSize =
@@ -594,7 +597,7 @@ MinidumpFileBuilder::AddMemoryList(const lldb::ProcessSP &process_sp) {
       continue;
     // We have a good memory region with valid bytes to store.
     LocationDescriptor memory_dump;
-    memory_dump.DataSize = static_cast<llvm::support::ulittle32_t>(size);
+    memory_dump.DataSize = static_cast<llvm::support::ulittle32_t>(bytes_read);
     memory_dump.RVA =
         static_cast<llvm::support::ulittle32_t>(GetCurrentDataEndOffset());
     MemoryDescriptor memory_desc;
