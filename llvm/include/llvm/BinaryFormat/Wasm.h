@@ -284,8 +284,10 @@ enum : unsigned {
 
 // Opcodes used in synthetic functions.
 enum : unsigned {
-  WASM_OPCODE_IF = 0x04,
-  WASM_OPCODE_ELSE = 0x05,
+  WASM_OPCODE_BLOCK = 0x02,
+  WASM_OPCODE_BR = 0x0c,
+  WASM_OPCODE_BR_TABLE = 0x0e,
+  WASM_OPCODE_RETURN = 0x0f,
   WASM_OPCODE_DROP = 0x1a,
   WASM_OPCODE_MISC_PREFIX = 0xfc,
   WASM_OPCODE_MEMORY_INIT = 0x08,
@@ -337,6 +339,12 @@ enum : unsigned {
   WASM_INIT_FUNCS = 0x6,
   WASM_COMDAT_INFO = 0x7,
   WASM_SYMBOL_TABLE = 0x8,
+};
+
+// Kind codes used in the custom "dylink" section
+enum : unsigned {
+  WASM_DYLINK_MEM_INFO = 0x1,
+  WASM_DYLINK_NEEDED = 0x2,
 };
 
 // Kind codes used in the custom "linking" section in the WASM_COMDAT_INFO

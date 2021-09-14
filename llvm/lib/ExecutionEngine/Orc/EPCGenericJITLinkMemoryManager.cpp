@@ -8,6 +8,7 @@
 
 #include "llvm/ExecutionEngine/Orc/EPCGenericJITLinkMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/LookupAndRecordAddrs.h"
+#include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
 
 #include <limits>
 
@@ -58,7 +59,7 @@ public:
           {WorkingMem, static_cast<size_t>(KV.second.ContentSize)}});
       WorkingMem += KV.second.ContentSize;
     }
-    Parent.EPC.callSPSWrapperAsync<shared::SPSOrcTargetProcessFinalize>(
+    Parent.EPC.callSPSWrapperAsync<rt::SPSMemoryFinalizeSignature>(
         [OnFinalize = std::move(OnFinalize)](Error SerializationErr,
                                              Error FinalizeErr) {
           if (SerializationErr)
@@ -71,9 +72,8 @@ public:
 
   Error deallocate() override {
     Error Err = Error::success();
-    if (auto E2 =
-            Parent.EPC.callSPSWrapper<shared::SPSOrcTargetProcessDeallocate>(
-                Parent.FAs.Deallocate.getValue(), Err, TargetAddr, TargetSize))
+    if (auto E2 = Parent.EPC.callSPSWrapper<rt::SPSMemoryDeallocateSignature>(
+            Parent.FAs.Deallocate.getValue(), Err, TargetAddr, TargetSize))
       return E2;
     return Err;
   }
@@ -85,32 +85,6 @@ private:
   std::unique_ptr<char[]> WorkingBuffer;
   SegInfoMap Segs;
 };
-
-/// Create from a ExecutorProcessControl instance.
-Expected<std::unique_ptr<EPCGenericJITLinkMemoryManager>>
-EPCGenericJITLinkMemoryManager::CreateUsingOrcRTFuncs(
-    ExecutorProcessControl &EPC) {
-
-  auto H = EPC.loadDylib("");
-  if (!H)
-    return H.takeError();
-
-  StringRef GlobalPrefix = "";
-  if (EPC.getTargetTriple().isOSBinFormatMachO())
-    GlobalPrefix = "_";
-
-  FuncAddrs FAs;
-  if (auto Err = lookupAndRecordAddrs(
-          EPC, *H,
-          {{EPC.intern((GlobalPrefix + "__orc_rt_reserve").str()), &FAs.Reserve},
-           {EPC.intern((GlobalPrefix + "__orc_rt_finalize").str()),
-            &FAs.Finalize},
-           {EPC.intern((GlobalPrefix + "__orc_rt_deallocate").str()),
-            &FAs.Deallocate}}))
-    return std::move(Err);
-
-  return std::make_unique<EPCGenericJITLinkMemoryManager>(EPC, std::move(FAs));
-}
 
 Expected<std::unique_ptr<jitlink::JITLinkMemoryManager::Allocation>>
 EPCGenericJITLinkMemoryManager::allocate(const jitlink::JITLinkDylib *JD,
@@ -137,7 +111,7 @@ EPCGenericJITLinkMemoryManager::allocate(const jitlink::JITLinkDylib *JD,
   if (WorkingSize > 0)
     WorkingBuffer = std::make_unique<char[]>(WorkingSize);
   Expected<ExecutorAddress> TargetAllocAddr((ExecutorAddress()));
-  if (auto Err = EPC.callSPSWrapper<shared::SPSOrcTargetProcessAllocate>(
+  if (auto Err = EPC.callSPSWrapper<rt::SPSMemoryReserveSignature>(
           FAs.Reserve.getValue(), TargetAllocAddr, AllocSize))
     return std::move(Err);
   if (!TargetAllocAddr)
