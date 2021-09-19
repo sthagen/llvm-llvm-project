@@ -1,4 +1,6 @@
-// RUN: %clang_cc1 -verify -fopenmp -x c++ -std=c++14 -emit-llvm %s
+// RUN: %clang_cc1 -triple=x86_64-pc-linux-gnu -verify -fopenmp -x c++ -std=c++14 -fexceptions -fcxx-exceptions %s
+
+// RUN: %clang_cc1 -triple=x86_64-pc-linux-gnu -verify -fopenmp-simd -x c++ -std=c++14 -fexceptions -fcxx-exceptions %s
 
 void foo() {
 #pragma omp metadirective // expected-error {{expected expression}}
