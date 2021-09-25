@@ -259,11 +259,10 @@ InstructionCost X86TTIImpl::getArithmeticInstrCost(
       return getArithmeticInstrCost(Instruction::LShr, Ty, CostKind, Op1Info,
                                     Op2Info, TargetTransformInfo::OP_None,
                                     TargetTransformInfo::OP_None);
-
-    else // UREM
-      return getArithmeticInstrCost(Instruction::And, Ty, CostKind, Op1Info,
-                                    Op2Info, TargetTransformInfo::OP_None,
-                                    TargetTransformInfo::OP_None);
+    // UREM
+    return getArithmeticInstrCost(Instruction::And, Ty, CostKind, Op1Info,
+                                  Op2Info, TargetTransformInfo::OP_None,
+                                  TargetTransformInfo::OP_None);
   }
 
   static const CostTblEntry GLMCostTable[] = {
@@ -1018,6 +1017,7 @@ InstructionCost X86TTIImpl::getArithmeticInstrCost(
   static const CostTblEntry X64CostTbl[] = { // 64-bit targets
     { ISD::ADD,  MVT::i64,    1 }, // Core (Merom) from http://www.agner.org/
     { ISD::SUB,  MVT::i64,    1 }, // Core (Merom) from http://www.agner.org/
+    { ISD::MUL,  MVT::i64,    2 }, // Nehalem from http://www.agner.org/
   };
 
   if (ST->is64Bit())
@@ -4814,7 +4814,7 @@ bool X86TTIImpl::isLegalNTStore(Type *DataType, Align Alignment) {
   // loads require AVX2).
   if (DataSize == 32)
     return ST->hasAVX();
-  else if (DataSize == 16)
+  if (DataSize == 16)
     return ST->hasSSE1();
   return true;
 }

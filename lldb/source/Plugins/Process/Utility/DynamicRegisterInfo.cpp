@@ -395,7 +395,7 @@ DynamicRegisterInfo::SetRegisterInfo(const StructuredData::Dictionary &dict,
   return m_regs.size();
 }
 
-void DynamicRegisterInfo::AddRegister(RegisterInfo &reg_info,
+void DynamicRegisterInfo::AddRegister(RegisterInfo reg_info,
                                       ConstString &set_name) {
   assert(!m_finalized);
   const uint32_t reg_num = m_regs.size();
@@ -404,10 +404,16 @@ void DynamicRegisterInfo::AddRegister(RegisterInfo &reg_info,
   if (reg_info.value_regs) {
     for (i = 0; reg_info.value_regs[i] != LLDB_INVALID_REGNUM; ++i)
       m_value_regs_map[reg_num].push_back(reg_info.value_regs[i]);
+
+    // invalidate until Finalize() is called
+    reg_info.value_regs = nullptr;
   }
   if (reg_info.invalidate_regs) {
     for (i = 0; reg_info.invalidate_regs[i] != LLDB_INVALID_REGNUM; ++i)
       m_invalidate_regs_map[reg_num].push_back(reg_info.invalidate_regs[i]);
+
+    // invalidate until Finalize() is called
+    reg_info.invalidate_regs = nullptr;
   }
   if (reg_info.dynamic_size_dwarf_expr_bytes) {
     for (i = 0; i < reg_info.dynamic_size_dwarf_len; ++i)
@@ -659,9 +665,7 @@ void DynamicRegisterInfo::ConfigureOffsets() {
       if (reg.byte_offset == LLDB_INVALID_INDEX32) {
         uint32_t value_regnum = reg.value_regs[0];
         if (value_regnum != LLDB_INVALID_INDEX32)
-          reg.byte_offset =
-              GetRegisterInfoAtIndex(remote_to_local_regnum_map[value_regnum])
-                  ->byte_offset;
+          reg.byte_offset = GetRegisterInfoAtIndex(value_regnum)->byte_offset;
       }
     }
 

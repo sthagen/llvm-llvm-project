@@ -615,7 +615,7 @@ namespace {
                           SmallVectorImpl<SDValue> &Aliases);
 
     /// Return true if there is any possibility that the two addresses overlap.
-    bool isAlias(SDNode *Op0, SDNode *Op1) const;
+    bool mayAlias(SDNode *Op0, SDNode *Op1) const;
 
     /// Walk up chain skipping non-aliasing memory nodes, looking for a better
     /// chain (aliasing node.)
@@ -16970,6 +16970,22 @@ bool DAGCombiner::mergeStoresOfConstantsOrVecElts(
   unsigned SizeInBits = NumStores * ElementSizeBits;
   unsigned NumMemElts = MemVT.isVector() ? MemVT.getVectorNumElements() : 1;
 
+  Optional<MachineMemOperand::Flags> Flags;
+  AAMDNodes AAInfo;
+  for (unsigned I = 0; I != NumStores; ++I) {
+    StoreSDNode *St = cast<StoreSDNode>(StoreNodes[I].MemNode);
+    if (!Flags) {
+      Flags = St->getMemOperand()->getFlags();
+      AAInfo = St->getAAInfo();
+      continue;
+    }
+    // Skip merging if there's an inconsistent flag.
+    if (Flags != St->getMemOperand()->getFlags())
+      return false;
+    // Concatenate AA metadata.
+    AAInfo = AAInfo.concat(St->getAAInfo());
+  }
+
   EVT StoreTy;
   if (UseVector) {
     unsigned Elts = NumStores * NumMemElts;
@@ -17087,9 +17103,9 @@ bool DAGCombiner::mergeStoresOfConstantsOrVecElts(
   // make sure we use trunc store if it's necessary to be legal.
   SDValue NewStore;
   if (!UseTrunc) {
-    NewStore =
-        DAG.getStore(NewChain, DL, StoredVal, FirstInChain->getBasePtr(),
-                     FirstInChain->getPointerInfo(), FirstInChain->getAlign());
+    NewStore = DAG.getStore(NewChain, DL, StoredVal, FirstInChain->getBasePtr(),
+                            FirstInChain->getPointerInfo(),
+                            FirstInChain->getAlign(), Flags.getValue(), AAInfo);
   } else { // Must be realized as a trunc store
     EVT LegalizedStoredValTy =
         TLI.getTypeToTransformTo(*DAG.getContext(), StoredVal.getValueType());
@@ -17101,7 +17117,7 @@ bool DAGCombiner::mergeStoresOfConstantsOrVecElts(
     NewStore = DAG.getTruncStore(
         NewChain, DL, ExtendedStoreVal, FirstInChain->getBasePtr(),
         FirstInChain->getPointerInfo(), StoredVal.getValueType() /*TVT*/,
-        FirstInChain->getAlign(), FirstInChain->getMemOperand()->getFlags());
+        FirstInChain->getAlign(), Flags.getValue(), AAInfo);
   }
 
   // Replace all merged stores with the new store.
@@ -18263,7 +18279,7 @@ SDValue DAGCombiner::visitLIFETIME_END(SDNode *N) {
     case ISD::LIFETIME_END:
       // We can forward past any lifetime start/end that can be proven not to
       // alias the node.
-      if (!isAlias(Chain.getNode(), N))
+      if (!mayAlias(Chain.getNode(), N))
         Chains.push_back(Chain.getOperand(0));
       break;
     case ISD::STORE: {
@@ -23178,7 +23194,7 @@ SDValue DAGCombiner::buildSqrtEstimate(SDValue Op, SDNodeFlags Flags) {
 }
 
 /// Return true if there is any possibility that the two addresses overlap.
-bool DAGCombiner::isAlias(SDNode *Op0, SDNode *Op1) const {
+bool DAGCombiner::mayAlias(SDNode *Op0, SDNode *Op1) const {
 
   struct MemUseCharacteristics {
     bool IsVolatile;
@@ -23338,7 +23354,7 @@ void DAGCombiner::GatherAllAliases(SDNode *N, SDValue OriginalChain,
       // TODO: Relax aliasing for unordered atomics (see D66309)
       bool IsOpLoad = isa<LoadSDNode>(C.getNode()) &&
                       cast<LSBaseSDNode>(C.getNode())->isSimple();
-      if ((IsLoad && IsOpLoad) || !isAlias(N, C.getNode())) {
+      if ((IsLoad && IsOpLoad) || !mayAlias(N, C.getNode())) {
         // Look further up the chain.
         C = C.getOperand(0);
         return true;
@@ -23356,7 +23372,7 @@ void DAGCombiner::GatherAllAliases(SDNode *N, SDValue OriginalChain,
     case ISD::LIFETIME_END: {
       // We can forward past any lifetime start/end that can be proven not to
       // alias the memory access.
-      if (!isAlias(N, C.getNode())) {
+      if (!mayAlias(N, C.getNode())) {
         // Look further up the chain.
         C = C.getOperand(0);
         return true;
