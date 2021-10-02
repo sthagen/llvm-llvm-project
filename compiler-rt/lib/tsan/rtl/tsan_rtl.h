@@ -159,10 +159,12 @@ struct ThreadState {
 #if !SANITIZER_GO
   IgnoreSet mop_ignore_set;
   IgnoreSet sync_ignore_set;
-#endif
-  // C/C++ uses fixed size shadow stack embed into Trace.
+  // C/C++ uses fixed size shadow stack.
+  uptr shadow_stack[kShadowStackSize];
+#else
   // Go uses malloc-allocated shadow stack with dynamic size.
   uptr *shadow_stack;
+#endif
   uptr *shadow_stack_end;
   uptr *shadow_stack_pos;
   RawShadow *racy_shadow_addr;
@@ -221,7 +223,7 @@ struct ThreadState {
   explicit ThreadState(Context *ctx, Tid tid, int unique_id, u64 epoch,
                        unsigned reuse_count, uptr stk_addr, uptr stk_size,
                        uptr tls_addr, uptr tls_size);
-};
+} ALIGNED(SANITIZER_CACHE_LINE_SIZE);
 
 #if !SANITIZER_GO
 #if SANITIZER_MAC || SANITIZER_ANDROID
@@ -274,13 +276,7 @@ class ThreadContext final : public ThreadContextBase {
 
 struct RacyStacks {
   MD5Hash hash[2];
-  bool operator==(const RacyStacks &other) const {
-    if (hash[0] == other.hash[0] && hash[1] == other.hash[1])
-      return true;
-    if (hash[0] == other.hash[1] && hash[1] == other.hash[0])
-      return true;
-    return false;
-  }
+  bool operator==(const RacyStacks &other) const;
 };
 
 struct RacyAddress {
