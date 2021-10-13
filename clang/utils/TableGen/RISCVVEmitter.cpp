@@ -1035,7 +1035,7 @@ void RVVEmitter::createHeader(raw_ostream &OS) {
 
   OS << "\n#ifdef __cplusplus\n";
   OS << "}\n";
-  OS << "#endif // __riscv_vector\n";
+  OS << "#endif // __cplusplus\n";
   OS << "#endif // __RISCV_VECTOR_H\n";
 }
 
@@ -1184,7 +1184,7 @@ void RVVEmitter::createRVVIntrinsics(
     }
 
     if (HasPolicy) {
-      ProtoMaskSeq.push_back("z");
+      ProtoMaskSeq.push_back("Kz");
     }
 
     // Create Intrinsics for each type and LMUL.
