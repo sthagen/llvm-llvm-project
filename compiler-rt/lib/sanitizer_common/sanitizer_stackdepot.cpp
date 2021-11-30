@@ -14,30 +14,24 @@
 
 #include "sanitizer_common.h"
 #include "sanitizer_hash.h"
-#include "sanitizer_persistent_allocator.h"
+#include "sanitizer_stack_store.h"
 #include "sanitizer_stackdepotbase.h"
 
 namespace __sanitizer {
 
-static PersistentAllocator<uptr> traceAllocator;
-
 struct StackDepotNode {
   using hash_type = u64;
   hash_type stack_hash;
-  uptr *stack_trace;
   u32 link;
-  atomic_uint32_t tag_and_use_count;  // tag : 12 high bits; use_count : 20;
+  StackStore::Id store_id;
 
   static const u32 kTabSizeLog = SANITIZER_ANDROID ? 16 : 20;
-  static const u32 kUseCountBits = 20;
-  static const u32 kMaxUseCount = 1 << kUseCountBits;
-  static const u32 kUseCountMask = (1 << kUseCountBits) - 1;
 
   typedef StackTrace args_type;
   bool eq(hash_type hash, const args_type &args) const {
     return hash == stack_hash;
   }
-  static uptr allocated() { return traceAllocator.allocated(); }
+  static uptr allocated();
   static hash_type hash(const args_type &args) {
     MurMur2Hash64Builder H(args.size * sizeof(uptr));
     for (uptr i = 0; i < args.size; i++) H.add(args.trace[i]);
@@ -47,44 +41,48 @@ struct StackDepotNode {
   static bool is_valid(const args_type &args) {
     return args.size > 0 && args.trace;
   }
-  void store(const args_type &args, hash_type hash) {
-    CHECK_EQ(args.tag & (~kUseCountMask >> kUseCountBits), args.tag);
-    atomic_store(&tag_and_use_count, args.tag << kUseCountBits,
-                 memory_order_relaxed);
-    stack_hash = hash;
-    stack_trace = traceAllocator.alloc(args.size + 1);
-    *stack_trace = args.size;
-    internal_memcpy(stack_trace + 1, args.trace, args.size * sizeof(uptr));
-  }
-  args_type load() const {
-    if (!stack_trace)
-      return {};
-    u32 tag =
-        atomic_load(&tag_and_use_count, memory_order_relaxed) >> kUseCountBits;
-    return args_type(stack_trace + 1, *stack_trace, tag);
-  }
+  void store(u32 id, const args_type &args, hash_type hash);
+  args_type load(u32 id) const;
   static StackDepotHandle get_handle(u32 id);
 
   typedef StackDepotHandle handle_type;
 };
 
-COMPILER_CHECK(StackDepotNode::kMaxUseCount >= (u32)kStackDepotMaxUseCount);
-
-int StackDepotHandle::use_count() const {
-  return atomic_load(&node_->tag_and_use_count, memory_order_relaxed) &
-         StackDepotNode::kUseCountMask;
-}
-void StackDepotHandle::inc_use_count_unsafe() {
-  u32 prev =
-      atomic_fetch_add(&node_->tag_and_use_count, 1, memory_order_relaxed) &
-      StackDepotNode::kUseCountMask;
-  CHECK_LT(prev + 1, StackDepotNode::kMaxUseCount);
-}
+static StackStore stackStore;
 
 // FIXME(dvyukov): this single reserved bit is used in TSan.
 typedef StackDepotBase<StackDepotNode, 1, StackDepotNode::kTabSizeLog>
     StackDepot;
 static StackDepot theDepot;
+// Keep mutable data out of frequently access nodes to improve caching
+// efficiency.
+static TwoLevelMap<atomic_uint32_t, StackDepot::kNodesSize1,
+                   StackDepot::kNodesSize2>
+    useCounts;
+
+int StackDepotHandle::use_count() const {
+  return atomic_load_relaxed(&useCounts[id_]);
+}
+
+void StackDepotHandle::inc_use_count_unsafe() {
+  atomic_fetch_add(&useCounts[id_], 1, memory_order_relaxed);
+}
+
+uptr StackDepotNode::allocated() {
+  return stackStore.Allocated() + useCounts.MemoryUsage();
+}
+
+void StackDepotNode::store(u32 id, const args_type &args, hash_type hash) {
+  stack_hash = hash;
+  uptr pack = 0;
+  store_id = stackStore.Store(args, &pack);
+}
+
+StackDepotNode::args_type StackDepotNode::load(u32 id) const {
+  if (!store_id)
+    return {};
+  return stackStore.Load(store_id);
+}
 
 StackDepotStats StackDepotGetStats() { return theDepot.GetStats(); }
 
@@ -114,6 +112,11 @@ void StackDepotPrintAll() {
 
 StackDepotHandle StackDepotNode::get_handle(u32 id) {
   return StackDepotHandle(&theDepot.nodes[id], id);
+}
+
+void StackDepotTestOnlyUnmap() {
+  theDepot.TestOnlyUnmap();
+  stackStore.TestOnlyUnmap();
 }
 
 } // namespace __sanitizer

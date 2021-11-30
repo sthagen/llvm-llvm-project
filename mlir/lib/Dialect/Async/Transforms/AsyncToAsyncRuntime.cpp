@@ -61,7 +61,7 @@ struct CoroMachinery {
   // each yielded value.
   //
   //   %token, %result = async.execute -> !async.value<T> {
-  //     %0 = constant ... : T
+  //     %0 = arith.constant ... : T
   //     async.yield %0 : T
   //   }
   Value asyncToken; // token representing completion of the async region
@@ -578,7 +578,7 @@ public:
 
     Block *cont = rewriter.splitBlock(op->getBlock(), Block::iterator(op));
     rewriter.setInsertionPointToEnd(cont->getPrevNode());
-    rewriter.create<CondBranchOp>(loc, adaptor.arg(),
+    rewriter.create<CondBranchOp>(loc, adaptor.getArg(),
                                   /*trueDest=*/cont,
                                   /*trueArgs=*/ArrayRef<Value>(),
                                   /*falseDest=*/setupSetErrorBlock(coro),

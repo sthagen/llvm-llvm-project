@@ -657,6 +657,7 @@ private:
   inline ProgramStateRef mergeImpl(RangeSet::Factory &F, ProgramStateRef State,
                                    SymbolSet Members, EquivalenceClass Other,
                                    SymbolSet OtherMembers);
+
   static inline bool
   addToDisequalityInfo(DisequalityMapTy &Info, ConstraintRangeTy &Constraints,
                        RangeSet::Factory &F, ProgramStateRef State,
@@ -1392,6 +1393,113 @@ RangeSet SymbolicRangeInferrer::VisitBinaryOperator<BO_Rem>(Range LHS,
 }
 
 //===----------------------------------------------------------------------===//
+//                  Constraint manager implementation details
+//===----------------------------------------------------------------------===//
+
+class RangeConstraintManager : public RangedConstraintManager {
+public:
+  RangeConstraintManager(ExprEngine *EE, SValBuilder &SVB)
+      : RangedConstraintManager(EE, SVB), F(getBasicVals()) {}
+
+  //===------------------------------------------------------------------===//
+  // Implementation for interface from ConstraintManager.
+  //===------------------------------------------------------------------===//
+
+  bool haveEqualConstraints(ProgramStateRef S1,
+                            ProgramStateRef S2) const override {
+    // NOTE: ClassMembers are as simple as back pointers for ClassMap,
+    //       so comparing constraint ranges and class maps should be
+    //       sufficient.
+    return S1->get<ConstraintRange>() == S2->get<ConstraintRange>() &&
+           S1->get<ClassMap>() == S2->get<ClassMap>();
+  }
+
+  bool canReasonAbout(SVal X) const override;
+
+  ConditionTruthVal checkNull(ProgramStateRef State, SymbolRef Sym) override;
+
+  const llvm::APSInt *getSymVal(ProgramStateRef State,
+                                SymbolRef Sym) const override;
+
+  ProgramStateRef removeDeadBindings(ProgramStateRef State,
+                                     SymbolReaper &SymReaper) override;
+
+  void printJson(raw_ostream &Out, ProgramStateRef State, const char *NL = "\n",
+                 unsigned int Space = 0, bool IsDot = false) const override;
+  void printConstraints(raw_ostream &Out, ProgramStateRef State,
+                        const char *NL = "\n", unsigned int Space = 0,
+                        bool IsDot = false) const;
+  void printEquivalenceClasses(raw_ostream &Out, ProgramStateRef State,
+                               const char *NL = "\n", unsigned int Space = 0,
+                               bool IsDot = false) const;
+  void printDisequalities(raw_ostream &Out, ProgramStateRef State,
+                          const char *NL = "\n", unsigned int Space = 0,
+                          bool IsDot = false) const;
+
+  //===------------------------------------------------------------------===//
+  // Implementation for interface from RangedConstraintManager.
+  //===------------------------------------------------------------------===//
+
+  ProgramStateRef assumeSymNE(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymEQ(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymLT(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymGT(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymLE(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymGE(ProgramStateRef State, SymbolRef Sym,
+                              const llvm::APSInt &V,
+                              const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymWithinInclusiveRange(
+      ProgramStateRef State, SymbolRef Sym, const llvm::APSInt &From,
+      const llvm::APSInt &To, const llvm::APSInt &Adjustment) override;
+
+  ProgramStateRef assumeSymOutsideInclusiveRange(
+      ProgramStateRef State, SymbolRef Sym, const llvm::APSInt &From,
+      const llvm::APSInt &To, const llvm::APSInt &Adjustment) override;
+
+private:
+  RangeSet::Factory F;
+
+  RangeSet getRange(ProgramStateRef State, SymbolRef Sym);
+  RangeSet getRange(ProgramStateRef State, EquivalenceClass Class);
+  ProgramStateRef setRange(ProgramStateRef State, SymbolRef Sym,
+                           RangeSet Range);
+  ProgramStateRef setRange(ProgramStateRef State, EquivalenceClass Class,
+                           RangeSet Range);
+
+  RangeSet getSymLTRange(ProgramStateRef St, SymbolRef Sym,
+                         const llvm::APSInt &Int,
+                         const llvm::APSInt &Adjustment);
+  RangeSet getSymGTRange(ProgramStateRef St, SymbolRef Sym,
+                         const llvm::APSInt &Int,
+                         const llvm::APSInt &Adjustment);
+  RangeSet getSymLERange(ProgramStateRef St, SymbolRef Sym,
+                         const llvm::APSInt &Int,
+                         const llvm::APSInt &Adjustment);
+  RangeSet getSymLERange(llvm::function_ref<RangeSet()> RS,
+                         const llvm::APSInt &Int,
+                         const llvm::APSInt &Adjustment);
+  RangeSet getSymGERange(ProgramStateRef St, SymbolRef Sym,
+                         const llvm::APSInt &Int,
+                         const llvm::APSInt &Adjustment);
+};
+
+//===----------------------------------------------------------------------===//
 //                         Constraint assignment logic
 //===----------------------------------------------------------------------===//
 
@@ -1502,7 +1610,28 @@ public:
     return Assignor.assign(CoS, NewConstraint);
   }
 
+  /// Handle expressions like: a % b != 0.
+  template <typename SymT>
+  bool handleRemainderOp(const SymT *Sym, RangeSet Constraint) {
+    if (Sym->getOpcode() != BO_Rem)
+      return true;
+    // a % b != 0 implies that a != 0.
+    if (!Constraint.containsZero()) {
+      SVal SymSVal = Builder.makeSymbolVal(Sym->getLHS());
+      if (auto NonLocSymSVal = SymSVal.getAs<nonloc::SymbolVal>()) {
+        State = State->assume(*NonLocSymSVal, true);
+        if (!State)
+          return false;
+      }
+    }
+    return true;
+  }
+
   inline bool assignSymExprToConst(const SymExpr *Sym, Const Constraint);
+  inline bool assignSymIntExprToRangeSet(const SymIntExpr *Sym,
+                                         RangeSet Constraint) {
+    return handleRemainderOp(Sym, Constraint);
+  }
   inline bool assignSymSymExprToRangeSet(const SymSymExpr *Sym,
                                          RangeSet Constraint);
 
@@ -1580,9 +1709,7 @@ private:
     if (Constraint.getConcreteValue())
       return !Constraint.getConcreteValue()->isZero();
 
-    APSIntType T{Constraint.getMinValue()};
-    Const Zero = T.getZeroValue();
-    if (!Constraint.contains(Zero))
+    if (!Constraint.containsZero())
       return true;
 
     return llvm::None;
@@ -1593,112 +1720,6 @@ private:
   RangeSet::Factory &RangeFactory;
 };
 
-//===----------------------------------------------------------------------===//
-//                  Constraint manager implementation details
-//===----------------------------------------------------------------------===//
-
-class RangeConstraintManager : public RangedConstraintManager {
-public:
-  RangeConstraintManager(ExprEngine *EE, SValBuilder &SVB)
-      : RangedConstraintManager(EE, SVB), F(getBasicVals()) {}
-
-  //===------------------------------------------------------------------===//
-  // Implementation for interface from ConstraintManager.
-  //===------------------------------------------------------------------===//
-
-  bool haveEqualConstraints(ProgramStateRef S1,
-                            ProgramStateRef S2) const override {
-    // NOTE: ClassMembers are as simple as back pointers for ClassMap,
-    //       so comparing constraint ranges and class maps should be
-    //       sufficient.
-    return S1->get<ConstraintRange>() == S2->get<ConstraintRange>() &&
-           S1->get<ClassMap>() == S2->get<ClassMap>();
-  }
-
-  bool canReasonAbout(SVal X) const override;
-
-  ConditionTruthVal checkNull(ProgramStateRef State, SymbolRef Sym) override;
-
-  const llvm::APSInt *getSymVal(ProgramStateRef State,
-                                SymbolRef Sym) const override;
-
-  ProgramStateRef removeDeadBindings(ProgramStateRef State,
-                                     SymbolReaper &SymReaper) override;
-
-  void printJson(raw_ostream &Out, ProgramStateRef State, const char *NL = "\n",
-                 unsigned int Space = 0, bool IsDot = false) const override;
-  void printConstraints(raw_ostream &Out, ProgramStateRef State,
-                        const char *NL = "\n", unsigned int Space = 0,
-                        bool IsDot = false) const;
-  void printEquivalenceClasses(raw_ostream &Out, ProgramStateRef State,
-                               const char *NL = "\n", unsigned int Space = 0,
-                               bool IsDot = false) const;
-  void printDisequalities(raw_ostream &Out, ProgramStateRef State,
-                          const char *NL = "\n", unsigned int Space = 0,
-                          bool IsDot = false) const;
-
-  //===------------------------------------------------------------------===//
-  // Implementation for interface from RangedConstraintManager.
-  //===------------------------------------------------------------------===//
-
-  ProgramStateRef assumeSymNE(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymEQ(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymLT(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymGT(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymLE(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymGE(ProgramStateRef State, SymbolRef Sym,
-                              const llvm::APSInt &V,
-                              const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymWithinInclusiveRange(
-      ProgramStateRef State, SymbolRef Sym, const llvm::APSInt &From,
-      const llvm::APSInt &To, const llvm::APSInt &Adjustment) override;
-
-  ProgramStateRef assumeSymOutsideInclusiveRange(
-      ProgramStateRef State, SymbolRef Sym, const llvm::APSInt &From,
-      const llvm::APSInt &To, const llvm::APSInt &Adjustment) override;
-
-private:
-  RangeSet::Factory F;
-
-  RangeSet getRange(ProgramStateRef State, SymbolRef Sym);
-  RangeSet getRange(ProgramStateRef State, EquivalenceClass Class);
-  ProgramStateRef setRange(ProgramStateRef State, SymbolRef Sym,
-                           RangeSet Range);
-  ProgramStateRef setRange(ProgramStateRef State, EquivalenceClass Class,
-                           RangeSet Range);
-
-  RangeSet getSymLTRange(ProgramStateRef St, SymbolRef Sym,
-                         const llvm::APSInt &Int,
-                         const llvm::APSInt &Adjustment);
-  RangeSet getSymGTRange(ProgramStateRef St, SymbolRef Sym,
-                         const llvm::APSInt &Int,
-                         const llvm::APSInt &Adjustment);
-  RangeSet getSymLERange(ProgramStateRef St, SymbolRef Sym,
-                         const llvm::APSInt &Int,
-                         const llvm::APSInt &Adjustment);
-  RangeSet getSymLERange(llvm::function_ref<RangeSet()> RS,
-                         const llvm::APSInt &Int,
-                         const llvm::APSInt &Adjustment);
-  RangeSet getSymGERange(ProgramStateRef St, SymbolRef Sym,
-                         const llvm::APSInt &Int,
-                         const llvm::APSInt &Adjustment);
-};
 
 bool ConstraintAssignor::assignSymExprToConst(const SymExpr *Sym,
                                               const llvm::APSInt &Constraint) {
@@ -1726,11 +1747,26 @@ bool ConstraintAssignor::assignSymExprToConst(const SymExpr *Sym,
       return false;
   }
 
+  // We may have trivial equivalence classes in the disequality info as
+  // well, and we need to simplify them.
+  DisequalityMapTy DisequalityInfo = State->get<DisequalityMap>();
+  for (std::pair<EquivalenceClass, ClassSet> DisequalityEntry :
+       DisequalityInfo) {
+    EquivalenceClass Class = DisequalityEntry.first;
+    ClassSet DisequalClasses = DisequalityEntry.second;
+    State = EquivalenceClass::simplify(Builder, RangeFactory, State, Class);
+    if (!State)
+      return false;
+  }
+
   return true;
 }
 
 bool ConstraintAssignor::assignSymSymExprToRangeSet(const SymSymExpr *Sym,
                                                     RangeSet Constraint) {
+  if (!handleRemainderOp(Sym, Constraint))
+    return false;
+
   Optional<bool> ConstraintAsBool = interpreteAsBool(Constraint);
 
   if (!ConstraintAsBool)
@@ -2096,6 +2132,33 @@ inline Optional<bool> EquivalenceClass::areEqual(ProgramStateRef State,
   return llvm::None;
 }
 
+// Re-evaluate an SVal with top-level `State->assume` logic.
+LLVM_NODISCARD ProgramStateRef reAssume(ProgramStateRef State,
+                                        const RangeSet *Constraint,
+                                        SVal TheValue) {
+  if (!Constraint)
+    return State;
+
+  const auto DefinedVal = TheValue.castAs<DefinedSVal>();
+
+  // If the SVal is 0, we can simply interpret that as `false`.
+  if (Constraint->encodesFalseRange())
+    return State->assume(DefinedVal, false);
+
+  // If the constraint does not encode 0 then we can interpret that as `true`
+  // AND as a Range(Set).
+  if (Constraint->encodesTrueRange()) {
+    State = State->assume(DefinedVal, true);
+    if (!State)
+      return nullptr;
+    // Fall through, re-assume based on the range values as well.
+  }
+  // Overestimate the individual Ranges with the RangeSet' lowest and
+  // highest values.
+  return State->assumeInclusiveRange(DefinedVal, Constraint->getMinValue(),
+                                     Constraint->getMaxValue(), true);
+}
+
 // Iterate over all symbols and try to simplify them. Once a symbol is
 // simplified then we check if we can merge the simplified symbol's equivalence
 // class to this class. This way, we simplify not just the symbols but the
@@ -2106,12 +2169,64 @@ EquivalenceClass::simplify(SValBuilder &SVB, RangeSet::Factory &F,
                            ProgramStateRef State, EquivalenceClass Class) {
   SymbolSet ClassMembers = Class.getClassMembers(State);
   for (const SymbolRef &MemberSym : ClassMembers) {
-    SymbolRef SimplifiedMemberSym = ento::simplify(State, MemberSym);
+
+    const SVal SimplifiedMemberVal = simplifyToSVal(State, MemberSym);
+    const SymbolRef SimplifiedMemberSym = SimplifiedMemberVal.getAsSymbol();
+
+    // The symbol is collapsed to a constant, check if the current State is
+    // still feasible.
+    if (const auto CI = SimplifiedMemberVal.getAs<nonloc::ConcreteInt>()) {
+      const llvm::APSInt &SV = CI->getValue();
+      const RangeSet *ClassConstraint = getConstraint(State, Class);
+      // We have found a contradiction.
+      if (ClassConstraint && !ClassConstraint->contains(SV))
+        return nullptr;
+    }
+
     if (SimplifiedMemberSym && MemberSym != SimplifiedMemberSym) {
       // The simplified symbol should be the member of the original Class,
       // however, it might be in another existing class at the moment. We
       // have to merge these classes.
+      ProgramStateRef OldState = State;
       State = merge(F, State, MemberSym, SimplifiedMemberSym);
+      if (!State)
+        return nullptr;
+      // No state change, no merge happened actually.
+      if (OldState == State)
+        continue;
+
+      assert(find(State, MemberSym) == find(State, SimplifiedMemberSym));
+
+      // Query the class constraint again b/c that may have changed during the
+      // merge above.
+      const RangeSet *ClassConstraint = getConstraint(State, Class);
+
+      // Re-evaluate an SVal with top-level `State->assume`, this ignites
+      // a RECURSIVE algorithm that will reach a FIXPOINT.
+      //
+      // About performance and complexity: Let us assume that in a State we
+      // have N non-trivial equivalence classes and that all constraints and
+      // disequality info is related to non-trivial classes. In the worst case,
+      // we can simplify only one symbol of one class in each iteration.
+      //
+      // The number of the equivalence classes can decrease only, because the
+      // algorithm does a merge operation optionally.
+      // ASSUMPTION G: Let us assume that the
+      // number of symbols in one class cannot grow because we replace the old
+      // symbol with the simplified one.
+      // If assumption G holds then we need N iterations in this case to reach
+      // the fixpoint. Thus, the steps needed to be done in the worst case is
+      // proportional to N*N.
+      // This worst case scenario can be extended to that case when we have
+      // trivial classes in the constraints and in the disequality map. This
+      // case can be reduced to the case with a State where there are only
+      // non-trivial classes. This is because a merge operation on two trivial
+      // classes results in one non-trivial class.
+      //
+      // Empirical measurements show that if we relax assumption G (i.e. if we
+      // do not replace the complex symbol just add the simplified one) then
+      // the runtime and memory consumption does not grow noticeably.
+      State = reAssume(State, ClassConstraint, SimplifiedMemberVal);
       if (!State)
         return nullptr;
     }

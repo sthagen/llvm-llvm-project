@@ -3913,7 +3913,7 @@ static void emitPrivatesInit(CodeGenFunction &CGF,
               SharedRefLValue.getTBAAInfo());
         } else if (CGF.LambdaCaptureFields.count(
                        Pair.second.Original->getCanonicalDecl()) > 0 ||
-                   dyn_cast_or_null<BlockDecl>(CGF.CurCodeDecl)) {
+                   isa_and_nonnull<BlockDecl>(CGF.CurCodeDecl)) {
           SharedRefLValue = CGF.EmitLValue(Pair.second.OriginalRef);
         } else {
           // Processing for implicitly captured variables.
@@ -6264,21 +6264,51 @@ Address CGOpenMPRuntime::getTaskReductionItem(CodeGenFunction &CGF,
       SharedLVal.getAlignment());
 }
 
-void CGOpenMPRuntime::emitTaskwaitCall(CodeGenFunction &CGF,
-                                       SourceLocation Loc) {
+void CGOpenMPRuntime::emitTaskwaitCall(CodeGenFunction &CGF, SourceLocation Loc,
+                                       const OMPTaskDataTy &Data) {
   if (!CGF.HaveInsertPoint())
     return;
 
-  if (CGF.CGM.getLangOpts().OpenMPIRBuilder) {
+  if (CGF.CGM.getLangOpts().OpenMPIRBuilder && Data.Dependences.empty()) {
+    // TODO: Need to support taskwait with dependences in the OpenMPIRBuilder.
     OMPBuilder.createTaskwait(CGF.Builder);
   } else {
-    // Build call kmp_int32 __kmpc_omp_taskwait(ident_t *loc, kmp_int32
-    // global_tid);
-    llvm::Value *Args[] = {emitUpdateLocation(CGF, Loc), getThreadID(CGF, Loc)};
-    // Ignore return result until untied tasks are supported.
-    CGF.EmitRuntimeCall(OMPBuilder.getOrCreateRuntimeFunction(
-                            CGM.getModule(), OMPRTL___kmpc_omp_taskwait),
-                        Args);
+    llvm::Value *ThreadID = getThreadID(CGF, Loc);
+    llvm::Value *UpLoc = emitUpdateLocation(CGF, Loc);
+    auto &M = CGM.getModule();
+    Address DependenciesArray = Address::invalid();
+    llvm::Value *NumOfElements;
+    std::tie(NumOfElements, DependenciesArray) =
+        emitDependClause(CGF, Data.Dependences, Loc);
+    llvm::Value *DepWaitTaskArgs[6];
+    if (!Data.Dependences.empty()) {
+      DepWaitTaskArgs[0] = UpLoc;
+      DepWaitTaskArgs[1] = ThreadID;
+      DepWaitTaskArgs[2] = NumOfElements;
+      DepWaitTaskArgs[3] = DependenciesArray.getPointer();
+      DepWaitTaskArgs[4] = CGF.Builder.getInt32(0);
+      DepWaitTaskArgs[5] = llvm::ConstantPointerNull::get(CGF.VoidPtrTy);
+
+      CodeGenFunction::RunCleanupsScope LocalScope(CGF);
+
+      // Build void __kmpc_omp_wait_deps(ident_t *, kmp_int32 gtid,
+      // kmp_int32 ndeps, kmp_depend_info_t *dep_list, kmp_int32
+      // ndeps_noalias, kmp_depend_info_t *noalias_dep_list); if dependence info
+      // is specified.
+      CGF.EmitRuntimeCall(
+          OMPBuilder.getOrCreateRuntimeFunction(M, OMPRTL___kmpc_omp_wait_deps),
+          DepWaitTaskArgs);
+
+    } else {
+
+      // Build call kmp_int32 __kmpc_omp_taskwait(ident_t *loc, kmp_int32
+      // global_tid);
+      llvm::Value *Args[] = {UpLoc, ThreadID};
+      // Ignore return result until untied tasks are supported.
+      CGF.EmitRuntimeCall(
+          OMPBuilder.getOrCreateRuntimeFunction(M, OMPRTL___kmpc_omp_taskwait),
+          Args);
+    }
   }
 
   if (auto *Region = dyn_cast_or_null<CGOpenMPRegionInfo>(CGF.CapturedStmtInfo))
@@ -8580,10 +8610,8 @@ private:
       if (!C)
         continue;
       MapKind Kind = Other;
-      if (!C->getMapTypeModifiers().empty() &&
-          llvm::any_of(C->getMapTypeModifiers(), [](OpenMPMapModifierKind K) {
-            return K == OMPC_MAP_MODIFIER_present;
-          }))
+      if (llvm::is_contained(C->getMapTypeModifiers(),
+                             OMPC_MAP_MODIFIER_present))
         Kind = Present;
       else if (C->getMapType() == OMPC_MAP_alloc)
         Kind = Allocs;
@@ -8602,10 +8630,8 @@ private:
       if (!C)
         continue;
       MapKind Kind = Other;
-      if (!C->getMotionModifiers().empty() &&
-          llvm::any_of(C->getMotionModifiers(), [](OpenMPMotionModifierKind K) {
-            return K == OMPC_MOTION_MODIFIER_present;
-          }))
+      if (llvm::is_contained(C->getMotionModifiers(),
+                             OMPC_MOTION_MODIFIER_present))
         Kind = Present;
       const auto *EI = C->getVarRefs().begin();
       for (const auto L : C->component_lists()) {
@@ -8620,10 +8646,8 @@ private:
       if (!C)
         continue;
       MapKind Kind = Other;
-      if (!C->getMotionModifiers().empty() &&
-          llvm::any_of(C->getMotionModifiers(), [](OpenMPMotionModifierKind K) {
-            return K == OMPC_MOTION_MODIFIER_present;
-          }))
+      if (llvm::is_contained(C->getMotionModifiers(),
+                             OMPC_MOTION_MODIFIER_present))
         Kind = Present;
       const auto *EI = C->getVarRefs().begin();
       for (const auto L : C->component_lists()) {
@@ -9191,18 +9215,13 @@ public:
                                              const MapData &RHS) {
       ArrayRef<OpenMPMapModifierKind> MapModifiers = std::get<2>(LHS);
       OpenMPMapClauseKind MapType = std::get<1>(RHS);
-      bool HasPresent = !MapModifiers.empty() &&
-                        llvm::any_of(MapModifiers, [](OpenMPMapModifierKind K) {
-                          return K == clang::OMPC_MAP_MODIFIER_present;
-                        });
+      bool HasPresent =
+          llvm::is_contained(MapModifiers, clang::OMPC_MAP_MODIFIER_present);
       bool HasAllocs = MapType == OMPC_MAP_alloc;
       MapModifiers = std::get<2>(RHS);
       MapType = std::get<1>(LHS);
       bool HasPresentR =
-          !MapModifiers.empty() &&
-          llvm::any_of(MapModifiers, [](OpenMPMapModifierKind K) {
-            return K == clang::OMPC_MAP_MODIFIER_present;
-          });
+          llvm::is_contained(MapModifiers, clang::OMPC_MAP_MODIFIER_present);
       bool HasAllocsR = MapType == OMPC_MAP_alloc;
       return (HasPresent && !HasPresentR) || (HasAllocs && !HasAllocsR);
     });
@@ -11724,11 +11743,11 @@ getNDSWDS(const FunctionDecl *FD, ArrayRef<ParamAttrTy> ParamAttrs) {
   assert(!Sizes.empty() && "Unable to determine NDS and WDS.");
   // The LS of a function parameter / return value can only be a power
   // of 2, starting from 8 bits, up to 128.
-  assert(std::all_of(Sizes.begin(), Sizes.end(),
-                     [](unsigned Size) {
-                       return Size == 8 || Size == 16 || Size == 32 ||
-                              Size == 64 || Size == 128;
-                     }) &&
+  assert(llvm::all_of(Sizes,
+                      [](unsigned Size) {
+                        return Size == 8 || Size == 16 || Size == 32 ||
+                               Size == 64 || Size == 128;
+                      }) &&
          "Invalid size");
 
   return std::make_tuple(*std::min_element(std::begin(Sizes), std::end(Sizes)),
@@ -12384,7 +12403,7 @@ bool CGOpenMPRuntime::isNontemporalDecl(const ValueDecl *VD) const {
 
   return llvm::any_of(
       CGM.getOpenMPRuntime().NontemporalDeclsStack,
-      [VD](const NontemporalDeclsSet &Set) { return Set.count(VD) > 0; });
+      [VD](const NontemporalDeclsSet &Set) { return Set.contains(VD); });
 }
 
 void CGOpenMPRuntime::LastprivateConditionalRAII::tryToDisableInnerAnalysis(
@@ -13055,7 +13074,8 @@ Address CGOpenMPSIMDRuntime::getTaskReductionItem(CodeGenFunction &CGF,
 }
 
 void CGOpenMPSIMDRuntime::emitTaskwaitCall(CodeGenFunction &CGF,
-                                           SourceLocation Loc) {
+                                           SourceLocation Loc,
+                                           const OMPTaskDataTy &Data) {
   llvm_unreachable("Not supported in SIMD-only mode");
 }
 

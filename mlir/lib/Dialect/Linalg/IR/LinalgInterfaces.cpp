@@ -11,6 +11,7 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AffineExprVisitor.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -683,17 +684,10 @@ LogicalResult mlir::linalg::detail::verifyStructuredOpInterface(Operation *op) {
     }
   }
 
-  // Named ops that are defined manually have a region builder but no region at
-  // this time. Assume the region is well-formed by specification.
-  // TODO: use linalg-ods-gen for all ops when we have enough expressive power.
-  if (linalgOp->getNumRegions() == 0) {
-    assert(!linalgOp.getRegionBuilder() && "regionBuilder but no region");
-    return success();
-  }
-
-  auto &region = linalgOp->getRegion(0);
-  if (linalgOp->getNumRegions() > 1 || !llvm::hasSingleElement(region))
-    return op->emitOpError("expected 1 region with 1 block");
+  // Check the region has exactly one block.
+  if (linalgOp->getNumRegions() != 1 ||
+      !llvm::hasSingleElement(linalgOp->getRegion(0)))
+    return op->emitOpError("expects to have 1 region with 1 block");
 
   if (!linalgOp.getShapesToLoopsMap())
     return op->emitOpError("expected the shape-to-loops map to be non-null");

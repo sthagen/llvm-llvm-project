@@ -11,7 +11,6 @@
 
 #include "sanitizer_chained_origin_depot.h"
 
-#include "sanitizer_persistent_allocator.h"
 #include "sanitizer_stackdepotbase.h"
 
 namespace __sanitizer {
@@ -38,9 +37,9 @@ struct ChainedOriginDepotNode {
 
   static bool is_valid(const args_type &args);
 
-  void store(const args_type &args, hash_type other_hash);
+  void store(u32 id, const args_type &args, hash_type other_hash);
 
-  args_type load() const;
+  args_type load(u32 id) const;
 
   struct Handle {
     const ChainedOriginDepotNode *node_ = nullptr;
@@ -106,13 +105,13 @@ ChainedOriginDepotNode::hash_type ChainedOriginDepotNode::hash(
 
 bool ChainedOriginDepotNode::is_valid(const args_type &args) { return true; }
 
-void ChainedOriginDepotNode::store(const args_type &args,
+void ChainedOriginDepotNode::store(u32 id, const args_type &args,
                                    hash_type other_hash) {
   here_id = args.here_id;
   prev_id = args.prev_id;
 }
 
-ChainedOriginDepotNode::args_type ChainedOriginDepotNode::load() const {
+ChainedOriginDepotNode::args_type ChainedOriginDepotNode::load(u32 id) const {
   args_type ret = {here_id, prev_id};
   return ret;
 }

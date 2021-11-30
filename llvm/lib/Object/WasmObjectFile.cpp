@@ -359,7 +359,7 @@ Error WasmObjectFile::parseDylinkSection(ReadContext &Ctx) {
 
 Error WasmObjectFile::parseDylink0Section(ReadContext &Ctx) {
   // See
-  // https://github.com/WebAssembly/tool-conventions/blob/master/DynamicLinking.md
+  // https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md
   HasDylinkSection = true;
 
   const uint8_t *OrigEnd = Ctx.End;
@@ -388,6 +388,14 @@ Error WasmObjectFile::parseDylink0Section(ReadContext &Ctx) {
       uint32_t Count = readVaruint32(Ctx);
       while (Count--) {
         DylinkInfo.ExportInfo.push_back({readString(Ctx), readVaruint32(Ctx)});
+      }
+      break;
+    }
+    case wasm::WASM_DYLINK_IMPORT_INFO: {
+      uint32_t Count = readVaruint32(Ctx);
+      while (Count--) {
+        DylinkInfo.ImportInfo.push_back(
+            {readString(Ctx), readString(Ctx), readVaruint32(Ctx)});
       }
       break;
     }

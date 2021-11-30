@@ -55,6 +55,7 @@ def Sparsification : Pass<"sparsification", "ModuleOp"> {
   let dependentDialects = [
     "AffineDialect",
     "arith::ArithmeticDialect",
+    "bufferization::BufferizationDialect",
     "LLVM::LLVMDialect",
     "memref::MemRefDialect",
     "scf::SCFDialect",
@@ -89,7 +90,7 @@ def SparseTensorConversion : Pass<"sparse-tensor-conversion", "ModuleOp"> {
 
     ```mlir
       Before:
-        %c1 = constant 1 : index
+        %c1 = arith.constant 1 : index
         %0 = sparse_tensor.pointers %arg0, %c1
           : tensor<8x8xf32, #sparse_tensor.encoding<{
               dimLevelType = [ "dense", "compressed" ],
@@ -98,14 +99,16 @@ def SparseTensorConversion : Pass<"sparse-tensor-conversion", "ModuleOp"> {
             }>> to memref<?xindex>
 
       After:
-        %c1 = constant 1 : index
+        %c1 = arith.constant 1 : index
         %0 = call @sparsePointers(%arg0, %c1) : (!llvm.ptr<i8>, index) -> memref<?xindex>
     ```
   }];
   let constructor = "mlir::createSparseTensorConversionPass()";
   let dependentDialects = [
     "arith::ArithmeticDialect",
+    "bufferization::BufferizationDialect",
     "LLVM::LLVMDialect",
+    "linalg::LinalgDialect",
     "memref::MemRefDialect",
     "scf::SCFDialect",
     "sparse_tensor::SparseTensorDialect",

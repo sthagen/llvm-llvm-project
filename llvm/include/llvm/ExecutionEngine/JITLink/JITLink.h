@@ -343,6 +343,12 @@ private:
   std::vector<Edge> Edges;
 };
 
+// Align a JITTargetAddress to conform with block alignment requirements.
+inline JITTargetAddress alignToBlock(JITTargetAddress Addr, Block &B) {
+  uint64_t Delta = (B.getAlignmentOffset() - Addr) % B.getAlignment();
+  return Addr + Delta;
+}
+
 /// Describes symbol linkage. This can be used to make resolve definition
 /// clashes.
 enum class Linkage : uint8_t {
@@ -1114,10 +1120,10 @@ public:
   Symbol &addDefinedSymbol(Block &Content, JITTargetAddress Offset,
                            StringRef Name, JITTargetAddress Size, Linkage L,
                            Scope S, bool IsCallable, bool IsLive) {
-    assert(llvm::count_if(defined_symbols(),
-                          [&](const Symbol *Sym) {
-                            return Sym->getName() == Name;
-                          }) == 0 &&
+    assert((S == Scope::Local || llvm::count_if(defined_symbols(),
+                                                [&](const Symbol *Sym) {
+                                                  return Sym->getName() == Name;
+                                                }) == 0) &&
            "Duplicate defined symbol");
     auto &Sym =
         Symbol::constructNamedDef(Allocator.Allocate<Symbol>(), Content, Offset,
@@ -1299,6 +1305,8 @@ public:
                      bool PreserveSrcSection = false) {
     if (&DstSection == &SrcSection)
       return;
+    for (auto *B : SrcSection.blocks())
+      B->setSection(DstSection);
     SrcSection.transferContentTo(DstSection);
     if (!PreserveSrcSection)
       removeSection(SrcSection);
@@ -1708,6 +1716,36 @@ Error markAllSymbolsLive(LinkGraph &G);
 /// Create an out of range error for the given edge in the given block.
 Error makeTargetOutOfRangeError(const LinkGraph &G, const Block &B,
                                 const Edge &E);
+
+/// Base case for edge-visitors where the visitor-list is empty.
+inline void visitEdge(LinkGraph &G, Block *B, Edge &E) {}
+
+/// Applies the first visitor in the list to the given edge. If the visitor's
+/// visitEdge method returns true then we return immediately, otherwise we
+/// apply the next visitor.
+template <typename VisitorT, typename... VisitorTs>
+void visitEdge(LinkGraph &G, Block *B, Edge &E, VisitorT &&V,
+               VisitorTs &&...Vs) {
+  if (!V.visitEdge(G, B, E))
+    visitEdge(G, B, E, std::forward<VisitorTs>(Vs)...);
+}
+
+/// For each edge in the given graph, apply a list of visitors to the edge,
+/// stopping when the first visitor's visitEdge method returns true.
+///
+/// Only visits edges that were in the graph at call time: if any visitor
+/// adds new edges those will not be visited. Visitors are not allowed to
+/// remove edges (though they can change their kind, target, and addend).
+template <typename... VisitorTs>
+void visitExistingEdges(LinkGraph &G, VisitorTs &&...Vs) {
+  // We may add new blocks during this process, but we don't want to iterate
+  // over them, so build a worklist.
+  std::vector<Block *> Worklist(G.blocks().begin(), G.blocks().end());
+
+  for (auto *B : Worklist)
+    for (auto &E : B->edges())
+      visitEdge(G, B, E, std::forward<VisitorTs>(Vs)...);
+}
 
 /// Create a LinkGraph from the given object buffer.
 ///
