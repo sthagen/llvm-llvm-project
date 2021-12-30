@@ -76,6 +76,12 @@ Improvements to clang-tidy
 New checks
 ^^^^^^^^^^
 
+- New :doc:`bugprone-stringview-nullptr
+  <clang-tidy/checks/bugprone-stringview-nullptr>` check.
+
+  Checks for various ways that the ``const CharT*`` constructor of
+  ``std::basic_string_view`` can be passed a null argument.
+
 - New :doc:`abseil-cleanup-ctad
   <clang-tidy/checks/abseil-cleanup-ctad>` check.
 
@@ -140,6 +146,19 @@ Changes in existing checks
   <clang-tidy/checks/google-readability-casting>` to diagnose and fix functional
   casts, to achieve feature parity with the corresponding ``cpplint.py`` check.
 
+- Fixed a false positive in :doc:`fuchsia-trailing-return
+  <clang-tidy/checks/fuchsia-trailing-return>` for C++17 deduction guides.
+  
+- Fixed a false positive in :doc:`bugprone-throw-keyword-missing
+  <clang-tidy/checks/bugprone-throw-keyword-missing>` when creating an exception object
+  using placement new
+
+- :doc:`cppcoreguidelines-narrowing-conversions <clang-tidy/checks/cppcoreguidelines-narrowing-conversions>`
+  check now supports a `WarnOnIntegerToFloatingPointNarrowingConversion`
+  option to control whether to warn on narrowing integer to floating-point
+  conversions.
+
+
 Removed checks
 ^^^^^^^^^^^^^^
 
@@ -163,5 +182,5 @@ Improvements to pp-trace
 
 The improvements are...
 
-Clang-tidy visual studio plugin
+Clang-tidy Visual Studio plugin
 -------------------------------
