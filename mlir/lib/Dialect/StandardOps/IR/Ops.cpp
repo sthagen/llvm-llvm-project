@@ -840,9 +840,43 @@ struct SelectToNot : public OpRewritePattern<SelectOp> {
   }
 };
 
+//  select %arg, %c1, %c0 => extui %arg
+struct SelectToExtUI : public OpRewritePattern<SelectOp> {
+  using OpRewritePattern<SelectOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SelectOp op,
+                                PatternRewriter &rewriter) const override {
+    // Cannot extui i1 to i1, or i1 to f32
+    if (!op.getType().isa<IntegerType>() || op.getType().isInteger(1))
+      return failure();
+
+    // select %x, c1, %c0 => extui %arg
+    if (matchPattern(op.getTrueValue(), m_One()))
+      if (matchPattern(op.getFalseValue(), m_Zero())) {
+        rewriter.replaceOpWithNewOp<arith::ExtUIOp>(op, op.getType(),
+                                                    op.getCondition());
+        return success();
+      }
+
+    // select %x, c0, %c1 => extui (xor %arg, true)
+    if (matchPattern(op.getTrueValue(), m_Zero()))
+      if (matchPattern(op.getFalseValue(), m_One())) {
+        rewriter.replaceOpWithNewOp<arith::ExtUIOp>(
+            op, op.getType(),
+            rewriter.create<arith::XOrIOp>(
+                op.getLoc(), op.getCondition(),
+                rewriter.create<arith::ConstantIntOp>(
+                    op.getLoc(), 1, op.getCondition().getType())));
+        return success();
+      }
+
+    return failure();
+  }
+};
+
 void SelectOp::getCanonicalizationPatterns(OwningRewritePatternList &results,
                                            MLIRContext *context) {
-  results.insert<SelectToNot>(context);
+  results.insert<SelectToNot, SelectToExtUI>(context);
 }
 
 OpFoldResult SelectOp::fold(ArrayRef<Attribute> operands) {
@@ -860,6 +894,12 @@ OpFoldResult SelectOp::fold(ArrayRef<Attribute> operands) {
   // select false, %0, %1 => %1
   if (matchPattern(condition, m_Zero()))
     return falseVal;
+
+  // select %x, true, false => %x
+  if (getType().isInteger(1))
+    if (matchPattern(getTrueValue(), m_One()))
+      if (matchPattern(getFalseValue(), m_Zero()))
+        return condition;
 
   if (auto cmp = dyn_cast_or_null<arith::CmpIOp>(condition.getDefiningOp())) {
     auto pred = cmp.getPredicate();
@@ -1046,7 +1086,7 @@ static void printSwitchOpCases(
     OpAsmPrinter &p, SwitchOp op, Type flagType, Block *defaultDestination,
     OperandRange defaultOperands, TypeRange defaultOperandTypes,
     DenseIntElementsAttr caseValues, SuccessorRange caseDestinations,
-    OperandRangeRange caseOperands, TypeRangeRange caseOperandTypes) {
+    OperandRangeRange caseOperands, const TypeRangeRange &caseOperandTypes) {
   p << "  default: ";
   p.printSuccessorAndUseList(defaultDestination, defaultOperands);
 
@@ -1172,7 +1212,7 @@ dropSwitchCasesThatMatchDefault(SwitchOp op, PatternRewriter &rewriter) {
 /// ]
 /// -> br ^bb2
 static void foldSwitch(SwitchOp op, PatternRewriter &rewriter,
-                       APInt caseValue) {
+                       const APInt &caseValue) {
   auto caseValues = op.getCaseValues();
   for (const auto &it : llvm::enumerate(caseValues->getValues<APInt>())) {
     if (it.value() == caseValue) {

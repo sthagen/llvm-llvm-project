@@ -633,9 +633,6 @@ protected:
   /// Returns true if we should generate a scalar version of \p IV.
   bool needsScalarInduction(Instruction *IV) const;
 
-  /// Generate a shuffle sequence that will reverse the vector Vec.
-  virtual Value *reverseVector(Value *Vec);
-
   /// Returns (and creates if needed) the original loop trip count.
   Value *getOrCreateTripCount(Loop *NewLoop);
 
@@ -849,7 +846,6 @@ public:
 
 private:
   Value *getBroadcastInstrs(Value *V) override;
-  Value *reverseVector(Value *Vec) override;
 };
 
 /// Encapsulate information regarding vectorization of a loop and its epilogue.
@@ -2701,11 +2697,6 @@ void InnerLoopVectorizer::packScalarIntoVectorValue(VPValue *Def,
   State.set(Def, VectorValue, Instance.Part);
 }
 
-Value *InnerLoopVectorizer::reverseVector(Value *Vec) {
-  assert(Vec->getType()->isVectorTy() && "Invalid type");
-  return Builder.CreateVectorReverse(Vec, "reverse");
-}
-
 // Return whether we allow using masked interleave-groups (for dealing with
 // strided loads/stores that reside in predicated blocks, or for dealing
 // with gaps).
@@ -2868,7 +2859,7 @@ void InnerLoopVectorizer::vectorizeInterleaveGroup(
         }
 
         if (Group->isReverse())
-          StridedVec = reverseVector(StridedVec);
+          StridedVec = Builder.CreateVectorReverse(StridedVec, "reverse");
 
         State.set(VPDefs[J], StridedVec, Part);
       }
@@ -2904,7 +2895,7 @@ void InnerLoopVectorizer::vectorizeInterleaveGroup(
       Value *StoredVec = State.get(StoredValues[i], Part);
 
       if (Group->isReverse())
-        StoredVec = reverseVector(StoredVec);
+        StoredVec = Builder.CreateVectorReverse(StoredVec, "reverse");
 
       // If this member has different type, cast it to a unified type.
 
@@ -3555,25 +3546,6 @@ BasicBlock *InnerLoopVectorizer::completeLoopSkeleton(Loop *L,
   assert(LoopVectorPreHeader == L->getLoopPreheader() &&
          "Inconsistent vector loop preheader");
   Builder.SetInsertPoint(&*LoopVectorBody->getFirstInsertionPt());
-
-  Optional<MDNode *> VectorizedLoopID =
-      makeFollowupLoopID(OrigLoopID, {LLVMLoopVectorizeFollowupAll,
-                                      LLVMLoopVectorizeFollowupVectorized});
-  if (VectorizedLoopID.hasValue()) {
-    L->setLoopID(VectorizedLoopID.getValue());
-
-    // Do not setAlreadyVectorized if loop attributes have been defined
-    // explicitly.
-    return LoopVectorPreHeader;
-  }
-
-  // Keep all loop hints from the original loop on the vector loop (we'll
-  // replace the vectorizer-specific hints below).
-  if (MDNode *LID = OrigLoop->getLoopID())
-    L->setLoopID(LID);
-
-  LoopVectorizeHints Hints(L, true, *ORE, TTI);
-  Hints.setAlreadyVectorized();
 
 #ifdef EXPENSIVE_CHECKS
   assert(DT->verify(DominatorTree::VerificationLevel::Fast));
@@ -4612,7 +4584,7 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
     Type *PhiType = II.getStep()->getType();
 
     // Build a pointer phi
-    Value *ScalarStartValue = II.getStartValue();
+    Value *ScalarStartValue = PhiR->getStartValue()->getLiveInIRValue();
     Type *ScStValueType = ScalarStartValue->getType();
     PHINode *NewPointerPhi =
         PHINode::Create(ScStValueType, 2, "pointer.phi", Induction);
@@ -5988,11 +5960,29 @@ LoopVectorizationCostModel::getSmallestAndWidestTypes() {
   unsigned MinWidth = -1U;
   unsigned MaxWidth = 8;
   const DataLayout &DL = TheFunction->getParent()->getDataLayout();
-  for (Type *T : ElementTypesInLoop) {
-    MinWidth = std::min<unsigned>(
-        MinWidth, DL.getTypeSizeInBits(T->getScalarType()).getFixedSize());
-    MaxWidth = std::max<unsigned>(
-        MaxWidth, DL.getTypeSizeInBits(T->getScalarType()).getFixedSize());
+  // For in-loop reductions, no element types are added to ElementTypesInLoop
+  // if there are no loads/stores in the loop. In this case, check through the
+  // reduction variables to determine the maximum width.
+  if (ElementTypesInLoop.empty() && !Legal->getReductionVars().empty()) {
+    // Reset MaxWidth so that we can find the smallest type used by recurrences
+    // in the loop.
+    MaxWidth = -1U;
+    for (auto &PhiDescriptorPair : Legal->getReductionVars()) {
+      const RecurrenceDescriptor &RdxDesc = PhiDescriptorPair.second;
+      // When finding the min width used by the recurrence we need to account
+      // for casts on the input operands of the recurrence.
+      MaxWidth = std::min<unsigned>(
+          MaxWidth, std::min<unsigned>(
+                        RdxDesc.getMinWidthCastToRecurrenceTypeInBits(),
+                        RdxDesc.getRecurrenceType()->getScalarSizeInBits()));
+    }
+  } else {
+    for (Type *T : ElementTypesInLoop) {
+      MinWidth = std::min<unsigned>(
+          MinWidth, DL.getTypeSizeInBits(T->getScalarType()).getFixedSize());
+      MaxWidth = std::max<unsigned>(
+          MaxWidth, DL.getTypeSizeInBits(T->getScalarType()).getFixedSize());
+    }
   }
   return {MinWidth, MaxWidth};
 }
@@ -7980,6 +7970,27 @@ void LoopVectorizationPlanner::executePlan(ElementCount BestVF, unsigned BestUF,
   BestVPlan.prepareToExecute(ILV.getOrCreateTripCount(nullptr), State);
   BestVPlan.execute(&State);
 
+  // Keep all loop hints from the original loop on the vector loop (we'll
+  // replace the vectorizer-specific hints below).
+  MDNode *OrigLoopID = OrigLoop->getLoopID();
+
+  Optional<MDNode *> VectorizedLoopID =
+      makeFollowupLoopID(OrigLoopID, {LLVMLoopVectorizeFollowupAll,
+                                      LLVMLoopVectorizeFollowupVectorized});
+
+  Loop *L = LI->getLoopFor(State.CFG.PrevBB);
+  if (VectorizedLoopID.hasValue())
+    L->setLoopID(VectorizedLoopID.getValue());
+  else {
+    // Keep all loop hints from the original loop on the vector loop (we'll
+    // replace the vectorizer-specific hints below).
+    if (MDNode *LID = OrigLoop->getLoopID())
+      L->setLoopID(LID);
+
+    LoopVectorizeHints Hints(L, true, *ORE);
+    Hints.setAlreadyVectorized();
+  }
+
   // 3. Fix the vectorized code: take care of header phi's, live-outs,
   //    predication, updating analyses.
   ILV.fixVectorizedLoop(State);
@@ -8041,8 +8052,6 @@ void LoopVectorizationPlanner::collectTriviallyDeadInstructions(
       DeadInstructions.insert(IndUpdate);
   }
 }
-
-Value *InnerLoopUnroller::reverseVector(Value *Vec) { return Vec; }
 
 Value *InnerLoopUnroller::getBroadcastInstrs(Value *V) { return V; }
 
@@ -8442,25 +8451,24 @@ VPValue *VPRecipeBuilder::createBlockInMask(BasicBlock *BB, VPlanPtr &Plan) {
       return BlockMaskCache[BB] = BlockMask; // Loop incoming mask is all-one.
 
     // Introduce the early-exit compare IV <= BTC to form header block mask.
-    // This is used instead of IV < TC because TC may wrap, unlike BTC.
-    // Start by constructing the desired canonical IV in the header block.
+    // This is used instead of IV < TC because TC may wrap, unlike BTC. Start by
+    // constructing the desired canonical IV in the header block as its first
+    // non-phi instructions.
+    assert(CM.foldTailByMasking() && "must fold the tail");
+    VPBasicBlock *HeaderVPBB = Plan->getEntry()->getEntryBasicBlock();
+    auto NewInsertionPoint = HeaderVPBB->getFirstNonPhi();
+
     VPValue *IV = nullptr;
     if (Legal->getPrimaryInduction())
       IV = Plan->getOrAddVPValue(Legal->getPrimaryInduction());
     else {
-      VPBasicBlock *HeaderVPBB = Plan->getEntry()->getEntryBasicBlock();
       auto *IVRecipe = new VPWidenCanonicalIVRecipe();
-      HeaderVPBB->insert(IVRecipe, HeaderVPBB->getFirstNonPhi());
+      HeaderVPBB->insert(IVRecipe, NewInsertionPoint);
       IV = IVRecipe;
     }
 
-    // Create the block in mask as the first non-phi instruction in the block.
     VPBuilder::InsertPointGuard Guard(Builder);
-    auto NewInsertionPoint = Builder.getInsertBlock()->getFirstNonPhi();
-    Builder.setInsertPoint(Builder.getInsertBlock(), NewInsertionPoint);
-
-    assert(CM.foldTailByMasking() && "must fold the tail");
-
+    Builder.setInsertPoint(HeaderVPBB, NewInsertionPoint);
     if (CM.TTI.emitGetActiveLaneMask()) {
       VPValue *TC = Plan->getOrCreateTripCount();
       BlockMask = Builder.createNaryOp(VPInstruction::ActiveLaneMask, {IV, TC});
@@ -8874,11 +8882,14 @@ VPRecipeBuilder::tryToCreateWidenRecipe(Instruction *Instr,
           Phi->getIncomingValueForBlock(OrigLoop->getLoopLatch())));
       PhisToFix.push_back(PhiRecipe);
     } else {
-      // TODO: record start and backedge value for remaining pointer induction
-      // phis.
+      // TODO: record backedge value for remaining pointer induction phis.
       assert(Phi->getType()->isPointerTy() &&
              "only pointer phis should be handled here");
-      PhiRecipe = new VPWidenPHIRecipe(Phi);
+      assert(Legal->getInductionVars().count(Phi) &&
+             "Not an induction variable");
+      InductionDescriptor II = Legal->getInductionVars().lookup(Phi);
+      VPValue *Start = Plan->getOrAddVPValue(II.getStartValue());
+      PhiRecipe = new VPWidenPHIRecipe(Phi, Start);
     }
 
     return toVPRecipeResult(PhiRecipe);
