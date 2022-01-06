@@ -435,7 +435,7 @@ struct InstructionsState {
   }
 
   /// Some of the instructions in the list have alternate opcodes.
-  bool isAltShuffle() const { return getOpcode() != getAltOpcode(); }
+  bool isAltShuffle() const { return AltOp != MainOp; }
 
   bool isOpcodeOrAlt(Instruction *I) const {
     unsigned CheckedOpcode = I->getOpcode();
@@ -2019,9 +2019,7 @@ private:
     }
 
     /// Some of the instructions in the list have alternate opcodes.
-    bool isAltShuffle() const {
-      return getOpcode() != getAltOpcode();
-    }
+    bool isAltShuffle() const { return MainOp != AltOp; }
 
     bool isOpcodeOrAlt(Instruction *I) const {
       unsigned CheckedOpcode = I->getOpcode();
@@ -9573,8 +9571,7 @@ bool SLPVectorizerPass::vectorizeInsertValueInst(InsertValueInst *IVI,
     return false;
 
   LLVM_DEBUG(dbgs() << "SLP: array mappable to vector: " << *IVI << "\n");
-  // Aggregate value is unlikely to be processed in vector register, we need to
-  // extract scalars into scalar registers, so NeedExtraction is set true.
+  // Aggregate value is unlikely to be processed in vector register.
   return tryToVectorizeList(BuildVectorOpds, R);
 }
 
