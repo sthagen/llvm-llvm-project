@@ -18,8 +18,10 @@
 //   Zbp - 0.93
 //   Zbr - 0.93
 //   Zbt - 0.93
-// This version is still experimental as the Bitmanip extensions haven't been
-// ratified yet.
+//
+// Zba, Zbb, Zbc, and Zbs have been ratified and are considered stable. The
+// other extensions are experimental as they have not yet been ratiied and are
+// subject to change.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,6 +45,8 @@ def riscv_shfl   : SDNode<"RISCVISD::SHFL",   SDTIntBinOp>;
 def riscv_shflw  : SDNode<"RISCVISD::SHFLW",  SDT_RISCVIntBinOpW>;
 def riscv_unshfl : SDNode<"RISCVISD::UNSHFL", SDTIntBinOp>;
 def riscv_unshflw: SDNode<"RISCVISD::UNSHFLW",SDT_RISCVIntBinOpW>;
+def riscv_bfp    : SDNode<"RISCVISD::BFP",    SDTIntBinOp>;
+def riscv_bfpw   : SDNode<"RISCVISD::BFPW",   SDT_RISCVIntBinOpW>;
 def riscv_bcompress    : SDNode<"RISCVISD::BCOMPRESS",   SDTIntBinOp>;
 def riscv_bcompressw   : SDNode<"RISCVISD::BCOMPRESSW",  SDT_RISCVIntBinOpW>;
 def riscv_bdecompress  : SDNode<"RISCVISD::BDECOMPRESS", SDTIntBinOp>;
@@ -939,10 +943,14 @@ def : Pat<(i64 (or (and GPR:$rs1, 0x00000000FFFFFFFF), (shl GPR:$rs2, (i64 32)))
 def : Pat<(i64 (or (and GPR:$rs2, 0xFFFFFFFF00000000), (srl GPR:$rs1, (i64 32)))),
           (PACKU GPR:$rs1, GPR:$rs2)>;
 }
-let Predicates = [HasStdExtZbp] in
+let Predicates = [HasStdExtZbp] in {
 def : Pat<(or (and (shl GPR:$rs2, (XLenVT 8)), 0xFFFF),
               (and GPR:$rs1, 0x00FF)),
           (PACKH GPR:$rs1, GPR:$rs2)>;
+def : Pat<(or (shl (and GPR:$rs2, 0x00FF), (XLenVT 8)),
+              (and GPR:$rs1, 0x00FF)),
+          (PACKH GPR:$rs1, GPR:$rs2)>;
+}
 
 let Predicates = [HasStdExtZbbOrZbp, IsRV32] in
 def : Pat<(i32 (and GPR:$rs, 0xFFFF)), (ZEXTH_RV32 GPR:$rs)>;
@@ -1123,3 +1131,9 @@ let Predicates = [HasStdExtZbr, IsRV64] in {
 def : PatGpr<int_riscv_crc32_d, CRC32D>;
 def : PatGpr<int_riscv_crc32c_d, CRC32CD>;
 } // Predicates = [HasStdExtZbr, IsRV64]
+
+let Predicates = [HasStdExtZbf] in
+def : PatGprGpr<riscv_bfp, BFP>;
+
+let Predicates = [HasStdExtZbf, IsRV64] in
+def : PatGprGpr<riscv_bfpw, BFPW>;

@@ -172,6 +172,15 @@ func @truncConstant(%arg0: i8) -> i16 {
   return %tr : i16
 }
 
+// CHECK-LABEL: @truncTrunc
+//       CHECK:   %[[cres:.+]] = arith.trunci %arg0 : i64 to i8
+//       CHECK:   return %[[cres]]
+func @truncTrunc(%arg0: i64) -> i8 {
+  %tr1 = arith.trunci %arg0 : i64 to i32
+  %tr2 = arith.trunci %tr1 : i32 to i8
+  return %tr2 : i8
+}
+
 // CHECK-LABEL: @truncFPConstant
 //       CHECK:   %[[cres:.+]] = arith.constant 1.000000e+00 : bf16
 //       CHECK:   return %[[cres]]
@@ -427,6 +436,18 @@ func @notCmpUGE(%arg0: i8, %arg1: i8) -> i1 {
 
 // -----
 
+// CHECK-LABEL: @xorxor(
+//       CHECK-NOT: xori
+//       CHECK:   return %arg0
+func @xorxor(%cmp : i1) -> i1 {
+  %true = arith.constant true
+  %ncmp = arith.xori %cmp, %true : i1
+  %nncmp = arith.xori %ncmp, %true : i1
+  return %nncmp : i1
+}
+
+// -----
+
 // CHECK-LABEL: @bitcastSameType(
 // CHECK-SAME: %[[ARG:[a-zA-Z0-9_]*]]
 func @bitcastSameType(%arg : f32) -> f32 {
@@ -656,4 +677,31 @@ func @constant_UItoFP() -> f32 {
   %c0 = arith.constant 2 : i32
   %res = arith.sitofp %c0 : i32 to f32
   return %res : f32
+}
+
+// -----
+// CHECK-LABEL: @constant_MinMax(
+func @constant_MinMax(%arg0 : f32) -> f32 {
+  // CHECK:  %[[const:.+]] = arith.constant
+  // CHECK:  %[[min:.+]] = arith.minf %arg0, %[[const]] : f32
+  // CHECK:  %[[res:.+]] = arith.maxf %[[min]], %[[const]] : f32
+  // CHECK:   return %[[res]]
+  %const = arith.constant 0.0 : f32
+  %min = arith.minf %const, %arg0 : f32
+  %res = arith.maxf %const, %min : f32
+  return %res : f32
+}
+
+// -----
+// CHECK-LABEL: @cmpf_nan(
+func @cmpf_nan(%arg0 : f32) -> (i1, i1, i1, i1) {
+//   CHECK-DAG:   %[[T:.*]] = arith.constant true
+//   CHECK-DAG:   %[[F:.*]] = arith.constant false
+//       CHECK:   return %[[F]], %[[F]], %[[T]], %[[T]]
+  %nan = arith.constant 0x7fffffff : f32
+  %0 = arith.cmpf olt, %nan, %arg0 : f32
+  %1 = arith.cmpf olt, %arg0, %nan : f32
+  %2 = arith.cmpf ugt, %nan, %arg0 : f32
+  %3 = arith.cmpf ugt, %arg0, %nan : f32
+  return %0, %1, %2, %3 : i1, i1, i1, i1
 }

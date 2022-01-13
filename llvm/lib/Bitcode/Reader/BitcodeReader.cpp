@@ -1349,7 +1349,7 @@ Error BitcodeReader::parseAttributeBlock() {
         return error("Invalid record");
 
       for (unsigned i = 0, e = Record.size(); i != e; i += 2) {
-        AttrBuilder B;
+        AttrBuilder B(Context);
         decodeLLVMAttributesForBitcode(B, Record[i+1]);
         Attrs.push_back(AttributeList::get(Context, Record[i], B));
       }
@@ -1591,7 +1591,7 @@ Error BitcodeReader::parseAttributeGroupBlock() {
       uint64_t GrpID = Record[0];
       uint64_t Idx = Record[1]; // Index of the object this attribute refers to.
 
-      AttrBuilder B;
+      AttrBuilder B(Context);
       for (unsigned i = 2, e = Record.size(); i != e; ++i) {
         if (Record[i] == 0) {        // Enum attribute
           Attribute::AttrKind Kind;
@@ -3927,9 +3927,7 @@ void BitcodeReader::propagateAttributeTypes(CallBase *CB,
     const InlineAsm *IA = cast<InlineAsm>(CB->getCalledOperand());
     unsigned ArgNo = 0;
     for (const InlineAsm::ConstraintInfo &CI : IA->ParseConstraints()) {
-      bool HasArg = CI.Type == InlineAsm::isInput ||
-                    (CI.Type == InlineAsm::isOutput && CI.isIndirect);
-      if (!HasArg)
+      if (!CI.hasArg())
         continue;
 
       if (CI.isIndirect && !CB->getAttributes().getParamElementType(ArgNo)) {
