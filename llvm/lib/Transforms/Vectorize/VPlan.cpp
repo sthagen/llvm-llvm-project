@@ -680,7 +680,7 @@ void VPInstruction::generateInstruction(VPTransformState &State,
     Value *ScalarTC = State.get(getOperand(1), Part);
 
     auto *Int1Ty = Type::getInt1Ty(Builder.getContext());
-    auto *PredTy = FixedVectorType::get(Int1Ty, State.VF.getKnownMinValue());
+    auto *PredTy = VectorType::get(Int1Ty, State.VF);
     Instruction *Call = Builder.CreateIntrinsic(
         Intrinsic::get_active_lane_mask, {PredTy, ScalarTC->getType()},
         {VIVElem0, ScalarTC}, nullptr, "active.lane.mask");
@@ -871,6 +871,16 @@ void VPlan::prepareToExecute(Value *TripCountV, Value *VectorTripCountV,
     VPValue *VPV = new VPValue(CanonicalIVStartValue);
     addExternalDef(VPV);
     auto *IV = getCanonicalIV();
+    assert(all_of(IV->users(),
+                  [](const VPUser *U) {
+                    auto *VPI = cast<VPInstruction>(U);
+                    return VPI->getOpcode() ==
+                               VPInstruction::CanonicalIVIncrement ||
+                           VPI->getOpcode() ==
+                               VPInstruction::CanonicalIVIncrementNUW;
+                  }) &&
+           "the canonical IV should only be used by its increments when "
+           "resetting the start value");
     IV->setOperand(0, VPV);
   }
 }
@@ -1252,7 +1262,15 @@ void VPWidenIntOrFpInductionRecipe::print(raw_ostream &O, const Twine &Indent,
   } else
     O << " " << VPlanIngredient(IV);
 }
+#endif
 
+bool VPWidenIntOrFpInductionRecipe::isCanonical() const {
+  auto *StartC = dyn_cast<ConstantInt>(getStartValue()->getLiveInIRValue());
+  auto *StepC = dyn_cast<SCEVConstant>(getInductionDescriptor().getStep());
+  return StartC && StartC->isZero() && StepC && StepC->isOne();
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 void VPWidenGEPRecipe::print(raw_ostream &O, const Twine &Indent,
                              VPSlotTracker &SlotTracker) const {
   O << Indent << "WIDEN-GEP ";
@@ -1352,7 +1370,7 @@ void VPWidenMemoryInstructionRecipe::print(raw_ostream &O, const Twine &Indent,
   O << Indent << "WIDEN ";
 
   if (!isStore()) {
-    getVPSingleValue()->printAsOperand(O, SlotTracker);
+    printAsOperand(O, SlotTracker);
     O << " = ";
   }
   O << Instruction::getOpcodeName(Ingredient.getOpcode()) << " ";
@@ -1375,13 +1393,13 @@ void VPCanonicalIVPHIRecipe::execute(VPTransformState &State) {
 void VPCanonicalIVPHIRecipe::print(raw_ostream &O, const Twine &Indent,
                                    VPSlotTracker &SlotTracker) const {
   O << Indent << "EMIT ";
-  getVPSingleValue()->printAsOperand(O, SlotTracker);
+  printAsOperand(O, SlotTracker);
   O << " = CANONICAL-INDUCTION";
 }
 #endif
 
 void VPWidenCanonicalIVRecipe::execute(VPTransformState &State) {
-  Value *CanonicalIV = State.get(getParent()->getPlan()->getCanonicalIV(), 0);
+  Value *CanonicalIV = State.get(getOperand(0), 0);
   Type *STy = CanonicalIV->getType();
   IRBuilder<> Builder(State.CFG.PrevBB->getTerminator());
   ElementCount VF = State.VF;
@@ -1404,7 +1422,8 @@ void VPWidenCanonicalIVRecipe::print(raw_ostream &O, const Twine &Indent,
                                      VPSlotTracker &SlotTracker) const {
   O << Indent << "EMIT ";
   printAsOperand(O, SlotTracker);
-  O << " = WIDEN-CANONICAL-INDUCTION";
+  O << " = WIDEN-CANONICAL-INDUCTION ";
+  printOperands(O, SlotTracker);
 }
 #endif
 

@@ -510,8 +510,7 @@ public:
   /// is provided, the integer induction variable will first be truncated to
   /// the corresponding type. \p CanonicalIV is the scalar value generated for
   /// the canonical induction variable.
-  void widenIntOrFpInduction(PHINode *IV, const InductionDescriptor &ID,
-                             Value *Start, TruncInst *Trunc, VPValue *Def,
+  void widenIntOrFpInduction(PHINode *IV, VPWidenIntOrFpInductionRecipe *Def,
                              VPTransformState &State, Value *CanonicalIV);
 
   /// Construct the vector value of a scalarized value \p V one lane at a time.
@@ -2333,19 +2332,7 @@ Value *InnerLoopVectorizer::getBroadcastInstrs(Value *V) {
 static Value *getStepVector(Value *Val, Value *StartIdx, Value *Step,
                             Instruction::BinaryOps BinOp, ElementCount VF,
                             IRBuilder<> &Builder) {
-  if (VF.isScalar()) {
-    // When unrolling and the VF is 1, we only need to add a simple scalar.
-    Type *Ty = Val->getType();
-    assert(!Ty->isVectorTy() && "Val must be a scalar");
-
-    if (Ty->isFloatingPointTy()) {
-      // Floating-point operations inherit FMF via the builder's flags.
-      Value *MulOp = Builder.CreateFMul(StartIdx, Step);
-      return Builder.CreateBinOp(BinOp, Val, MulOp);
-    }
-    return Builder.CreateAdd(Val, Builder.CreateMul(StartIdx, Step),
-                             "induction");
-  }
+  assert(VF.isVector() && "only vector VFs are supported");
 
   // Create and check the types.
   auto *ValVTy = cast<VectorType>(Val->getType());
@@ -2490,17 +2477,12 @@ bool InnerLoopVectorizer::needsScalarInduction(Instruction *IV) const {
   return llvm::any_of(IV->users(), isScalarInst);
 }
 
-/// Returns true if \p ID starts at 0 and has a step of 1.
-static bool isCanonicalID(const InductionDescriptor &ID) {
-  if (!ID.getConstIntStepValue() || !ID.getConstIntStepValue()->isOne())
-    return false;
-  auto *StartC = dyn_cast<ConstantInt>(ID.getStartValue());
-  return StartC && StartC->isZero();
-}
-
 void InnerLoopVectorizer::widenIntOrFpInduction(
-    PHINode *IV, const InductionDescriptor &ID, Value *Start, TruncInst *Trunc,
-    VPValue *Def, VPTransformState &State, Value *CanonicalIV) {
+    PHINode *IV, VPWidenIntOrFpInductionRecipe *Def, VPTransformState &State,
+    Value *CanonicalIV) {
+  Value *Start = Def->getStartValue()->getLiveInIRValue();
+  const InductionDescriptor &ID = Def->getInductionDescriptor();
+  TruncInst *Trunc = Def->getTruncInst();
   IRBuilder<> &Builder = State.Builder;
   assert(IV->getType() == ID.getStartValue()->getType() && "Types must match");
   assert(!State.VF.isZero() && "VF must be non-zero");
@@ -2531,7 +2513,7 @@ void InnerLoopVectorizer::widenIntOrFpInduction(
   auto CreateScalarIV = [&](Value *&Step) -> Value * {
     Value *ScalarIV = CanonicalIV;
     Type *NeededType = IV->getType();
-    if (!isCanonicalID(ID) || ScalarIV->getType() != NeededType) {
+    if (!Def->isCanonical() || ScalarIV->getType() != NeededType) {
       ScalarIV =
           NeededType->isIntegerTy()
               ? Builder.CreateSExtOrTrunc(ScalarIV, NeededType)
@@ -2580,7 +2562,29 @@ void InnerLoopVectorizer::widenIntOrFpInduction(
   Value *Step = CreateStepValue(ID.getStep());
   if (State.VF.isScalar()) {
     Value *ScalarIV = CreateScalarIV(Step);
-    CreateSplatIV(ScalarIV, Step);
+    Type *ScalarTy = IntegerType::get(ScalarIV->getContext(),
+                                      Step->getType()->getScalarSizeInBits());
+
+    Instruction::BinaryOps IncOp = ID.getInductionOpcode();
+    if (IncOp == Instruction::BinaryOpsEnd)
+      IncOp = Instruction::Add;
+    for (unsigned Part = 0; Part < UF; ++Part) {
+      Value *StartIdx = ConstantInt::get(ScalarTy, Part);
+      Instruction::BinaryOps MulOp = Instruction::Mul;
+      if (Step->getType()->isFloatingPointTy()) {
+        StartIdx = Builder.CreateUIToFP(StartIdx, Step->getType());
+        MulOp = Instruction::FMul;
+      }
+
+      Value *Mul = Builder.CreateBinOp(MulOp, StartIdx, Step);
+      Value *EntryPart = Builder.CreateBinOp(IncOp, ScalarIV, Mul, "induction");
+      State.set(Def, EntryPart, Part);
+      if (Trunc) {
+        assert(!Step->getType()->isFloatingPointTy() &&
+               "fp inductions shouldn't be truncated");
+        addMetadata(EntryPart, Trunc);
+      }
+    }
     return;
   }
 
@@ -7907,6 +7911,40 @@ VPlan &LoopVectorizationPlanner::getBestPlanFor(ElementCount VF) const {
   llvm_unreachable("No plan found!");
 }
 
+static void AddRuntimeUnrollDisableMetaData(Loop *L) {
+  SmallVector<Metadata *, 4> MDs;
+  // Reserve first location for self reference to the LoopID metadata node.
+  MDs.push_back(nullptr);
+  bool IsUnrollMetadata = false;
+  MDNode *LoopID = L->getLoopID();
+  if (LoopID) {
+    // First find existing loop unrolling disable metadata.
+    for (unsigned i = 1, ie = LoopID->getNumOperands(); i < ie; ++i) {
+      auto *MD = dyn_cast<MDNode>(LoopID->getOperand(i));
+      if (MD) {
+        const auto *S = dyn_cast<MDString>(MD->getOperand(0));
+        IsUnrollMetadata =
+            S && S->getString().startswith("llvm.loop.unroll.disable");
+      }
+      MDs.push_back(LoopID->getOperand(i));
+    }
+  }
+
+  if (!IsUnrollMetadata) {
+    // Add runtime unroll disable metadata.
+    LLVMContext &Context = L->getHeader()->getContext();
+    SmallVector<Metadata *, 1> DisableOperands;
+    DisableOperands.push_back(
+        MDString::get(Context, "llvm.loop.unroll.runtime.disable"));
+    MDNode *DisableNode = MDNode::get(Context, DisableOperands);
+    MDs.push_back(DisableNode);
+    MDNode *NewLoopID = MDNode::get(Context, MDs);
+    // Set operand 0 to refer to the loop id itself.
+    NewLoopID->replaceOperandWith(0, NewLoopID);
+    L->setLoopID(NewLoopID);
+  }
+}
+
 void LoopVectorizationPlanner::executePlan(ElementCount BestVF, unsigned BestUF,
                                            VPlan &BestVPlan,
                                            InnerLoopVectorizer &ILV,
@@ -7959,6 +7997,9 @@ void LoopVectorizationPlanner::executePlan(ElementCount BestVF, unsigned BestUF,
     LoopVectorizeHints Hints(L, true, *ORE);
     Hints.setAlreadyVectorized();
   }
+  // Disable runtime unrolling when vectorizing the epilogue loop.
+  if (CanonicalIVStartValue)
+    AddRuntimeUnrollDisableMetaData(L);
 
   // 3. Fix the vectorized code: take care of header phi's, live-outs,
   //    predication, updating analyses.
@@ -8023,40 +8064,6 @@ void LoopVectorizationPlanner::collectTriviallyDeadInstructions(
 }
 
 Value *InnerLoopUnroller::getBroadcastInstrs(Value *V) { return V; }
-
-static void AddRuntimeUnrollDisableMetaData(Loop *L) {
-  SmallVector<Metadata *, 4> MDs;
-  // Reserve first location for self reference to the LoopID metadata node.
-  MDs.push_back(nullptr);
-  bool IsUnrollMetadata = false;
-  MDNode *LoopID = L->getLoopID();
-  if (LoopID) {
-    // First find existing loop unrolling disable metadata.
-    for (unsigned i = 1, ie = LoopID->getNumOperands(); i < ie; ++i) {
-      auto *MD = dyn_cast<MDNode>(LoopID->getOperand(i));
-      if (MD) {
-        const auto *S = dyn_cast<MDString>(MD->getOperand(0));
-        IsUnrollMetadata =
-            S && S->getString().startswith("llvm.loop.unroll.disable");
-      }
-      MDs.push_back(LoopID->getOperand(i));
-    }
-  }
-
-  if (!IsUnrollMetadata) {
-    // Add runtime unroll disable metadata.
-    LLVMContext &Context = L->getHeader()->getContext();
-    SmallVector<Metadata *, 1> DisableOperands;
-    DisableOperands.push_back(
-        MDString::get(Context, "llvm.loop.unroll.runtime.disable"));
-    MDNode *DisableNode = MDNode::get(Context, DisableOperands);
-    MDs.push_back(DisableNode);
-    MDNode *NewLoopID = MDNode::get(Context, MDs);
-    // Set operand 0 to refer to the loop id itself.
-    NewLoopID->replaceOperandWith(0, NewLoopID);
-    L->setLoopID(NewLoopID);
-  }
-}
 
 //===--------------------------------------------------------------------===//
 // EpilogueVectorizerMainLoop
@@ -8263,7 +8270,6 @@ EpilogueVectorizerEpilogueLoop::createEpilogueVectorizedLoopSkeleton() {
   createInductionResumeValues(Lp, {VecEpilogueIterationCountCheck,
                                    EPI.VectorTripCount} /* AdditionalBypass */);
 
-  AddRuntimeUnrollDisableMetaData(Lp);
   return {completeLoopSkeleton(Lp, OrigLoopID), EPResumeVal};
 }
 
@@ -8417,7 +8423,7 @@ VPValue *VPRecipeBuilder::createBlockInMask(BasicBlock *BB, VPlanPtr &Plan) {
     if (Legal->getPrimaryInduction())
       IV = Plan->getOrAddVPValue(Legal->getPrimaryInduction());
     else {
-      auto *IVRecipe = new VPWidenCanonicalIVRecipe();
+      auto *IVRecipe = new VPWidenCanonicalIVRecipe(Plan->getCanonicalIV());
       HeaderVPBB->insert(IVRecipe, NewInsertionPoint);
       IV = IVRecipe;
     }
@@ -9690,9 +9696,7 @@ void VPWidenGEPRecipe::execute(VPTransformState &State) {
 void VPWidenIntOrFpInductionRecipe::execute(VPTransformState &State) {
   assert(!State.Instance && "Int or FP induction being replicated.");
   auto *CanonicalIV = State.get(getParent()->getPlan()->getCanonicalIV(), 0);
-  State.ILV->widenIntOrFpInduction(IV, getInductionDescriptor(),
-                                   getStartValue()->getLiveInIRValue(),
-                                   getTruncInst(), this, State, CanonicalIV);
+  State.ILV->widenIntOrFpInduction(IV, this, State, CanonicalIV);
 }
 
 void VPWidenPHIRecipe::execute(VPTransformState &State) {

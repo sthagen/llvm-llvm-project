@@ -2772,6 +2772,7 @@ void SITargetLowering::passSpecialInputs(
 
   SelectionDAG &DAG = CLI.DAG;
   const SDLoc &DL = CLI.DL;
+  const Function &F = DAG.getMachineFunction().getFunction();
 
   const SIRegisterInfo *TRI = Subtarget->getRegisterInfo();
   const AMDGPUFunctionArgInfo &CallerArgInfo = Info.getArgInfo();
@@ -2883,11 +2884,16 @@ void SITargetLowering::passSpecialInputs(
 
   // If incoming ids are not packed we need to pack them.
   if (IncomingArgX && !IncomingArgX->isMasked() && CalleeArgInfo->WorkItemIDX &&
-      NeedWorkItemIDX)
-    InputReg = loadInputValue(DAG, ArgRC, MVT::i32, DL, *IncomingArgX);
+      NeedWorkItemIDX) {
+    if (Subtarget->getMaxWorkitemID(F, 0) != 0) {
+      InputReg = loadInputValue(DAG, ArgRC, MVT::i32, DL, *IncomingArgX);
+    } else {
+      InputReg = DAG.getConstant(0, DL, MVT::i32);
+    }
+  }
 
   if (IncomingArgY && !IncomingArgY->isMasked() && CalleeArgInfo->WorkItemIDY &&
-      NeedWorkItemIDY) {
+      NeedWorkItemIDY && Subtarget->getMaxWorkitemID(F, 1) != 0) {
     SDValue Y = loadInputValue(DAG, ArgRC, MVT::i32, DL, *IncomingArgY);
     Y = DAG.getNode(ISD::SHL, SL, MVT::i32, Y,
                     DAG.getShiftAmountConstant(10, MVT::i32, SL));
@@ -2896,7 +2902,7 @@ void SITargetLowering::passSpecialInputs(
   }
 
   if (IncomingArgZ && !IncomingArgZ->isMasked() && CalleeArgInfo->WorkItemIDZ &&
-      NeedWorkItemIDZ) {
+      NeedWorkItemIDZ && Subtarget->getMaxWorkitemID(F, 2) != 0) {
     SDValue Z = loadInputValue(DAG, ArgRC, MVT::i32, DL, *IncomingArgZ);
     Z = DAG.getNode(ISD::SHL, SL, MVT::i32, Z,
                     DAG.getShiftAmountConstant(20, MVT::i32, SL));
@@ -2905,13 +2911,21 @@ void SITargetLowering::passSpecialInputs(
   }
 
   if (!InputReg && (NeedWorkItemIDX || NeedWorkItemIDY || NeedWorkItemIDZ)) {
-    // Workitem ids are already packed, any of present incoming arguments
-    // will carry all required fields.
-    ArgDescriptor IncomingArg = ArgDescriptor::createArg(
-      IncomingArgX ? *IncomingArgX :
-      IncomingArgY ? *IncomingArgY :
-                     *IncomingArgZ, ~0u);
-    InputReg = loadInputValue(DAG, ArgRC, MVT::i32, DL, IncomingArg);
+    if (!IncomingArgX && !IncomingArgY && !IncomingArgZ) {
+      // We're in a situation where the outgoing function requires the workitem
+      // ID, but the calling function does not have it (e.g a graphics function
+      // calling a C calling convention function). This is illegal, but we need
+      // to produce something.
+      InputReg = DAG.getUNDEF(MVT::i32);
+    } else {
+      // Workitem ids are already packed, any of present incoming arguments
+      // will carry all required fields.
+      ArgDescriptor IncomingArg = ArgDescriptor::createArg(
+        IncomingArgX ? *IncomingArgX :
+        IncomingArgY ? *IncomingArgY :
+        *IncomingArgZ, ~0u);
+      InputReg = loadInputValue(DAG, ArgRC, MVT::i32, DL, IncomingArg);
+    }
   }
 
   if (OutgoingArg->isRegister()) {
@@ -6174,10 +6188,6 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   const AMDGPU::MIMGBaseOpcodeInfo *BaseOpcode =
       AMDGPU::getMIMGBaseOpcodeInfo(Intr->BaseOpcode);
   const AMDGPU::MIMGDimInfo *DimInfo = AMDGPU::getMIMGDimInfo(Intr->Dim);
-  const AMDGPU::MIMGLZMappingInfo *LZMappingInfo =
-      AMDGPU::getMIMGLZMappingInfo(Intr->BaseOpcode);
-  const AMDGPU::MIMGMIPMappingInfo *MIPMappingInfo =
-      AMDGPU::getMIMGMIPMappingInfo(Intr->BaseOpcode);
   unsigned IntrOpcode = Intr->BaseOpcode;
   bool IsGFX10Plus = AMDGPU::isGFX10Plus(*Subtarget);
 
@@ -6265,28 +6275,6 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   unsigned VAddrEnd = ArgOffset + Intr->VAddrEnd;
   SmallVector<SDValue, 4> VAddrs;
 
-  // Optimize _L to _LZ when _L is zero
-  if (LZMappingInfo) {
-    if (auto *ConstantLod = dyn_cast<ConstantFPSDNode>(
-            Op.getOperand(ArgOffset + Intr->LodIndex))) {
-      if (ConstantLod->isZero() || ConstantLod->isNegative()) {
-        IntrOpcode = LZMappingInfo->LZ;  // set new opcode to _lz variant of _l
-        VAddrEnd--;                      // remove 'lod'
-      }
-    }
-  }
-
-  // Optimize _mip away, when 'lod' is zero
-  if (MIPMappingInfo) {
-    if (auto *ConstantLod = dyn_cast<ConstantSDNode>(
-            Op.getOperand(ArgOffset + Intr->MipIndex))) {
-      if (ConstantLod->isZero()) {
-        IntrOpcode = MIPMappingInfo->NONMIP;  // set new opcode to variant without _mip
-        VAddrEnd--;                           // remove 'mip'
-      }
-    }
-  }
-
   // Check for 16 bit addresses or derivatives and pack if true.
   MVT VAddrVT =
       Op.getOperand(ArgOffset + Intr->GradientStart).getSimpleValueType();
@@ -6302,12 +6290,18 @@ SDValue SITargetLowering::lowerImage(SDValue Op,
   // Push back extra arguments.
   for (unsigned I = Intr->VAddrStart; I < Intr->GradientStart; I++) {
     if (IsA16 && (Op.getOperand(ArgOffset + I).getValueType() == MVT::f16)) {
+      assert(I == Intr->BiasIndex && "Got unexpected 16-bit extra argument");
       // Special handling of bias when A16 is on. Bias is of type half but
       // occupies full 32-bit.
-      SDValue bias = DAG.getBuildVector( MVT::v2f16, DL, {Op.getOperand(ArgOffset + I), DAG.getUNDEF(MVT::f16)});
-      VAddrs.push_back(bias);
-    } else
+      SDValue Bias = DAG.getBuildVector(
+          MVT::v2f16, DL,
+          {Op.getOperand(ArgOffset + I), DAG.getUNDEF(MVT::f16)});
+      VAddrs.push_back(Bias);
+    } else {
+      assert((!IsA16 || Intr->NumBiasArgs == 0 || I != Intr->BiasIndex) &&
+             "Bias needs to be converted to 16 bit in A16 mode");
       VAddrs.push_back(Op.getOperand(ArgOffset + I));
+    }
   }
 
   if (BaseOpcode->Gradients && !ST->hasG16() && (IsA16 != IsG16)) {
@@ -6750,14 +6744,23 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return getPreloadedValue(DAG, *MFI, VT,
                              AMDGPUFunctionArgInfo::WORKGROUP_ID_Z);
   case Intrinsic::amdgcn_workitem_id_x:
+    if (Subtarget->getMaxWorkitemID(MF.getFunction(), 0) == 0)
+      return DAG.getConstant(0, DL, MVT::i32);
+
     return loadInputValue(DAG, &AMDGPU::VGPR_32RegClass, MVT::i32,
                           SDLoc(DAG.getEntryNode()),
                           MFI->getArgInfo().WorkItemIDX);
   case Intrinsic::amdgcn_workitem_id_y:
+    if (Subtarget->getMaxWorkitemID(MF.getFunction(), 1) == 0)
+      return DAG.getConstant(0, DL, MVT::i32);
+
     return loadInputValue(DAG, &AMDGPU::VGPR_32RegClass, MVT::i32,
                           SDLoc(DAG.getEntryNode()),
                           MFI->getArgInfo().WorkItemIDY);
   case Intrinsic::amdgcn_workitem_id_z:
+    if (Subtarget->getMaxWorkitemID(MF.getFunction(), 2) == 0)
+      return DAG.getConstant(0, DL, MVT::i32);
+
     return loadInputValue(DAG, &AMDGPU::VGPR_32RegClass, MVT::i32,
                           SDLoc(DAG.getEntryNode()),
                           MFI->getArgInfo().WorkItemIDZ);
@@ -6918,9 +6921,6 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
                                 DAG.getConstant(1, SL, MVT::i32));
     return DAG.getSetCC(SL, MVT::i1, SrcHi, Aperture, ISD::SETEQ);
   }
-  case Intrinsic::amdgcn_alignbit:
-    return DAG.getNode(ISD::FSHR, DL, VT,
-                       Op.getOperand(1), Op.getOperand(2), Op.getOperand(3));
   case Intrinsic::amdgcn_perm:
     return DAG.getNode(AMDGPUISD::PERM, DL, MVT::i32, Op.getOperand(1),
                        Op.getOperand(2), Op.getOperand(3));
@@ -11745,9 +11745,9 @@ SITargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI_,
       if (RegName.consume_front("[")) {
         uint32_t End;
         bool Failed = RegName.consumeInteger(10, Idx);
-        Failed &= !RegName.consume_front(":");
-        Failed &= RegName.consumeInteger(10, End);
-        Failed &= !RegName.consume_back("]");
+        Failed |= !RegName.consume_front(":");
+        Failed |= RegName.consumeInteger(10, End);
+        Failed |= !RegName.consume_back("]");
         if (!Failed) {
           uint32_t Width = (End - Idx + 1) * 32;
           MCRegister Reg = RC->getRegister(Idx);

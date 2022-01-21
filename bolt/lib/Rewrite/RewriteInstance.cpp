@@ -2771,7 +2771,6 @@ void RewriteInstance::buildFunctionsCFG() {
                      "Build Binary Functions", opts::TimeBuild);
 
   // Create annotation indices to allow lock-free execution
-  BC->MIB->getOrCreateAnnotationIndex("Offset");
   BC->MIB->getOrCreateAnnotationIndex("JTIndexReg");
   BC->MIB->getOrCreateAnnotationIndex("NOP");
   BC->MIB->getOrCreateAnnotationIndex("Size");
@@ -4019,10 +4018,11 @@ bool RewriteInstance::shouldStrip(const ELFShdrTy &Section,
   return false;
 }
 
-template <typename ELFT, typename ELFShdrTy>
-std::vector<ELFShdrTy>
+template <typename ELFT>
+std::vector<typename object::ELFObjectFile<ELFT>::Elf_Shdr>
 RewriteInstance::getOutputSections(ELFObjectFile<ELFT> *File,
                                    std::vector<uint32_t> &NewSectionIndex) {
+  using ELFShdrTy = typename ELFObjectFile<ELFT>::Elf_Shdr;
   const ELFFile<ELFT> &Obj = File->getELFFile();
   typename ELFT::ShdrRange Sections = cantFail(Obj.sections());
 
@@ -4255,14 +4255,11 @@ void RewriteInstance::patchELFSectionHeaderTable(ELFObjectFile<ELFT> *File) {
   OS.pwrite(reinterpret_cast<const char *>(&NewEhdr), sizeof(NewEhdr), 0);
 }
 
-template <typename ELFT, typename ELFShdrTy, typename WriteFuncTy,
-          typename StrTabFuncTy>
+template <typename ELFT, typename WriteFuncTy, typename StrTabFuncTy>
 void RewriteInstance::updateELFSymbolTable(
-    ELFObjectFile<ELFT> *File,
-    bool IsDynSym,
-    const ELFShdrTy &SymTabSection,
-    const std::vector<uint32_t> &NewSectionIndex,
-    WriteFuncTy Write,
+    ELFObjectFile<ELFT> *File, bool IsDynSym,
+    const typename object::ELFObjectFile<ELFT>::Elf_Shdr &SymTabSection,
+    const std::vector<uint32_t> &NewSectionIndex, WriteFuncTy Write,
     StrTabFuncTy AddToStrTab) {
   const ELFFile<ELFT> &Obj = File->getELFFile();
   using ELFSymTy = typename ELFObjectFile<ELFT>::Elf_Sym;

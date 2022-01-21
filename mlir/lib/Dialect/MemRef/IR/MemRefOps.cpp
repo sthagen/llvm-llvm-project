@@ -211,11 +211,12 @@ void AllocaOp::getCanonicalizationPatterns(RewritePatternSet &results,
 static void print(OpAsmPrinter &p, AllocaScopeOp &op) {
   bool printBlockTerminators = false;
 
-  p << " ";
+  p << ' ';
   if (!op.results().empty()) {
     p << " -> (" << op.getResultTypes() << ")";
     printBlockTerminators = true;
   }
+  p << ' ';
   p.printRegion(op.bodyRegion(),
                 /*printEntryBlockArgs=*/false,
                 /*printBlockTerminators=*/printBlockTerminators);
@@ -436,6 +437,75 @@ bool CastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
 
 OpFoldResult CastOp::fold(ArrayRef<Attribute> operands) {
   return succeeded(foldMemRefCast(*this)) ? getResult() : Value();
+}
+
+//===----------------------------------------------------------------------===//
+// CopyOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// If the source/target of a CopyOp is a CastOp that does not modify the shape
+/// and element type, the cast can be skipped. Such CastOps only cast the layout
+/// of the type.
+struct FoldCopyOfCast : public OpRewritePattern<CopyOp> {
+  using OpRewritePattern<CopyOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CopyOp copyOp,
+                                PatternRewriter &rewriter) const override {
+    bool modified = false;
+
+    // Check source.
+    if (auto castOp = copyOp.source().getDefiningOp<CastOp>()) {
+      auto fromType = castOp.source().getType().dyn_cast<MemRefType>();
+      auto toType = castOp.source().getType().dyn_cast<MemRefType>();
+
+      if (fromType && toType) {
+        if (fromType.getShape() == toType.getShape() &&
+            fromType.getElementType() == toType.getElementType()) {
+          rewriter.updateRootInPlace(
+              copyOp, [&] { copyOp.sourceMutable().assign(castOp.source()); });
+          modified = true;
+        }
+      }
+    }
+
+    // Check target.
+    if (auto castOp = copyOp.target().getDefiningOp<CastOp>()) {
+      auto fromType = castOp.source().getType().dyn_cast<MemRefType>();
+      auto toType = castOp.source().getType().dyn_cast<MemRefType>();
+
+      if (fromType && toType) {
+        if (fromType.getShape() == toType.getShape() &&
+            fromType.getElementType() == toType.getElementType()) {
+          rewriter.updateRootInPlace(
+              copyOp, [&] { copyOp.targetMutable().assign(castOp.source()); });
+          modified = true;
+        }
+      }
+    }
+
+    return success(modified);
+  }
+};
+
+/// Fold memref.copy(%x, %x).
+struct FoldSelfCopy : public OpRewritePattern<CopyOp> {
+  using OpRewritePattern<CopyOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CopyOp copyOp,
+                                PatternRewriter &rewriter) const override {
+    if (copyOp.source() != copyOp.target())
+      return failure();
+
+    rewriter.eraseOp(copyOp);
+    return success();
+  }
+};
+} // namespace
+
+void CopyOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                         MLIRContext *context) {
+  results.add<FoldCopyOfCast, FoldSelfCopy>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1264,6 +1334,7 @@ computeReshapeCollapsedType(MemRefType type,
   AffineExpr offset;
   SmallVector<AffineExpr, 4> strides;
   auto status = getStridesAndOffset(type, strides, offset);
+  auto isIdentityLayout = type.getLayout().isIdentity();
   (void)status;
   assert(succeeded(status) && "expected strided memref");
 
@@ -1280,12 +1351,19 @@ computeReshapeCollapsedType(MemRefType type,
     unsigned dim = m.getNumResults();
     int64_t size = 1;
     AffineExpr stride = strides[currentDim + dim - 1];
-    if (!isReshapableDimBand(currentDim, dim, sizes, strides)) {
+    if (isIdentityLayout ||
+        isReshapableDimBand(currentDim, dim, sizes, strides)) {
+      for (unsigned d = 0; d < dim; ++d) {
+        int64_t currentSize = sizes[currentDim + d];
+        if (ShapedType::isDynamic(currentSize)) {
+          size = ShapedType::kDynamicSize;
+          break;
+        }
+        size *= currentSize;
+      }
+    } else {
       size = ShapedType::kDynamicSize;
       stride = AffineExpr();
-    } else {
-      for (unsigned d = 0; d < dim; ++d)
-        size *= sizes[currentDim + d];
     }
     newSizes.push_back(size);
     newStrides.push_back(stride);

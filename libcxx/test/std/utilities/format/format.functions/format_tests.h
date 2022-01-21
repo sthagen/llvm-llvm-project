@@ -145,7 +145,7 @@ void format_test_string(T world, T universe, TestFunction check,
                   STR("hello {:0}"), world);
 
   // *** width ***
-#if _LIBCPP_VERSION
+#ifdef _LIBCPP_VERSION
   // This limit isn't specified in the Standard.
   static_assert(std::__format::__number_max == 2'147'483'647,
                 "Update the assert and the test.");
@@ -165,7 +165,7 @@ void format_test_string(T world, T universe, TestFunction check,
       STR("hello {:{}}"), world, -1);
   check_exception(
       "A format-spec arg-id replacement exceeds the maximum supported value",
-      STR("hello {:{}}"), world, -1u);
+      STR("hello {:{}}"), world, unsigned(-1));
   check_exception("Argument index out of bounds", STR("hello {:{}}"), world);
   check_exception(
       "A format-spec arg-id replacement argument isn't an integral type",
@@ -180,7 +180,7 @@ void format_test_string(T world, T universe, TestFunction check,
   check_exception("Invalid arg-id", STR("hello {0:{01}}"), world, 1);
 
   // *** precision ***
-#if _LIBCPP_VERSION
+#ifdef _LIBCPP_VERSION
   // This limit isn't specified in the Standard.
   static_assert(std::__format::__number_max == 2'147'483'647,
                 "Update the assert and the test.");
@@ -201,7 +201,7 @@ void format_test_string(T world, T universe, TestFunction check,
       STR("hello {:.{}}"), world, -1);
   check_exception(
       "A format-spec arg-id replacement exceeds the maximum supported value",
-      STR("hello {:.{}}"), world, -1u);
+      STR("hello {:.{}}"), world, ~0u);
   check_exception("Argument index out of bounds", STR("hello {:.{}}"), world);
   check_exception(
       "A format-spec arg-id replacement argument isn't an integral type",

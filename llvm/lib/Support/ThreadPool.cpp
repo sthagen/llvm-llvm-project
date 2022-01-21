@@ -14,7 +14,6 @@
 
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Threading.h"
-#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -118,7 +117,7 @@ void ThreadPool::wait() {
 }
 
 bool ThreadPool::isWorkerThread() const {
-  assert(false && "LLVM compiled with threading disabled");
+  report_fatal_error("LLVM compiled without multithreading");
 }
 
 ThreadPool::~ThreadPool() { wait(); }

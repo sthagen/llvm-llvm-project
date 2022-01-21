@@ -154,6 +154,10 @@ def Builtin_Function : Builtin_Type<"Function", [
     unsigned getNumResults() const;
     Type getResult(unsigned i) const { return getResults()[i]; }
 
+    /// Returns a clone of this function type with the given argument
+    /// and result types.
+    FunctionType clone(TypeRange inputs, TypeRange results) const;
+
     /// Returns a new function type with the specified arguments and results
     /// inserted.
     FunctionType getWithArgsAndResults(ArrayRef<unsigned> argIndices,
@@ -1013,7 +1017,7 @@ def Builtin_Vector : Builtin_Type<"Vector", [
     /// Clone this vector type with the given shape and element type. If the
     /// provided shape is `None`, the current shape of the type is used.
     VectorType cloneWith(Optional<ArrayRef<int64_t>> shape,
-                         Type elementType);
+                         Type elementType) const;
   }];
   let skipDefaultBuilders = 1;
   let genVerifyDecl = 1;

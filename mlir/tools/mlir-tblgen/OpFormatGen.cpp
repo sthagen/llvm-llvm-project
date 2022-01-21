@@ -21,6 +21,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/TableGen/Error.h"
@@ -424,6 +425,14 @@ struct OperationFormat {
     Optional<StringRef> variableTransformer;
   };
 
+  /// The context in which an element is generated.
+  enum class GenContext {
+    /// The element is generated at the top-level or with the same behaviour.
+    Normal,
+    /// The element is generated inside an optional group.
+    Optional
+  };
+
   OperationFormat(const Operator &op)
       : allOperands(false), allOperandTypes(false), allResultTypes(false),
         infersResultTypes(false) {
@@ -442,7 +451,8 @@ struct OperationFormat {
   void genParser(Operator &op, OpClass &opClass);
   /// Generate the parser code for a specific format element.
   void genElementParser(Element *element, MethodBody &body,
-                        FmtContext &attrTypeCtx);
+                        FmtContext &attrTypeCtx,
+                        GenContext genCtx = GenContext::Normal);
   /// Generate the C++ to resolve the types of operands and results during
   /// parsing.
   void genParserTypeResolution(Operator &op, MethodBody &body);
@@ -1217,7 +1227,8 @@ void OperationFormat::genParser(Operator &op, OpClass &opClass) {
 }
 
 void OperationFormat::genElementParser(Element *element, MethodBody &body,
-                                       FmtContext &attrTypeCtx) {
+                                       FmtContext &attrTypeCtx,
+                                       GenContext genCtx) {
   /// Optional Group.
   if (auto *optional = dyn_cast<OptionalElement>(element)) {
     auto elements = llvm::drop_begin(optional->getThenElements(),
@@ -1264,10 +1275,13 @@ void OperationFormat::genElementParser(Element *element, MethodBody &body,
            << "\", parser.getBuilder().getUnitAttr());\n";
     }
 
-    // Generate the rest of the elements normally.
+    // Generate the rest of the elements inside an optional group. Elements in
+    // an optional group after the guard are parsed as required.
     for (Element &childElement : llvm::drop_begin(elements, 1)) {
-      if (&childElement != elidedAnchorElement)
-        genElementParser(&childElement, body, attrTypeCtx);
+      if (&childElement != elidedAnchorElement) {
+        genElementParser(&childElement, body, attrTypeCtx,
+                         GenContext::Optional);
+      }
     }
     body << "  }";
 
@@ -1316,7 +1330,7 @@ void OperationFormat::genElementParser(Element *element, MethodBody &body,
     } else {
       attrTypeStr = "::mlir::Type{}";
     }
-    if (var->attr.isOptional()) {
+    if (genCtx == GenContext::Normal && var->attr.isOptional()) {
       body << formatv(optionalAttrParserCode, var->name, attrTypeStr);
     } else {
       if (attr->shouldBeQualified() ||
@@ -2048,9 +2062,6 @@ void OperationFormat::genElementPrinter(Element *element, MethodBody &body,
     if (attr->getTypeBuilder())
       body << "  _odsPrinter.printAttributeWithoutType("
            << op.getGetterName(var->name) << "Attr());\n";
-    else if (var->attr.isOptional())
-      body << "_odsPrinter.printAttribute(" << op.getGetterName(var->name)
-           << "Attr());\n";
     else if (attr->shouldBeQualified() ||
              var->attr.getStorageType() == "::mlir::Attribute")
       body << "  _odsPrinter.printAttribute(" << op.getGetterName(var->name)
