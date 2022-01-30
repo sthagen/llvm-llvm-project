@@ -63,6 +63,26 @@ void IntegerPolyhedron::append(const IntegerPolyhedron &other) {
   }
 }
 
+Optional<SmallVector<Fraction, 8>>
+IntegerPolyhedron::getRationalLexMin() const {
+  assert(numSymbols == 0 && "Symbols are not supported!");
+  Optional<SmallVector<Fraction, 8>> maybeLexMin =
+      LexSimplex(*this).getRationalLexMin();
+
+  if (!maybeLexMin)
+    return {};
+
+  // The Simplex returns the lexmin over all the variables including locals. But
+  // locals are not actually part of the space and should not be returned in the
+  // result. Since the locals are placed last in the list of identifiers, they
+  // will be minimized last in the lexmin. So simply truncating out the locals
+  // from the end of the answer gives the desired lexmin over the dimensions.
+  assert(maybeLexMin->size() == getNumIds() &&
+         "Incorrect number of vars in lexMin!");
+  maybeLexMin->resize(getNumDimAndSymbolIds());
+  return maybeLexMin;
+}
+
 unsigned IntegerPolyhedron::insertDimId(unsigned pos, unsigned num) {
   return insertId(IdKind::Dimension, pos, num);
 }
@@ -770,7 +790,7 @@ Optional<SmallVector<int64_t, 8>> IntegerPolyhedron::findIntegerSample() const {
   // 6) Return transform * concat(boundedSample, coneSample).
   SmallVector<int64_t, 8> &sample = boundedSample.getValue();
   sample.append(coneSample.begin(), coneSample.end());
-  return transform.preMultiplyColumn(sample);
+  return transform.postMultiplyWithColumn(sample);
 }
 
 /// Helper to evaluate an affine expression at a point.
@@ -1090,47 +1110,17 @@ void IntegerPolyhedron::mergeLocalIds(IntegerPolyhedron &other) {
   std::copy(denomsB.begin() + initLocals, denomsB.end(),
             denomsA.begin() + initLocals);
 
-  // Find and merge duplicate divisions.
-  // TODO: Add division normalization to support divisions that differ by
-  // a constant.
-  // TODO: Add division ordering such that a division representation for local
-  // identifier at position `i` only depends on local identifiers at position <
-  // `i`. This would make sure that all divisions depending on other local
-  // variables that can be merged, are merged.
+  // Merge function that merges the local variables in both sets by treating
+  // them as the same identifier.
+  auto merge = [&polyA, &polyB](unsigned i, unsigned j) -> bool {
+    eliminateRedundantLocalId(polyA, i, j);
+    eliminateRedundantLocalId(polyB, i, j);
+    return true;
+  };
+
+  // Merge all divisions by removing duplicate divisions.
   unsigned localOffset = getIdKindOffset(IdKind::Local);
-  for (unsigned i = 0; i < divsA.size(); ++i) {
-    // Check if a division representation exists for the `i^th` local id.
-    if (denomsA[i] == 0)
-      continue;
-    // Check if a division exists which is a duplicate of the division at `i`.
-    for (unsigned j = i + 1; j < divsA.size(); ++j) {
-      // Check if a division representation exists for the `j^th` local id.
-      if (denomsA[j] == 0)
-        continue;
-      // Check if the denominators match.
-      if (denomsA[i] != denomsA[j])
-        continue;
-      // Check if the representations are equal.
-      if (divsA[i] != divsA[j])
-        continue;
-
-      // Merge divisions at position `j` into division at position `i`.
-      eliminateRedundantLocalId(polyA, i, j);
-      eliminateRedundantLocalId(polyB, i, j);
-      for (unsigned k = 0, g = divsA.size(); k < g; ++k) {
-        SmallVector<int64_t, 8> &div = divsA[k];
-        if (denomsA[k] != 0) {
-          div[localOffset + i] += div[localOffset + j];
-          div.erase(div.begin() + localOffset + j);
-        }
-      }
-
-      divsA.erase(divsA.begin() + j);
-      denomsA.erase(denomsA.begin() + j);
-      // Since `j` can never be zero, we do not need to worry about overflows.
-      --j;
-    }
-  }
+  removeDuplicateDivs(divsA, denomsA, localOffset, merge);
 }
 
 /// Removes local variables using equalities. Each equality is checked if it
