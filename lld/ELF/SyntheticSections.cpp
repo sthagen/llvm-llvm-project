@@ -83,8 +83,10 @@ static ArrayRef<uint8_t> getVersion() {
 // by "readelf --string-dump .comment <file>".
 // The returned object is a mergeable string section.
 MergeInputSection *elf::createCommentSection() {
-  return make<MergeInputSection>(SHF_MERGE | SHF_STRINGS, SHT_PROGBITS, 1,
-                                 getVersion(), ".comment");
+  auto *sec = make<MergeInputSection>(SHF_MERGE | SHF_STRINGS, SHT_PROGBITS, 1,
+                                      getVersion(), ".comment");
+  sec->splitIntoPieces();
+  return sec;
 }
 
 // .MIPS.abiflags section.
@@ -1228,7 +1230,8 @@ StringTableSection::StringTableSection(StringRef name, bool dynamic)
     : SyntheticSection(dynamic ? (uint64_t)SHF_ALLOC : 0, SHT_STRTAB, 1, name),
       dynamic(dynamic) {
   // ELF string tables start with a NUL byte.
-  addString("");
+  strings.push_back("");
+  size = 1;
 }
 
 // Adds a string to the string table. If `hashIt` is true we hash and check for
@@ -1241,6 +1244,8 @@ unsigned StringTableSection::addString(StringRef s, bool hashIt) {
     if (!r.second)
       return r.first->second;
   }
+  if (s.empty())
+    return 0;
   unsigned ret = this->size;
   this->size = this->size + s.size() + 1;
   strings.push_back(s);
@@ -2153,7 +2158,7 @@ void SymbolTableBaseSection::addSymbol(Symbol *b) {
   // Adding a local symbol to a .dynsym is a bug.
   assert(this->type != SHT_DYNSYM || !b->isLocal());
 
-  bool hashIt = b->isLocal();
+  bool hashIt = b->isLocal() && config->optimize >= 2;
   symbols.push_back({b, strTabSec.addString(b->getName(), hashIt)});
 }
 
@@ -3328,11 +3333,15 @@ template <class ELFT> void elf::splitSections() {
   llvm::TimeTraceScope timeScope("Split sections");
   // splitIntoPieces needs to be called on each MergeInputSection
   // before calling finalizeContents().
-  parallelForEach(inputSections, [](InputSectionBase *sec) {
-    if (auto *s = dyn_cast<MergeInputSection>(sec))
-      s->splitIntoPieces();
-    else if (auto *eh = dyn_cast<EhInputSection>(sec))
-      eh->split<ELFT>();
+  parallelForEach(objectFiles, [](ELFFileBase *file) {
+    for (InputSectionBase *sec : file->getSections()) {
+      if (!sec)
+        continue;
+      if (auto *s = dyn_cast<MergeInputSection>(sec))
+        s->splitIntoPieces();
+      else if (auto *eh = dyn_cast<EhInputSection>(sec))
+        eh->split<ELFT>();
+    }
   });
 }
 
@@ -3476,7 +3485,7 @@ void ARMExidxSyntheticSection::finalizeContents() {
   sentinel = executableSections.back();
   // Optionally merge adjacent duplicate entries.
   if (config->mergeArmExidx) {
-    std::vector<InputSection *> selectedSections;
+    SmallVector<InputSection *, 0> selectedSections;
     selectedSections.reserve(executableSections.size());
     selectedSections.push_back(executableSections[0]);
     size_t prev = 0;

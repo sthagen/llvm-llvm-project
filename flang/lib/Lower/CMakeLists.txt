@@ -3,15 +3,13 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 add_flang_library(FortranLower
   Bridge.cpp
   CallInterface.cpp
-  CharacterExpr.cpp
-  CharacterRuntime.cpp
   Coarray.cpp
   ConvertType.cpp
-  IO.cpp
   Mangler.cpp
   OpenACC.cpp
   OpenMP.cpp
   PFTBuilder.cpp
+  Runtime.cpp
   SymbolMap.cpp
 
   DEPENDS

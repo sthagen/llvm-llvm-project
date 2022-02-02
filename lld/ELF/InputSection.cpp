@@ -83,22 +83,7 @@ InputSectionBase::InputSectionBase(InputFile *file, uint64_t flags,
     if (!zlib::isAvailable())
       error(toString(file) + ": contains a compressed section, " +
             "but zlib is not available");
-    switch (config->ekind) {
-    case ELF32LEKind:
-      parseCompressedHeader<ELF32LE>();
-      break;
-    case ELF32BEKind:
-      parseCompressedHeader<ELF32BE>();
-      break;
-    case ELF64LEKind:
-      parseCompressedHeader<ELF64LE>();
-      break;
-    case ELF64BEKind:
-      parseCompressedHeader<ELF64BE>();
-      break;
-    default:
-      llvm_unreachable("unknown ELFT");
-    }
+    invokeELFT(parseCompressedHeader);
   }
 }
 
@@ -1040,6 +1025,14 @@ void InputSectionBase::relocateAlloc(uint8_t *buf, uint8_t *bufEnd) {
       }
       target.relocate(bufLoc, rel, targetVA);
       break;
+    case R_AARCH64_PAGE_PC:
+      if (i + 1 < size && aarch64relaxer.tryRelaxAdrpAdd(
+                              rel, relocations[i + 1], secAddr, buf)) {
+        ++i;
+        continue;
+      }
+      target.relocate(bufLoc, rel, targetVA);
+      break;
     case R_PPC64_RELAX_GOT_PC: {
       // The R_PPC64_PCREL_OPT relocation must appear immediately after
       // R_PPC64_GOT_PCREL34 in the relocations table at the same offset.
@@ -1126,7 +1119,8 @@ void InputSectionBase::relocateAlloc(uint8_t *buf, uint8_t *bufEnd) {
 // For each function-defining prologue, find any calls to __morestack,
 // and replace them with calls to __morestack_non_split.
 static void switchMorestackCallsToMorestackNonSplit(
-    DenseSet<Defined *> &prologues, std::vector<Relocation *> &morestackCalls) {
+    DenseSet<Defined *> &prologues,
+    SmallVector<Relocation *, 0> &morestackCalls) {
 
   // If the target adjusted a function's prologue, all calls to
   // __morestack inside that function should be switched to
@@ -1176,7 +1170,7 @@ template <class ELFT>
 void InputSectionBase::adjustSplitStackFunctionPrologues(uint8_t *buf,
                                                          uint8_t *end) {
   DenseSet<Defined *> prologues;
-  std::vector<Relocation *> morestackCalls;
+  SmallVector<Relocation *, 0> morestackCalls;
 
   for (Relocation &rel : relocations) {
     // Ignore calls into the split-stack api.
@@ -1358,16 +1352,12 @@ void EhInputSection::split(ArrayRef<RelTy> rels) {
 }
 
 static size_t findNull(StringRef s, size_t entSize) {
-  // Optimize the common case.
-  if (entSize == 1)
-    return s.find(0);
-
   for (unsigned i = 0, n = s.size(); i != n; i += entSize) {
     const char *b = s.begin() + i;
     if (std::all_of(b, b + entSize, [](char c) { return c == 0; }))
       return i;
   }
-  return StringRef::npos;
+  llvm_unreachable("");
 }
 
 SyntheticSection *MergeInputSection::getParent() const {
@@ -1376,20 +1366,24 @@ SyntheticSection *MergeInputSection::getParent() const {
 
 // Split SHF_STRINGS section. Such section is a sequence of
 // null-terminated strings.
-void MergeInputSection::splitStrings(ArrayRef<uint8_t> data, size_t entSize) {
-  size_t off = 0;
+void MergeInputSection::splitStrings(StringRef s, size_t entSize) {
   const bool live = !(flags & SHF_ALLOC) || !config->gcSections;
-  StringRef s = toStringRef(data);
-
-  while (!s.empty()) {
-    size_t end = findNull(s, entSize);
-    if (end == StringRef::npos)
-      fatal(toString(this) + ": string is not null terminated");
-    size_t size = end + entSize;
-
-    pieces.emplace_back(off, xxHash64(s.substr(0, size)), live);
-    s = s.substr(size);
-    off += size;
+  const char *p = s.data(), *end = s.data() + s.size();
+  if (!std::all_of(end - entSize, end, [](char c) { return c == 0; }))
+    fatal(toString(this) + ": string is not null terminated");
+  if (entSize == 1) {
+    // Optimize the common case.
+    do {
+      size_t size = strlen(p) + 1;
+      pieces.emplace_back(p - s.begin(), xxHash64(StringRef(p, size)), live);
+      p += size;
+    } while (p != end);
+  } else {
+    do {
+      size_t size = findNull(StringRef(p, end - p), entSize) + entSize;
+      pieces.emplace_back(p - s.begin(), xxHash64(StringRef(p, size)), live);
+      p += size;
+    } while (p != end);
   }
 }
 
@@ -1428,7 +1422,7 @@ void MergeInputSection::splitIntoPieces() {
   assert(pieces.empty());
 
   if (flags & SHF_STRINGS)
-    splitStrings(data(), entsize);
+    splitStrings(toStringRef(data()), entsize);
   else
     splitNonStrings(data(), entsize);
 }

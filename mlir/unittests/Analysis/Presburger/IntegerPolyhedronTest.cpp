@@ -624,7 +624,7 @@ static void checkDivisionRepresentation(
     const std::vector<SmallVector<int64_t, 8>> &expectedDividends,
     const SmallVectorImpl<unsigned> &expectedDenominators) {
 
-  std::vector<SmallVector<int64_t, 8>> dividends;
+  SmallVector<SmallVector<int64_t, 8>> dividends;
   SmallVector<unsigned, 4> denominators;
 
   poly.getLocalReprs(dividends, denominators);
@@ -732,6 +732,61 @@ TEST(IntegerPolyhedronTest, computeLocalReprTightUpperBound) {
     SmallVector<unsigned, 8> denoms = {4};
 
     // Check if the divisions can be computed even with a tighter upper bound.
+    checkDivisionRepresentation(poly, divisions, denoms);
+  }
+}
+
+TEST(IntegerPolyhedronTest, computeLocalReprFromEquality) {
+  MLIRContext context;
+  {
+    IntegerPolyhedron poly =
+        parsePoly("(i, j, q) : (-4*q + i + j == 0)", &context);
+    // Convert `q` to a local variable.
+    poly.convertDimToLocal(2, 3);
+
+    std::vector<SmallVector<int64_t, 8>> divisions = {{-1, -1, 0, 0}};
+    SmallVector<unsigned, 8> denoms = {4};
+
+    checkDivisionRepresentation(poly, divisions, denoms);
+  }
+  {
+    IntegerPolyhedron poly =
+        parsePoly("(i, j, q) : (4*q - i - j == 0)", &context);
+    // Convert `q` to a local variable.
+    poly.convertDimToLocal(2, 3);
+
+    std::vector<SmallVector<int64_t, 8>> divisions = {{-1, -1, 0, 0}};
+    SmallVector<unsigned, 8> denoms = {4};
+
+    checkDivisionRepresentation(poly, divisions, denoms);
+  }
+  {
+    IntegerPolyhedron poly =
+        parsePoly("(i, j, q) : (3*q + i + j - 2 == 0)", &context);
+    // Convert `q` to a local variable.
+    poly.convertDimToLocal(2, 3);
+
+    std::vector<SmallVector<int64_t, 8>> divisions = {{1, 1, 0, -2}};
+    SmallVector<unsigned, 8> denoms = {3};
+
+    checkDivisionRepresentation(poly, divisions, denoms);
+  }
+}
+
+TEST(IntegerPolyhedronTest, computeLocalReprFromEqualityAndInequality) {
+  MLIRContext context;
+  {
+    IntegerPolyhedron poly =
+        parsePoly("(i, j, q, k) : (-3*k + i + j == 0, 4*q - "
+                  "i - j + 2 >= 0, -4*q + i + j >= 0)",
+                  &context);
+    // Convert `q` and `k` to local variables.
+    poly.convertDimToLocal(2, 4);
+
+    std::vector<SmallVector<int64_t, 8>> divisions = {{1, 1, 0, 0, 1},
+                                                      {-1, -1, 0, 0, 0}};
+    SmallVector<unsigned, 8> denoms = {4, 3};
+
     checkDivisionRepresentation(poly, divisions, denoms);
   }
 }
