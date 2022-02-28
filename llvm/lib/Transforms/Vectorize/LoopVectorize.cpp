@@ -307,6 +307,11 @@ static cl::opt<bool> InterleaveSmallLoopScalarReduction(
     cl::desc("Enable interleaving for loops with small iteration counts that "
              "contain scalar reductions to expose ILP."));
 
+/// The number of stores in a loop that are allowed to need predication.
+static cl::opt<unsigned> NumberOfStoresToPredicate(
+    "vectorize-num-stores-pred", cl::init(1), cl::Hidden,
+    cl::desc("Max number of stores to be predicated behind an if."));
+
 static cl::opt<bool> EnableIndVarRegisterHeur(
     "enable-ind-var-reg-heur", cl::init(true), cl::Hidden,
     cl::desc("Count the induction variable only once when interleaving"));
@@ -1773,6 +1778,10 @@ private:
   /// as a vector operation.
   bool isConsecutiveLoadOrStore(Instruction *I);
 
+  /// Returns true if an artificially high cost for emulated masked memrefs
+  /// should be used.
+  bool useEmulatedMaskMemRefHack(Instruction *I, ElementCount VF);
+
   /// Map of scalar integer values to the smallest bitwidth they can be legally
   /// represented as. The vector equivalents of these values should be truncated
   /// to this type.
@@ -1989,7 +1998,7 @@ public:
   /// there is no vector code generation, the check blocks are removed
   /// completely.
   void Create(Loop *L, const LoopAccessInfo &LAI,
-              const SCEVUnionPredicate &UnionPred) {
+              const SCEVPredicate &Pred) {
 
     BasicBlock *LoopHeader = L->getHeader();
     BasicBlock *Preheader = L->getLoopPreheader();
@@ -1998,12 +2007,12 @@ public:
     // ensure the blocks are properly added to LoopInfo & DominatorTree. Those
     // may be used by SCEVExpander. The blocks will be un-linked from their
     // predecessors and removed from LI & DT at the end of the function.
-    if (!UnionPred.isAlwaysTrue()) {
+    if (!Pred.isAlwaysTrue()) {
       SCEVCheckBlock = SplitBlock(Preheader, Preheader->getTerminator(), DT, LI,
                                   nullptr, "vector.scevcheck");
 
       SCEVCheckCond = SCEVExp.expandCodeForPredicate(
-          &UnionPred, SCEVCheckBlock->getTerminator());
+          &Pred, SCEVCheckBlock->getTerminator());
     }
 
     const auto &RtPtrChecking = *LAI.getRuntimePointerChecking();
@@ -2334,9 +2343,8 @@ static Value *getStepVector(Value *Val, Value *StartIdx, Value *Step,
 
   // Create a vector of consecutive numbers from zero to VF.
   VectorType *InitVecValVTy = ValVTy;
-  Type *InitVecValSTy = STy;
   if (STy->isFloatingPointTy()) {
-    InitVecValSTy =
+    Type *InitVecValSTy =
         IntegerType::get(STy->getContext(), STy->getScalarSizeInBits());
     InitVecValVTy = VectorType::get(InitVecValSTy, VLen);
   }
@@ -2550,10 +2558,9 @@ static Value *CreateStepValue(const SCEV *Step, ScalarEvolution &SE,
 /// For pointer induction, returns StartValue[Index * StepValue].
 /// FIXME: The newly created binary instructions should contain nsw/nuw
 /// flags, which can be found from the original scalar operations.
-static Value *emitTransformedIndex(IRBuilderBase &B, Value *Index, Value *Step,
+static Value *emitTransformedIndex(IRBuilderBase &B, Value *Index,
+                                   Value *StartValue, Value *Step,
                                    const InductionDescriptor &ID) {
-
-  auto StartValue = ID.getStartValue();
   assert(Index->getType()->getScalarType() == Step->getType() &&
          "Index scalar type does not match StepValue type");
 
@@ -2668,7 +2675,7 @@ void InnerLoopVectorizer::widenIntOrFpInduction(
           NeededType->isIntegerTy()
               ? Builder.CreateSExtOrTrunc(ScalarIV, NeededType)
               : Builder.CreateCast(Instruction::SIToFP, ScalarIV, NeededType);
-      ScalarIV = emitTransformedIndex(Builder, ScalarIV, Step, ID);
+      ScalarIV = emitTransformedIndex(Builder, ScalarIV, Start, Step, ID);
       ScalarIV->setName("offset.idx");
     }
     if (Trunc) {
@@ -3403,7 +3410,7 @@ void InnerLoopVectorizer::createInductionResumeValues(
       Value *CRD = B.CreateCast(CastOp, VectorTripCount, StepType, "cast.crd");
       Value *Step =
           CreateStepValue(II.getStep(), *PSE.getSE(), &*B.GetInsertPoint());
-      EndValue = emitTransformedIndex(B, CRD, Step, II);
+      EndValue = emitTransformedIndex(B, CRD, II.getStartValue(), Step, II);
       EndValue->setName("ind.end");
 
       // Compute the end value for the additional bypass (if applicable).
@@ -3415,7 +3422,8 @@ void InnerLoopVectorizer::createInductionResumeValues(
             CreateStepValue(II.getStep(), *PSE.getSE(), &*B.GetInsertPoint());
         CRD =
             B.CreateCast(CastOp, AdditionalBypass.second, StepType, "cast.crd");
-        EndValueFromAdditionalBypass = emitTransformedIndex(B, CRD, Step, II);
+        EndValueFromAdditionalBypass =
+            emitTransformedIndex(B, CRD, II.getStartValue(), Step, II);
         EndValueFromAdditionalBypass->setName("ind.end");
       }
     }
@@ -3608,7 +3616,8 @@ void InnerLoopVectorizer::fixupIVUsers(PHINode *OrigPhi,
 
       Value *Step = CreateStepValue(II.getStep(), *PSE.getSE(),
                                     LoopVectorBody->getTerminator());
-      Value *Escape = emitTransformedIndex(B, CMO, Step, II);
+      Value *Escape =
+          emitTransformedIndex(B, CMO, II.getStartValue(), Step, II);
       Escape->setName("ind.escape");
       MissingVals[UI] = Escape;
     }
@@ -4499,7 +4508,8 @@ void InnerLoopVectorizer::widenPHIInstruction(Instruction *PN,
 
           Value *Step = CreateStepValue(II.getStep(), *PSE.getSE(),
                                         State.CFG.PrevBB->getTerminator());
-          Value *SclrGep = emitTransformedIndex(Builder, GlobalIdx, Step, II);
+          Value *SclrGep = emitTransformedIndex(Builder, GlobalIdx,
+                                                II.getStartValue(), Step, II);
           SclrGep->setName("next.gep");
           State.set(PhiR, SclrGep, VPIteration(Part, Lane));
         }
@@ -5153,7 +5163,7 @@ bool LoopVectorizationCostModel::runtimeChecksRequired() {
     return true;
   }
 
-  if (!PSE.getUnionPredicate().getPredicates().empty()) {
+  if (!PSE.getPredicate().isAlwaysTrue()) {
     reportVectorizationFailure("Runtime SCEV check is required with -Os/-Oz",
         "runtime SCEV checks needed. Enable vectorization of this "
         "loop with '#pragma clang loop vectorize(enable)' when "
@@ -6421,6 +6431,22 @@ LoopVectorizationCostModel::calculateRegisterUsage(ArrayRef<ElementCount> VFs) {
   return RUs;
 }
 
+bool LoopVectorizationCostModel::useEmulatedMaskMemRefHack(Instruction *I,
+                                                           ElementCount VF) {
+  // TODO: Cost model for emulated masked load/store is completely
+  // broken. This hack guides the cost model to use an artificially
+  // high enough value to practically disable vectorization with such
+  // operations, except where previously deployed legality hack allowed
+  // using very low cost values. This is to avoid regressions coming simply
+  // from moving "masked load/store" check from legality to cost model.
+  // Masked Load/Gather emulation was previously never allowed.
+  // Limited number of Masked Store/Scatter emulation was allowed.
+  assert(isPredicatedInst(I, VF) && "Expecting a scalar emulated instruction");
+  return isa<LoadInst>(I) ||
+         (isa<StoreInst>(I) &&
+          NumPredStores > NumberOfStoresToPredicate);
+}
+
 void LoopVectorizationCostModel::collectInstsToScalarize(ElementCount VF) {
   // If we aren't vectorizing the loop, or if we've already collected the
   // instructions to scalarize, there's nothing to do. Collection may already
@@ -6446,7 +6472,9 @@ void LoopVectorizationCostModel::collectInstsToScalarize(ElementCount VF) {
         ScalarCostsTy ScalarCosts;
         // Do not apply discount if scalable, because that would lead to
         // invalid scalarization costs.
-        if (!VF.isScalable() &&
+        // Do not apply discount logic if hacked cost is needed
+        // for emulated masked memrefs.
+        if (!VF.isScalable() && !useEmulatedMaskMemRefHack(&I, VF) &&
             computePredInstDiscount(&I, ScalarCosts, VF) >= 0)
           ScalarCostsVF.insert(ScalarCosts.begin(), ScalarCosts.end());
         // Remember that BB will remain after vectorization.
@@ -6702,6 +6730,11 @@ LoopVectorizationCostModel::getMemInstScalarizationCost(Instruction *I,
         Vec_i1Ty, APInt::getAllOnes(VF.getKnownMinValue()),
         /*Insert=*/false, /*Extract=*/true);
     Cost += TTI.getCFInstrCost(Instruction::Br, TTI::TCK_RecipThroughput);
+
+    if (useEmulatedMaskMemRefHack(I, VF))
+      // Artificially setting to a high enough value to practically disable
+      // vectorization with such operations.
+      Cost = 3000000;
   }
 
   return Cost;
@@ -8560,13 +8593,30 @@ VPRecipeOrVPValueTy VPRecipeBuilder::tryToBlend(PHINode *Phi,
     return Operands[0];
   }
 
+  unsigned NumIncoming = Phi->getNumIncomingValues();
+  // For in-loop reductions, we do not need to create an additional select.
+  VPValue *InLoopVal = nullptr;
+  for (unsigned In = 0; In < NumIncoming; In++) {
+    PHINode *PhiOp =
+        dyn_cast_or_null<PHINode>(Operands[In]->getUnderlyingValue());
+    if (PhiOp && CM.isInLoopReduction(PhiOp)) {
+      assert(!InLoopVal && "Found more than one in-loop reduction!");
+      InLoopVal = Operands[In];
+    }
+  }
+
+  assert((!InLoopVal || NumIncoming == 2) &&
+         "Found an in-loop reduction for PHI with unexpected number of "
+         "incoming values");
+  if (InLoopVal)
+    return Operands[Operands[0] == InLoopVal ? 1 : 0];
+
   // We know that all PHIs in non-header blocks are converted into selects, so
   // we don't have to worry about the insertion order and we can just use the
   // builder. At this point we generate the predication tree. There may be
   // duplications since this is a simple recursive scan, but future
   // optimizations will clean it up.
   SmallVector<VPValue *, 2> OperandsWithMask;
-  unsigned NumIncoming = Phi->getNumIncomingValues();
 
   for (unsigned In = 0; In < NumIncoming; In++) {
     VPValue *EdgeMask =
@@ -9280,6 +9330,7 @@ VPlanPtr LoopVectorizationPlanner::buildVPlanWithVPRecipes(
 
   VPlanTransforms::sinkScalarOperands(*Plan);
   VPlanTransforms::mergeReplicateRegions(*Plan);
+  VPlanTransforms::removeDeadRecipes(*Plan, *OrigLoop);
 
   std::string PlanName;
   raw_string_ostream RSO(PlanName);
@@ -9390,7 +9441,7 @@ void LoopVectorizationPlanner::adjustRecipesForReductions(
           R->getOperand(FirstOpId) == Chain ? FirstOpId + 1 : FirstOpId;
       VPValue *VecOp = Plan->getVPValue(R->getOperand(VecOpId));
 
-      auto *CondOp = CM.foldTailByMasking()
+      auto *CondOp = CM.blockNeedsPredicationForAnyReason(R->getParent())
                          ? RecipeBuilder.createBlockInMask(R->getParent(), Plan)
                          : nullptr;
 
@@ -10526,7 +10577,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     GeneratedRTChecks Checks(*PSE.getSE(), DT, LI,
                              F->getParent()->getDataLayout());
     if (!VF.Width.isScalar() || IC > 1)
-      Checks.Create(L, *LVL.getLAI(), PSE.getUnionPredicate());
+      Checks.Create(L, *LVL.getLAI(), PSE.getPredicate());
 
     using namespace ore;
     if (!VectorizeLoop) {

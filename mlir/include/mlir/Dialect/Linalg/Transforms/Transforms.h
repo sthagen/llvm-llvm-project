@@ -59,6 +59,9 @@ void populateConvolutionVectorizationPatterns(RewritePatternSet &patterns,
 /// parallel loops.
 void populateElementwiseToLinalgConversionPatterns(RewritePatternSet &patterns);
 
+/// Populate patterns that are only useful in the context of sparse tensors.
+void populateSparseTensorRewriting(RewritePatternSet &patterns);
+
 /// Function type which is used to control when to stop fusion. It is expected
 /// that OpOperand is not modified in the callback. The OpOperand is not marked
 /// as const to allow callers to use non-const methods.
@@ -73,10 +76,21 @@ void populateFoldReshapeOpsByExpansionPatterns(
     const ControlElementwiseOpsFusionFn &controlFoldingReshapes =
         skipUnitDimReshape);
 
+/// Patterns to fold an expanding tensor.expand_shape operation with its
+/// producer generic operation by collapsing the dimensions of the generic op.
+void populateFoldReshapeOpsByCollapsingPatterns(
+    RewritePatternSet &patterns,
+    const ControlElementwiseOpsFusionFn &controlFoldingReshapes =
+        [](const OpResult & /*producer*/, OpOperand & /*consumer*/) {
+          return true;
+        });
+
 /// Patterns to fold a collapsing (expanding) tensor_reshape operation with its
 /// producer (consumer) generic operation by linearizing the indexing map used
 /// to access the source (target) of the reshape operation in the generic
 /// operation.
+/// TODO(ravishankarm): These patterns are to be deprecated in favor of using
+/// the `populateFoldReshapeByCollapsingPatterns`.
 void populateFoldReshapeOpsByLinearizationPatterns(RewritePatternSet &patterns);
 
 /// Patterns to fold a collapsing (expanding) tensor_reshape operation with its
@@ -84,6 +98,8 @@ void populateFoldReshapeOpsByLinearizationPatterns(RewritePatternSet &patterns);
 /// to access the source (target) of the reshape operation in the generic
 /// operation. The patterns are applied only when the tensor reshape involved is
 /// collapsing (introducing) unit-extent dimensions.
+/// TODO(ravishankarm): These patterns are to be deprecated in favor of using
+/// the `populateFoldReshapeByCollapsingPatterns`.
 void populateFoldUnitDimsReshapeOpsByLinearizationPatterns(
     RewritePatternSet &patterns);
 
@@ -114,9 +130,6 @@ void populateFoldUnitExtentDimsPatterns(RewritePatternSet &patterns);
 
 /// Patterns that are used to inline constant operands into linalg generic ops.
 void populateInlineConstantOperandsPatterns(RewritePatternSet &patterns);
-
-/// Pattern to convert TiledLoopOp to SCF loops.
-void populateTiledLoopToSCFPattern(RewritePatternSet &patterns);
 
 /// Options that control fusion of elementwise operations.
 struct LinalgElementwiseFusionOptions {
@@ -153,6 +166,8 @@ void populateElementwiseOpsFusionPatterns(
 
 /// Patterns to push reshape op towards the end of the graph in order to expose
 /// more fusion opportunities.
+/// TODO(ravishankarm): These patterns are to be deprecated in favor of using
+/// the `populateFoldReshapeByCollapsingPatterns`.
 void populatePushReshapeOpsPatterns(RewritePatternSet &patterns);
 
 /// Perform standalone tiling of a single LinalgOp by `tileSizes`.
@@ -620,8 +635,20 @@ struct LinalgPaddingOptions {
 struct LinalgTilingAndFusionOptions {
   /// Tile sizes used to tile the root operation.
   SmallVector<int64_t> tileSizes;
+  LinalgTilingAndFusionOptions &setTileSizes(ArrayRef<int64_t> ts) {
+    tileSizes.assign(ts.begin(), ts.end());
+    return *this;
+  }
   /// Tile interchange used to permute the tile loops.
   SmallVector<int64_t> tileInterchange;
+  /// When specified, specifies distribution of generated tile loops to
+  /// processors.
+  Optional<LinalgLoopDistributionOptions> tileDistribution = None;
+  LinalgTilingAndFusionOptions &
+  setDistributionOptions(LinalgLoopDistributionOptions distributionOptions) {
+    tileDistribution = std::move(distributionOptions);
+    return *this;
+  }
 };
 
 struct LinalgTilingOptions {
@@ -1218,13 +1245,6 @@ void populateDecomposeConvolutionPatterns(
     const LinalgTransformationFilter &filter = LinalgTransformationFilter(),
     PatternBenefit benefit = 1);
 
-/// Linalg distribution patterns
-//
-/// Populates `patterns` with patterns to distribute linalg.tiled_loop.
-void populateLinalgDistributeTiledLoopPattern(
-    RewritePatternSet &patterns, const LinalgLoopDistributionOptions &opts,
-    const LinalgTransformationFilter &marker);
-
 //===----------------------------------------------------------------------===//
 // Op-specific patterns.
 //===----------------------------------------------------------------------===//
@@ -1338,31 +1358,6 @@ struct LinalgCopyVTWForwardingPattern
                                 PatternRewriter &rewriter) const override;
 };
 
-/// Rewrite a TiledLoopOp with bounds/step that potentially do not divide evenly
-/// into a TiledLoopOp where the step divides the iteration space evenly,
-/// followed by another TiledLoopOp for the last (partial) iteration (if any).
-/// This transformation is called "loop peeling".
-///
-/// This function peels the `idx`-th loop of the TiledLoopOp. To tile all loops
-/// in the loop nest, this function must be called multiple times.
-///
-/// After loop peeling, this function tries to simplify/canonicalize affine.min
-/// and affine.max ops in the body of the two TiledLoopOps. For more details,
-/// refer to `mlir::scf::peelAndCanonicalizeForLoop`.
-///
-/// The return value indicates whether the loop was rewritten or not. Loops are
-/// not rewritten if:
-/// * Loop step size is 1 or
-/// * Loop bounds and step size are static, and step already divides the
-///   iteration space evenly.
-///
-/// Note: This function rewrites the given TiledLoopOp in-place and clones the
-/// TileLoopOp operation for the last iteration. It replaces all uses of the
-/// unpeeled TiledLoopOp with the results of the newly generated TiledLoopOp.
-LogicalResult peelAndCanonicalizeTiledLoop(RewriterBase &rewriter,
-                                           TiledLoopOp loopOp, int64_t idx,
-                                           TiledLoopOp &result);
-
 //===----------------------------------------------------------------------===//
 // Support for staged pattern application.
 //===----------------------------------------------------------------------===//
@@ -1384,10 +1379,27 @@ LogicalResult applyStagedPatterns(
 /// Rewrite extract_slice(pad_tensor(x)) into pad_tensor(extract_slice(x)).
 struct ExtractSliceOfPadTensorSwapPattern
     : public OpRewritePattern<tensor::ExtractSliceOp> {
-  using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
+  /// A function to control pattern application and rewrite logic.
+  ///
+  /// The function will be given the slice op and should return:
+  /// -  None: to fail the match and not apply the pattern;
+  /// -  true: to apply the pattern with zero slice guard;
+  /// - false: to apply the pattern without zero slice guard.
+  ///
+  /// See the documentation for tensor::bubbleUpPadSlice regarding zero slice
+  /// guard.
+  using ControlFn = std::function<llvm::Optional<bool>(tensor::ExtractSliceOp)>;
+
+  ExtractSliceOfPadTensorSwapPattern(MLIRContext *context,
+                                     ControlFn controlFn = nullptr,
+                                     PatternBenefit benefit = 1)
+      : OpRewritePattern(context, benefit), controlFn(std::move(controlFn)) {}
 
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp sliceOp,
                                 PatternRewriter &rewriter) const override;
+
+private:
+  ControlFn controlFn;
 };
 
 //===----------------------------------------------------------------------===//

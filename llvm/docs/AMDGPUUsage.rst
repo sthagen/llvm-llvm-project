@@ -921,6 +921,16 @@ The AMDGPU backend supports the following LLVM IR attributes.
                                              as the llvm.amdgcn.is.shared, llvm.amdgcn.is.private, llvm.trap, and
                                              llvm.debug intrinsics.
 
+     "amdgpu-no-hostcall-ptr"                Similar to amdgpu-no-implicitarg-ptr, except specific to the implicit
+                                             kernel argument that holds the pointer to the hostcall buffer. If this
+                                             attribute is absent, then the amdgpu-no-implicitarg-ptr is also removed.
+
+     "amdgpu-no-heap-ptr"                    Similar to amdgpu-no-implicitarg-ptr, except specific to the implicit
+                                             kernel argument that holds the pointer to an initialized memory buffer
+                                             that conforms to the requirements of the malloc/free device library V1
+                                             version implementation. If this attribute is absent, then the
+                                             amdgpu-no-implicitarg-ptr is also removed.
+
      ======================================= ==========================================================
 
 .. _amdgpu-elf-code-object:
@@ -3185,6 +3195,10 @@ same *vendor-name*.
                                                                   if a higher numbered
                                                                   register is used
                                                                   explicitly.
+     ".agpr_count"                       integer        Required  Number of accumulator
+                                                                  registers required by
+                                                                  each work-item for
+                                                                  GFX90A, GFX908.
      ".max_flat_workgroup_size"          integer        Required  Maximum flat
                                                                   work-group size
                                                                   supported by the
@@ -3570,6 +3584,11 @@ Code object V5 metadata is the same as
                                                        The grid dispatch dimensionality. This is the same value
                                                        as the AQL dispatch packet dimensionality. Must be a value
                                                        between 1 and 3.
+
+                                                     "hidden_heap_v1"
+                                                       A global address space pointer to an initialized memory
+                                                       buffer that conforms to the requirements of the malloc/free
+                                                       device library V1 version implementation.
 
                                                      "hidden_private_base"
                                                        The high 32 bits of the flat addressing private aperture base.
@@ -11431,6 +11450,7 @@ within a map that has been added by the same *vendor-name*.
      ".lds_size"                integer                  Local Data Share size in bytes.
      ".perf_data_buffer_size"   integer                  Performance data buffer size in bytes.
      ".vgpr_count"              integer                  Number of VGPRs used.
+     ".agpr_count"              integer                  Number of AGPRs used.
      ".sgpr_count"              integer                  Number of SGPRs used.
      ".vgpr_limit"              integer                  If non-zero, indicates the shader was compiled with a
                                                          directive to instruct the compiler to limit the VGPR usage to

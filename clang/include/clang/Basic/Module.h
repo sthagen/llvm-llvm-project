@@ -106,8 +106,14 @@ public:
     /// of header files.
     ModuleMapModule,
 
-    /// This is a C++ Modules TS module interface unit.
+    /// This is a C++20 module interface unit.
     ModuleInterfaceUnit,
+
+    /// This is a C++ 20 module partition interface.
+    ModulePartitionInterface,
+
+    /// This is a C++ 20 module partition implementation.
+    ModulePartitionImplementation,
 
     /// This is a fragment of the global module within some C++ module.
     GlobalModuleFragment,
@@ -150,7 +156,9 @@ public:
 
   /// Does this Module scope describe part of the purview of a named C++ module?
   bool isModulePurview() const {
-    return Kind == ModuleInterfaceUnit || Kind == PrivateModuleFragment;
+    return Kind == ModuleInterfaceUnit || Kind == ModulePartitionInterface ||
+           Kind == ModulePartitionImplementation ||
+           Kind == PrivateModuleFragment;
   }
 
   /// Does this Module scope describe a fragment of the global module within
@@ -504,6 +512,19 @@ public:
     Parent = M;
     Parent->SubModuleIndex[Name] = Parent->SubModules.size();
     Parent->SubModules.push_back(this);
+  }
+
+  /// Is this a module partition.
+  bool isModulePartition() const { return Name.find(':') != std::string::npos; }
+
+  /// Get the primary module interface name from a partition.
+  StringRef getPrimaryModuleInterfaceName() const {
+    if (Kind == ModulePartitionInterface ||
+        Kind == ModulePartitionImplementation) {
+      auto pos = Name.find(':');
+      return StringRef(Name.data(), pos);
+    }
+    return Name;
   }
 
   /// Retrieve the full name of this module, including the path from

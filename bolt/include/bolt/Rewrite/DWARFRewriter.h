@@ -10,6 +10,7 @@
 #define BOLT_REWRITE_DWARF_REWRITER_H
 
 #include "bolt/Core/DebugData.h"
+#include "llvm/MC/MCAsmLayout.h"
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -145,11 +146,6 @@ class DWARFRewriter {
   void convertToRangesPatchDebugInfo(DWARFDie DIE, uint64_t RangesSectionOffset,
                                      SimpleBinaryPatcher &DebugInfoPatcher,
                                      Optional<uint64_t> RangesBase = None);
-
-  /// Patch DW_AT_(low|high)_pc values for the \p DIE based on \p Range.
-  void patchLowHigh(DWARFDie DIE, DebugAddressRange Range,
-                    SimpleBinaryPatcher &DebugInfoPatcher,
-                    Optional<uint64_t> DWOId);
 
   /// Helper function for creating and returning per-DWO patchers/writers.
   template <class T, class Patcher>
