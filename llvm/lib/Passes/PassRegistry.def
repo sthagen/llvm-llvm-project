@@ -361,6 +361,7 @@ FUNCTION_PASS("verify<safepoint-ir>", SafepointIRVerifierPass())
 FUNCTION_PASS("verify<scalar-evolution>", ScalarEvolutionVerifierPass())
 FUNCTION_PASS("view-cfg", CFGViewerPass())
 FUNCTION_PASS("view-cfg-only", CFGOnlyViewerPass())
+FUNCTION_PASS("tlshoist", TLSVariableHoistPass())
 FUNCTION_PASS("transform-warning", WarnMissedTransformationsPass())
 FUNCTION_PASS("tsan", ThreadSanitizerPass())
 FUNCTION_PASS("memprof", MemProfilerPass())
@@ -402,13 +403,6 @@ FUNCTION_PASS_WITH_PARAMS("loop-unroll",
                           "no-profile-peeling;profile-peeling;"
                           "no-runtime;runtime;"
                           "no-upperbound;upperbound")
-FUNCTION_PASS_WITH_PARAMS("asan",
-                          "AddressSanitizerPass",
-                           [](AddressSanitizerOptions Opts) {
-                             return AddressSanitizerPass(Opts);
-                           },
-                          parseASanPassOptions,
-                          "kernel")
 FUNCTION_PASS_WITH_PARAMS("msan",
                           "MemorySanitizerPass",
                            [](MemorySanitizerOptions Opts) {

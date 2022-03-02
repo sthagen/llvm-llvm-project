@@ -1107,7 +1107,7 @@ static Instruction *canonicalizeSPF(SelectInst &Sel, ICmpInst &Cmp,
   SelectPatternFlavor SPF = matchSelectPattern(&Sel, LHS, RHS).Flavor;
   if (SPF == SelectPatternFlavor::SPF_ABS ||
       SPF == SelectPatternFlavor::SPF_NABS) {
-    if (!Cmp.hasOneUse())
+    if (!Cmp.hasOneUse() && !RHS->hasOneUse())
       return nullptr; // TODO: Relax this restriction.
 
     // Note that NSW flag can only be propagated for normal, non-negated abs!
@@ -1512,6 +1512,30 @@ tryToReuseConstantFromSelectInComparison(SelectInst &Sel, ICmpInst &Cmp,
   return &Sel;
 }
 
+static Instruction *foldSelectZeroOrOnes(ICmpInst *Cmp, Value *TVal,
+                                         Value *FVal,
+                                         InstCombiner::BuilderTy &Builder) {
+  if (!Cmp->hasOneUse())
+    return nullptr;
+
+  const APInt *CmpC;
+  if (!match(Cmp->getOperand(1), m_APIntAllowUndef(CmpC)))
+    return nullptr;
+
+  // (X u< 2) ? -X : -1 --> sext (X != 0)
+  Value *X = Cmp->getOperand(0);
+  if (Cmp->getPredicate() == ICmpInst::ICMP_ULT && *CmpC == 2 &&
+      match(TVal, m_Neg(m_Specific(X))) && match(FVal, m_AllOnes()))
+    return new SExtInst(Builder.CreateIsNotNull(X), TVal->getType());
+
+  // (X u> 1) ? -1 : -X --> sext (X != 0)
+  if (Cmp->getPredicate() == ICmpInst::ICMP_UGT && *CmpC == 1 &&
+      match(FVal, m_Neg(m_Specific(X))) && match(TVal, m_AllOnes()))
+    return new SExtInst(Builder.CreateIsNotNull(X), TVal->getType());
+
+  return nullptr;
+}
+
 /// Visit a SelectInst that has an ICmpInst as its first operand.
 Instruction *InstCombinerImpl::foldSelectInstWithICmp(SelectInst &SI,
                                                       ICmpInst *ICI) {
@@ -1606,6 +1630,9 @@ Instruction *InstCombinerImpl::foldSelectInstWithICmp(SelectInst &SI,
     return V;
 
   if (Instruction *V = foldSelectCtlzToCttz(ICI, TrueVal, FalseVal, Builder))
+    return V;
+
+  if (Instruction *V = foldSelectZeroOrOnes(ICI, TrueVal, FalseVal, Builder))
     return V;
 
   if (Value *V = foldSelectICmpAndOr(ICI, TrueVal, FalseVal, Builder))
@@ -2326,17 +2353,16 @@ static Instruction *foldSelectToCopysign(SelectInst &Sel,
   // (bitcast X) <  0 ?  TC : -TC --> copysign(TC, -X)
   // (bitcast X) >= 0 ? -TC :  TC --> copysign(TC, -X)
   // (bitcast X) >= 0 ?  TC : -TC --> copysign(TC,  X)
+  // Note: FMF from the select can not be propagated to the new instructions.
   if (IsTrueIfSignSet ^ TC->isNegative())
-    X = Builder.CreateFNegFMF(X, &Sel);
+    X = Builder.CreateFNeg(X);
 
   // Canonicalize the magnitude argument as the positive constant since we do
   // not care about its sign.
   Value *MagArg = TC->isNegative() ? FVal : TVal;
   Function *F = Intrinsic::getDeclaration(Sel.getModule(), Intrinsic::copysign,
                                           Sel.getType());
-  Instruction *CopySign = CallInst::Create(F, { MagArg, X });
-  CopySign->setFastMathFlags(Sel.getFastMathFlags());
-  return CopySign;
+  return CallInst::Create(F, { MagArg, X });
 }
 
 Instruction *InstCombinerImpl::foldVectorSelect(SelectInst &Sel) {
