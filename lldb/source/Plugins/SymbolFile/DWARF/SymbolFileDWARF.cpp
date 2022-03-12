@@ -96,6 +96,7 @@
 
 using namespace lldb;
 using namespace lldb_private;
+using namespace lldb_private::dwarf;
 
 LLDB_PLUGIN_DEFINE(SymbolFileDWARF)
 
@@ -1745,8 +1746,14 @@ SymbolFileDWARF::GetDwoSymbolFileForCompileUnit(
     dwo_file.AppendPathComponent(dwo_name);
   }
 
-  if (!FileSystem::Instance().Exists(dwo_file))
+  if (!FileSystem::Instance().Exists(dwo_file)) {
+    if (m_dwo_warning_issued.test_and_set(std::memory_order_relaxed) == false) {
+      GetObjectFile()->GetModule()->ReportWarning(
+          "unable to locate separate debug file (dwo, dwp). Debugging will be "
+          "degraded.");
+    }
     return nullptr;
+  }
 
   const lldb::offset_t file_offset = 0;
   DataBufferSP dwo_file_data_sp;

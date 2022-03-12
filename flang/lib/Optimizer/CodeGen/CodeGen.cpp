@@ -21,8 +21,8 @@
 #include "flang/Semantics/runtime-type-info.h"
 #include "mlir/Conversion/ArithmeticToLLVM/ArithmeticToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
-#include "mlir/Conversion/StandardToLLVM/ConvertStandardToLLVM.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Pass/Pass.h"
@@ -30,6 +30,8 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #define DEBUG_TYPE "flang-codegen"
+
+using namespace mlir;
 
 // fir::LLVMTypeConverter for converting to LLVM IR dialect types.
 #include "TypeConverter.h"
@@ -66,8 +68,9 @@ namespace {
 template <typename FromOp>
 class FIROpConversion : public mlir::ConvertOpToLLVMPattern<FromOp> {
 public:
-  explicit FIROpConversion(fir::LLVMTypeConverter &lowering)
-      : mlir::ConvertOpToLLVMPattern<FromOp>(lowering) {}
+  explicit FIROpConversion(fir::LLVMTypeConverter &lowering,
+                           const fir::FIRToLLVMPassOptions &options)
+      : mlir::ConvertOpToLLVMPattern<FromOp>(lowering), options(options) {}
 
 protected:
   mlir::Type convertType(mlir::Type ty) const {
@@ -251,6 +254,8 @@ protected:
   fir::LLVMTypeConverter &lowerTy() const {
     return *static_cast<fir::LLVMTypeConverter *>(this->getTypeConverter());
   }
+
+  const fir::FIRToLLVMPassOptions &options;
 };
 
 /// FIR conversion pattern template
@@ -724,8 +729,10 @@ struct ConvertOpConversion : public FIROpConversion<fir::ConvertOp> {
   mlir::LogicalResult
   matchAndRewrite(fir::ConvertOp convert, OpAdaptor adaptor,
                   mlir::ConversionPatternRewriter &rewriter) const override {
-    auto fromTy = convertType(convert.getValue().getType());
-    auto toTy = convertType(convert.getRes().getType());
+    auto fromFirTy = convert.getValue().getType();
+    auto toFirTy = convert.getRes().getType();
+    auto fromTy = convertType(fromFirTy);
+    auto toTy = convertType(toFirTy);
     mlir::Value op0 = adaptor.getOperands()[0];
     if (fromTy == toTy) {
       rewriter.replaceOp(convert, op0);
@@ -747,8 +754,7 @@ struct ConvertOpConversion : public FIROpConversion<fir::ConvertOp> {
       return rewriter.create<mlir::LLVM::FPExtOp>(loc, toTy, val);
     };
     // Complex to complex conversion.
-    if (fir::isa_complex(convert.getValue().getType()) &&
-        fir::isa_complex(convert.getRes().getType())) {
+    if (fir::isa_complex(fromFirTy) && fir::isa_complex(toFirTy)) {
       // Special case: handle the conversion of a complex such that both the
       // real and imaginary parts are converted together.
       auto zero = mlir::ArrayAttr::get(convert.getContext(),
@@ -770,6 +776,22 @@ struct ConvertOpConversion : public FIROpConversion<fir::ConvertOp> {
                                                              ic, one);
       return mlir::success();
     }
+
+    // Follow UNIX F77 convention for logicals:
+    // 1. underlying integer is not zero => logical is .TRUE.
+    // 2. logical is .TRUE. => set underlying integer to 1.
+    auto i1Type = mlir::IntegerType::get(convert.getContext(), 1);
+    if (fromFirTy.isa<fir::LogicalType>() && toFirTy == i1Type) {
+      mlir::Value zero = genConstantIndex(loc, fromTy, rewriter, 0);
+      rewriter.replaceOpWithNewOp<mlir::LLVM::ICmpOp>(
+          convert, mlir::LLVM::ICmpPredicate::ne, op0, zero);
+      return mlir::success();
+    }
+    if (fromFirTy == i1Type && toFirTy.isa<fir::LogicalType>()) {
+      rewriter.replaceOpWithNewOp<mlir::LLVM::ZExtOp>(convert, toTy, op0);
+      return mlir::success();
+    }
+
     // Floating point to floating point conversion.
     if (isFloatingPointTy(fromTy)) {
       if (isFloatingPointTy(toTy)) {
@@ -1259,7 +1281,8 @@ struct EmboxCommonConversion : public FIROpConversion<OP> {
   mlir::Value
   getTypeDescriptor(BOX box, mlir::ConversionPatternRewriter &rewriter,
                     mlir::Location loc, fir::RecordType recType) const {
-    std::string name = recType.translateNameToFrontendMangledName();
+    std::string name =
+        fir::NameUniquer::getTypeDescriptorName(recType.getName());
     auto module = box->template getParentOfType<mlir::ModuleOp>();
     if (auto global = module.template lookupSymbol<fir::GlobalOp>(name)) {
       auto ty = mlir::LLVM::LLVMPointerType::get(
@@ -1274,24 +1297,15 @@ struct EmboxCommonConversion : public FIROpConversion<OP> {
       return rewriter.create<mlir::LLVM::AddressOfOp>(loc, ty,
                                                       global.getSymName());
     }
-    if (fir::NameUniquer::belongsToModule(
-            name, Fortran::semantics::typeInfoBuiltinModule)) {
-      // Type info derived types do not have type descriptors since they are the
-      // types defining type descriptors.
-      return rewriter.create<mlir::LLVM::NullOp>(
-          loc, ::getVoidPtrType(box.getContext()));
-    }
-    // The global does not exist in the current translation unit, but may be
-    // defined elsewhere (e.g., type defined in a module).
-    // Create an available_externally global to require the symbols to be
-    // defined elsewhere and to cause link-time failure otherwise.
-    auto i8Ty = rewriter.getIntegerType(8);
-    mlir::OpBuilder modBuilder(module.getBodyRegion());
-    modBuilder.create<mlir::LLVM::GlobalOp>(
-        loc, i8Ty, /*isConstant=*/true,
-        mlir::LLVM::Linkage::AvailableExternally, name, mlir::Attribute{});
-    auto ty = mlir::LLVM::LLVMPointerType::get(i8Ty);
-    return rewriter.create<mlir::LLVM::AddressOfOp>(loc, ty, name);
+    // Type info derived types do not have type descriptors since they are the
+    // types defining type descriptors.
+    if (!this->options.ignoreMissingTypeDescriptors &&
+        !fir::NameUniquer::belongsToModule(
+            name, Fortran::semantics::typeInfoBuiltinModule))
+      fir::emitFatalError(
+          loc, "runtime derived type info descriptor was not generated");
+    return rewriter.create<mlir::LLVM::NullOp>(
+        loc, ::getVoidPtrType(box.getContext()));
   }
 
   template <typename BOX>
@@ -3233,8 +3247,9 @@ struct NegcOpConversion : public FIROpConversion<fir::NegcOp> {
 /// These operations are normally dead after the pre-codegen pass.
 template <typename FromOp>
 struct MustBeDeadConversion : public FIROpConversion<FromOp> {
-  explicit MustBeDeadConversion(fir::LLVMTypeConverter &lowering)
-      : FIROpConversion<FromOp>(lowering) {}
+  explicit MustBeDeadConversion(fir::LLVMTypeConverter &lowering,
+                                const fir::FIRToLLVMPassOptions &options)
+      : FIROpConversion<FromOp>(lowering, options) {}
   using OpAdaptor = typename FromOp::Adaptor;
 
   mlir::LogicalResult
@@ -3274,6 +3289,8 @@ namespace {
 /// This pass is not complete yet. We are upstreaming it in small patches.
 class FIRToLLVMLowering : public fir::FIRToLLVMLoweringBase<FIRToLLVMLowering> {
 public:
+  FIRToLLVMLowering() = default;
+  FIRToLLVMLowering(fir::FIRToLLVMPassOptions options) : options{options} {}
   mlir::ModuleOp getModule() { return getOperation(); }
 
   void runOnOperation() override final {
@@ -3306,9 +3323,9 @@ public:
         SliceOpConversion, StoreOpConversion, StringLitOpConversion,
         SubcOpConversion, UnboxCharOpConversion, UnboxProcOpConversion,
         UndefOpConversion, UnreachableOpConversion, XArrayCoorOpConversion,
-        XEmboxOpConversion, XReboxOpConversion, ZeroOpConversion>(
-        typeConverter);
-    mlir::populateStdToLLVMConversionPatterns(typeConverter, pattern);
+        XEmboxOpConversion, XReboxOpConversion, ZeroOpConversion>(typeConverter,
+                                                                  options);
+    mlir::populateFuncToLLVMConversionPatterns(typeConverter, pattern);
     mlir::arith::populateArithmeticToLLVMConversionPatterns(typeConverter,
                                                             pattern);
     mlir::cf::populateControlFlowToLLVMConversionPatterns(typeConverter,
@@ -3325,6 +3342,9 @@ public:
       signalPassFailure();
     }
   }
+
+private:
+  fir::FIRToLLVMPassOptions options;
 };
 
 /// Lower from LLVM IR dialect to proper LLVM-IR and dump the module
@@ -3360,6 +3380,11 @@ private:
 
 std::unique_ptr<mlir::Pass> fir::createFIRToLLVMPass() {
   return std::make_unique<FIRToLLVMLowering>();
+}
+
+std::unique_ptr<mlir::Pass>
+fir::createFIRToLLVMPass(FIRToLLVMPassOptions options) {
+  return std::make_unique<FIRToLLVMLowering>(options);
 }
 
 std::unique_ptr<mlir::Pass>

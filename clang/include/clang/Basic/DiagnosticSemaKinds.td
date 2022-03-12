@@ -4811,6 +4811,7 @@ def warn_cxx11_compat_variable_template : Warning<
 def err_template_variable_noparams : Error<
   "extraneous 'template<>' in declaration of variable %0">;
 def err_template_member : Error<"member %0 declared as a template">;
+def err_member_with_template_arguments : Error<"member %0 cannot have template arguments">;
 def err_template_member_noparams : Error<
   "extraneous 'template<>' in declaration of member %0">;
 def err_template_tag_noparams : Error<
@@ -10271,6 +10272,11 @@ def err_openclcxx_placement_new : Error<
 def warn_mig_server_routine_does_not_return_kern_return_t : Warning<
   "'mig_server_routine' attribute only applies to routines that return a kern_return_t">,
   InGroup<IgnoredAttributes>;
+
+def warn_imp_cast_drops_unaligned : Warning<
+  "implicit cast from type %0 to type %1 drops __unaligned qualifier">,
+  InGroup<DiagGroup<"unaligned-qualifier-implicit-cast">>;
+
 } // end of sema category
 
 let CategoryName = "OpenMP Issue" in {

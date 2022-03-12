@@ -103,26 +103,14 @@ void populateFoldReshapeOpsByLinearizationPatterns(RewritePatternSet &patterns);
 void populateFoldUnitDimsReshapeOpsByLinearizationPatterns(
     RewritePatternSet &patterns);
 
-/// Pattern to fuse a `linalg.pad_tensor` operation with the producer of its
-/// source, if the producer is a `linalg` operation with all parallel iterator
-/// types.
-void populateFusePadTensorWithProducerLinalgOpPatterns(
+/// Pattern to fuse a `tensor.pad` operation with the producer of its source,
+/// if the producer is a `linalg` operation with all parallel iterator types.
+void populateFuseTensorPadWithProducerLinalgOpPatterns(
     RewritePatternSet &patterns);
 
 /// Patterns to convert from one named op to another. These can be seen as
 /// canonicalizations of named ops into another named op.
 void populateLinalgNamedOpConversionPatterns(RewritePatternSet &patterns);
-
-/// Populate the given list with patterns to bufferize linalg ops.
-void populateLinalgBufferizePatterns(
-    bufferization::BufferizeTypeConverter &converter,
-    RewritePatternSet &patterns);
-
-/// Create linalg op on buffers given the original tensor-based operation and
-/// the buffers for the outputs.
-LinalgOp createLinalgOpOnBuffers(ConversionPatternRewriter &rewriter,
-                                 LinalgOp linalgOp, ValueRange inputs,
-                                 ValueRange outputs);
 
 /// Patterns to fold unit-extent dimensions in operands/results of linalg ops on
 /// tensors.
@@ -877,8 +865,16 @@ struct LinalgTileAndFuseTensorOpsPattern : public RewritePattern {
       LinalgTilingAndFusionOptions options,
       LinalgTransformationFilter f = LinalgTransformationFilter(),
       PatternBenefit benefit = 1);
+
+  /// `matchAndRewrite` implementation that returns the significant transformed
+  /// pieces of IR.
+  FailureOr<TileLoopNest>
+  returningMatchAndRewrite(Operation *op, PatternRewriter &rewriter) const;
+
   LogicalResult matchAndRewrite(Operation *op,
-                                PatternRewriter &rewriter) const override;
+                                PatternRewriter &rewriter) const override {
+    return returningMatchAndRewrite(op, rewriter);
+  }
 
 private:
   /// LinalgTransformMarker handles special attribute manipulations.
