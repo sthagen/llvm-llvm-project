@@ -891,17 +891,24 @@ static bool isIIFE(const UnwrappedLine &Line,
 
 static bool ShouldBreakBeforeBrace(const FormatStyle &Style,
                                    const FormatToken &InitialToken) {
-  if (InitialToken.isOneOf(tok::kw_namespace, TT_NamespaceMacro))
+  tok::TokenKind Kind = InitialToken.Tok.getKind();
+  if (InitialToken.is(TT_NamespaceMacro))
+    Kind = tok::kw_namespace;
+
+  switch (Kind) {
+  case tok::kw_namespace:
     return Style.BraceWrapping.AfterNamespace;
-  if (InitialToken.is(tok::kw_class))
+  case tok::kw_class:
     return Style.BraceWrapping.AfterClass;
-  if (InitialToken.is(tok::kw_union))
+  case tok::kw_union:
     return Style.BraceWrapping.AfterUnion;
-  if (InitialToken.is(tok::kw_struct))
+  case tok::kw_struct:
     return Style.BraceWrapping.AfterStruct;
-  if (InitialToken.is(tok::kw_enum))
+  case tok::kw_enum:
     return Style.BraceWrapping.AfterEnum;
-  return false;
+  default:
+    return false;
+  }
 }
 
 void UnwrappedLineParser::parseChildBlock(
@@ -1919,6 +1926,11 @@ bool UnwrappedLineParser::tryToParseLambda() {
   assert(FormatTok->is(tok::l_square));
   FormatToken &LSquare = *FormatTok;
   if (!tryToParseLambdaIntroducer())
+    return false;
+
+  // `[something] >` is not a lambda, but an array type in a template parameter
+  // list.
+  if (FormatTok->is(tok::greater))
     return false;
 
   bool SeenArrow = false;
@@ -3132,30 +3144,6 @@ void UnwrappedLineParser::parseConstraintExpression() {
         return;
       break;
 
-    case tok::identifier:
-      // We need to differentiate identifiers for a template deduction guide,
-      // variables, or function return types (the constraint expression has
-      // ended before that), and basically all other cases. But it's easier to
-      // check the other way around.
-      assert(FormatTok->Previous);
-      switch (FormatTok->Previous->Tok.getKind()) {
-      case tok::coloncolon:  // Nested identifier.
-      case tok::ampamp:      // Start of a function or variable for the
-      case tok::pipepipe:    // constraint expression.
-      case tok::kw_requires: // Initial identifier of a requires clause.
-      case tok::equal:       // Initial identifier of a concept declaration.
-        break;
-      default:
-        return;
-      }
-
-      // Read identifier with optional template declaration.
-      nextToken();
-      if (FormatTok->is(tok::less))
-        parseBracedList(/*ContinueOnSemicolons=*/false, /*IsEnum=*/false,
-                        /*ClosingBraceKind=*/tok::greater);
-      break;
-
     case tok::kw_const:
     case tok::semi:
     case tok::kw_class:
@@ -3232,7 +3220,34 @@ void UnwrappedLineParser::parseConstraintExpression() {
       break;
 
     default:
-      return;
+      if (!FormatTok->Tok.getIdentifierInfo()) {
+        // Identifiers are part of the default case, we check for more then
+        // tok::identifier to handle builtin type traits.
+        return;
+      }
+
+      // We need to differentiate identifiers for a template deduction guide,
+      // variables, or function return types (the constraint expression has
+      // ended before that), and basically all other cases. But it's easier to
+      // check the other way around.
+      assert(FormatTok->Previous);
+      switch (FormatTok->Previous->Tok.getKind()) {
+      case tok::coloncolon:  // Nested identifier.
+      case tok::ampamp:      // Start of a function or variable for the
+      case tok::pipepipe:    // constraint expression.
+      case tok::kw_requires: // Initial identifier of a requires clause.
+      case tok::equal:       // Initial identifier of a concept declaration.
+        break;
+      default:
+        return;
+      }
+
+      // Read identifier with optional template declaration.
+      nextToken();
+      if (FormatTok->is(tok::less))
+        parseBracedList(/*ContinueOnSemicolons=*/false, /*IsEnum=*/false,
+                        /*ClosingBraceKind=*/tok::greater);
+      break;
     }
   } while (!eof());
 }
@@ -3487,7 +3502,7 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
   // (this would still leave us with an ambiguity between template function
   // and class declarations).
   if (FormatTok->isOneOf(tok::colon, tok::less)) {
-    while (!eof()) {
+    do {
       if (FormatTok->is(tok::l_brace)) {
         calculateBraceTypes(/*ExpectClassBody=*/true);
         if (!tryToParseBracedList())
@@ -3500,7 +3515,10 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
           // Don't try parsing a lambda if we had a closing parenthesis before,
           // it was probably a pointer to an array: int (*)[].
           if (!tryToParseLambda())
-            break;
+            continue;
+        } else {
+          parseSquare();
+          continue;
         }
       }
       if (FormatTok->is(tok::semi))
@@ -3512,7 +3530,7 @@ void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
         break;
       }
       nextToken();
-    }
+    } while (!eof());
   }
 
   auto GetBraceType = [](const FormatToken &RecordTok) {

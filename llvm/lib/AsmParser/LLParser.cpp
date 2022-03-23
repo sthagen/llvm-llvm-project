@@ -37,6 +37,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueSymbolTable.h"
 #include "llvm/Support/Casting.h"
@@ -47,7 +48,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
-#include <iterator>
 #include <vector>
 
 using namespace llvm;
@@ -59,9 +59,29 @@ static std::string getTypeString(Type *T) {
   return Tmp.str();
 }
 
+static void setContextOpaquePointers(LLLexer &L, LLVMContext &C) {
+  while (true) {
+    lltok::Kind K = L.Lex();
+    // LLLexer will set the opaque pointers option in LLVMContext if it sees an
+    // explicit "ptr".
+    if (K == lltok::star || K == lltok::Error || K == lltok::Eof ||
+        isa_and_nonnull<PointerType>(L.getTyVal())) {
+      return;
+    }
+  }
+}
+
 /// Run: module ::= toplevelentity*
 bool LLParser::Run(bool UpgradeDebugInfo,
                    DataLayoutCallbackTy DataLayoutCallback) {
+  // If we haven't decided on whether or not we're using opaque pointers, do a
+  // quick lex over the tokens to see if we explicitly construct any typed or
+  // opaque pointer types.
+  // Don't bail out on an error so we do the same work in the parsing below
+  // regardless of if --opaque-pointers is set.
+  if (!Context.hasSetOpaquePointersValue())
+    setContextOpaquePointers(OPLex, Context);
+
   // Prime the lexer.
   Lex.Lex();
 

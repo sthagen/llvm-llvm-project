@@ -46,7 +46,6 @@ add_entrypoint_object(
     getenv.h
   DEPENDS
     libc.config.linux.app_h
-    libc.src.string.strncmp
 )
 
 add_entrypoint_object(
@@ -280,7 +279,7 @@ add_entrypoint_object(
     20 # For constinit of the atexit callback list.
   DEPENDS
     libc.src.__support.CPP.blockstore
-    libc.src.__support.threads.thread
+    libc.src.__support.threads.mutex
 )
 
 add_entrypoint_object(

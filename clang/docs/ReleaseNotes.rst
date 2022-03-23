@@ -61,9 +61,16 @@ Bug Fixes
   size expression. This was fixed and ``::getArraySize()`` will now always
   either return ``None`` or a ``llvm::Optional`` wrapping a valid ``Expr*``.
   This fixes `Issue 53742 <https://github.com/llvm/llvm-project/issues/53742>`_.
+- We now ignore full expressions when traversing cast subexpressions. This
+  fixes `Issue 53044 <https://github.com/llvm/llvm-project/issues/53044>`_.
+- Allow `-Wno-gnu` to silence GNU extension diagnostics for pointer arithmetic
+  diagnostics. Fixes `Issue 54444 <https://github.com/llvm/llvm-project/issues/54444>`_.
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- ``-Wliteral-range`` will warn on floating-point equality comparisons with
+  constants that are not representable in a casted value. For example,
+  ``(float) f == 0.1`` is always false.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -94,6 +101,17 @@ Attribute Changes in Clang
   locations a declaration attribute may appear.
   This fixes `Issue 53805 <https://github.com/llvm/llvm-project/issues/53805>`_.
 
+- Improved namespace attributes handling:
+
+  - Handle GNU attributes before a namespace identifier and subsequent
+    attributes of different kinds.
+  - Emit error on GNU attributes for a nested namespace definition.
+
+- Statement attributes ``[[clang::noinline]]`` and  ``[[clang::always_inline]]``
+  can be used to control inlining decisions at callsites.
+
+- ``#pragma clang attribute push`` now supports multiple attributes within a single directive.
+
 Windows Support
 ---------------
 
@@ -111,6 +129,10 @@ C2x Feature Support
 
 - Implemented `WG14 N2674 The noreturn attribute <http://www.open-std.org/jtc1/sc22/wg14/www/docs/n2764.pdf>`_.
 - Implemented `WG14 N2935 Make false and true first-class language features <http://www.open-std.org/jtc1/sc22/wg14/www/docs/n2935.pdf>`_.
+- Implemented `WG14 N2763 Adding a fundamental type for N-bit integers <http://www.open-std.org/jtc1/sc22/wg14/www/docs/n2763.pdf>`_.
+- Implemented `WG14 N2775 Literal suffixes for bit-precise integers <http://www.open-std.org/jtc1/sc22/wg14/www/docs/n2775.pdf>`_.
+- Implemented the `*_WIDTH` macros to complete support for
+  `WG14 N2412 Two's complement sign representation for C2x <https://www9.open-std.org/jtc1/sc22/wg14/www/docs/n2412.pdf>`_.
 
 C++ Language Changes in Clang
 -----------------------------
@@ -127,6 +149,7 @@ C++2b Feature Support
 
 - Implemented `P2128R6: Multidimensional subscript operator <https://wg21.link/P2128R6>`_.
 - Implemented `P0849R8: auto(x): decay-copy in the language <https://wg21.link/P0849R8>`_.
+- Implemented `P2242R3: Non-literal variables (and labels and gotos) in constexpr functions	<https://wg21.link/P2242R3>`_.
 
 CUDA Language Changes in Clang
 ------------------------------
@@ -171,6 +194,11 @@ DWARF Support in Clang
 
 Arm and AArch64 Support in Clang
 --------------------------------
+
+- When using ``-mbranch-protection=bti`` with AArch64, calls to setjmp will
+  now be followed by a BTI instruction. This is done to be compatible with
+  setjmp implementations that return with a br instead of a ret. You can
+  disable this behaviour using the ``-mno-bti-at-return-twice`` option.
 
 Floating Point Support in Clang
 -------------------------------

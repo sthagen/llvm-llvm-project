@@ -185,6 +185,10 @@ public:
   /// Add new variables to the end of the list of variables.
   void appendVariable(unsigned count = 1);
 
+  /// Append a new variable to the simplex and constrain it such that its only
+  /// integer value is the floor div of `coeffs` and `denom`.
+  void addDivisionVariable(ArrayRef<int64_t> coeffs, int64_t denom);
+
   /// Mark the tableau as being empty.
   void markEmpty();
 
@@ -481,7 +485,7 @@ protected:
 
   /// Get a row corresponding to a var that has a non-integral sample value, if
   /// one exists. Otherwise, return an empty optional.
-  Optional<unsigned> maybeGetNonIntegeralVarRow() const;
+  Optional<unsigned> maybeGetNonIntegralVarRow() const;
 
   /// Given two potential pivot columns for a row, return the one that results
   /// in the lexicographically smallest sample vector.

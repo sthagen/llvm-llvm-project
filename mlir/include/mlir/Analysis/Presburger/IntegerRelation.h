@@ -12,8 +12,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef MLIR_ANALYSIS_PRESBURGER_INTEGERPOLYHEDRON_H
-#define MLIR_ANALYSIS_PRESBURGER_INTEGERPOLYHEDRON_H
+#ifndef MLIR_ANALYSIS_PRESBURGER_INTEGERRELATION_H
+#define MLIR_ANALYSIS_PRESBURGER_INTEGERRELATION_H
 
 #include "mlir/Analysis/Presburger/Fraction.h"
 #include "mlir/Analysis/Presburger/Matrix.h"
@@ -94,6 +94,10 @@ public:
   /// Appends constraints from `other` into `this`. This is equivalent to an
   /// intersection with no simplification of any sort attempted.
   void append(const IntegerRelation &other);
+
+  /// Return the intersection of the two sets.
+  /// If there are locals, they will be merged.
+  IntegerRelation intersect(IntegerRelation other) const;
 
   /// Return whether `this` and `other` are equal. This is integer-exact
   /// and somewhat expensive, since it uses the integer emptiness check
@@ -386,9 +390,14 @@ public:
   /// O(VC) time.
   void removeRedundantConstraints();
 
-  /// Converts identifiers in the column range [idStart, idLimit) to local
-  /// variables.
-  void convertDimToLocal(unsigned dimStart, unsigned dimLimit);
+  /// Converts identifiers of kind srcKind in the range [idStart, idLimit) to
+  /// variables of kind dstKind and placed after all the other variables of kind
+  /// dstKind. The internal ordering among the moved variables is preserved.
+  void convertIdKind(IdKind srcKind, unsigned idStart, unsigned idLimit,
+                     IdKind dstKind);
+  void convertToLocal(IdKind kind, unsigned idStart, unsigned idLimit) {
+    convertIdKind(kind, idStart, idLimit, IdKind::Local);
+  }
 
   /// Adds additional local ids to the sets such that they both have the union
   /// of the local ids in each set, without changing the set of points that
@@ -564,4 +573,4 @@ public:
 } // namespace presburger
 } // namespace mlir
 
-#endif // MLIR_ANALYSIS_PRESBURGER_INTEGERPOLYHEDRON_H
+#endif // MLIR_ANALYSIS_PRESBURGER_INTEGERRELATION_H
