@@ -13,6 +13,7 @@
 #include "ToolChains/AVR.h"
 #include "ToolChains/Ananas.h"
 #include "ToolChains/BareMetal.h"
+#include "ToolChains/CSKYToolChain.h"
 #include "ToolChains/Clang.h"
 #include "ToolChains/CloudABI.h"
 #include "ToolChains/Contiki.h"
@@ -3019,7 +3020,7 @@ class OffloadingActionBuilder final {
       if (Args.hasArg(options::OPT_gpu_bundle_output,
                       options::OPT_no_gpu_bundle_output))
         BundleOutput = Args.hasFlag(options::OPT_gpu_bundle_output,
-                                    options::OPT_no_gpu_bundle_output);
+                                    options::OPT_no_gpu_bundle_output, true);
     }
 
     bool canUseBundlerUnbundler() const override { return true; }
@@ -5725,6 +5726,9 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       case llvm::Triple::spirv32:
       case llvm::Triple::spirv64:
         TC = std::make_unique<toolchains::SPIRVToolChain>(*this, Target, Args);
+        break;
+      case llvm::Triple::csky:
+        TC = std::make_unique<toolchains::CSKYToolChain>(*this, Target, Args);
         break;
       default:
         if (Target.getVendor() == llvm::Triple::Myriad)

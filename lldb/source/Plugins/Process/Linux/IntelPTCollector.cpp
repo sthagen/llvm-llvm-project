@@ -102,6 +102,7 @@ static Expected<uint32_t> ReadIntelPTConfigFile(const char *file,
     case BitOffset:
       return 10;
     }
+    llvm_unreachable("Fully covered switch above!");
   };
 
   auto createError = [&](const char *expected_value_message) {
@@ -521,6 +522,17 @@ IntelPTProcessTrace::GetThreadTraces() const {
 }
 
 /// IntelPTCollector
+
+IntelPTCollector::IntelPTCollector(lldb::pid_t pid)
+    : m_pid(pid), m_thread_traces(pid) {
+  if (Expected<LinuxPerfZeroTscConversion> tsc_conversion =
+          LoadPerfTscConversionParameters())
+    m_tsc_conversion =
+        std::make_unique<LinuxPerfZeroTscConversion>(*tsc_conversion);
+  else
+    LLDB_LOG_ERROR(GetLog(POSIXLog::Trace), tsc_conversion.takeError(),
+                   "unable to load TSC to wall time conversion: {0}");
+}
 
 Error IntelPTCollector::TraceStop(lldb::tid_t tid) {
   if (IsProcessTracingEnabled() && m_process_trace->TracesThread(tid))

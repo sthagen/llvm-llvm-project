@@ -888,56 +888,56 @@ SITargetLowering::SITargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::INTRINSIC_VOID, MVT::i16, Custom);
   setOperationAction(ISD::INTRINSIC_VOID, MVT::i8, Custom);
 
-  setTargetDAGCombine(ISD::ADD);
-  setTargetDAGCombine(ISD::ADDCARRY);
-  setTargetDAGCombine(ISD::SUB);
-  setTargetDAGCombine(ISD::SUBCARRY);
-  setTargetDAGCombine(ISD::FADD);
-  setTargetDAGCombine(ISD::FSUB);
-  setTargetDAGCombine(ISD::FMINNUM);
-  setTargetDAGCombine(ISD::FMAXNUM);
-  setTargetDAGCombine(ISD::FMINNUM_IEEE);
-  setTargetDAGCombine(ISD::FMAXNUM_IEEE);
-  setTargetDAGCombine(ISD::FMA);
-  setTargetDAGCombine(ISD::SMIN);
-  setTargetDAGCombine(ISD::SMAX);
-  setTargetDAGCombine(ISD::UMIN);
-  setTargetDAGCombine(ISD::UMAX);
-  setTargetDAGCombine(ISD::SETCC);
-  setTargetDAGCombine(ISD::AND);
-  setTargetDAGCombine(ISD::OR);
-  setTargetDAGCombine(ISD::XOR);
-  setTargetDAGCombine(ISD::SINT_TO_FP);
-  setTargetDAGCombine(ISD::UINT_TO_FP);
-  setTargetDAGCombine(ISD::FCANONICALIZE);
-  setTargetDAGCombine(ISD::SCALAR_TO_VECTOR);
-  setTargetDAGCombine(ISD::ZERO_EXTEND);
-  setTargetDAGCombine(ISD::SIGN_EXTEND_INREG);
-  setTargetDAGCombine(ISD::EXTRACT_VECTOR_ELT);
-  setTargetDAGCombine(ISD::INSERT_VECTOR_ELT);
+  setTargetDAGCombine({ISD::ADD,
+                       ISD::ADDCARRY,
+                       ISD::SUB,
+                       ISD::SUBCARRY,
+                       ISD::FADD,
+                       ISD::FSUB,
+                       ISD::FMINNUM,
+                       ISD::FMAXNUM,
+                       ISD::FMINNUM_IEEE,
+                       ISD::FMAXNUM_IEEE,
+                       ISD::FMA,
+                       ISD::SMIN,
+                       ISD::SMAX,
+                       ISD::UMIN,
+                       ISD::UMAX,
+                       ISD::SETCC,
+                       ISD::AND,
+                       ISD::OR,
+                       ISD::XOR,
+                       ISD::SINT_TO_FP,
+                       ISD::UINT_TO_FP,
+                       ISD::FCANONICALIZE,
+                       ISD::SCALAR_TO_VECTOR,
+                       ISD::ZERO_EXTEND,
+                       ISD::SIGN_EXTEND_INREG,
+                       ISD::EXTRACT_VECTOR_ELT,
+                       ISD::INSERT_VECTOR_ELT});
 
   // All memory operations. Some folding on the pointer operand is done to help
   // matching the constant offsets in the addressing modes.
-  setTargetDAGCombine(ISD::LOAD);
-  setTargetDAGCombine(ISD::STORE);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD);
-  setTargetDAGCombine(ISD::ATOMIC_STORE);
-  setTargetDAGCombine(ISD::ATOMIC_CMP_SWAP);
-  setTargetDAGCombine(ISD::ATOMIC_CMP_SWAP_WITH_SUCCESS);
-  setTargetDAGCombine(ISD::ATOMIC_SWAP);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_ADD);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_SUB);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_AND);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_OR);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_XOR);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_NAND);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_MIN);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_MAX);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_UMIN);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_UMAX);
-  setTargetDAGCombine(ISD::ATOMIC_LOAD_FADD);
-  setTargetDAGCombine(ISD::INTRINSIC_VOID);
-  setTargetDAGCombine(ISD::INTRINSIC_W_CHAIN);
+  setTargetDAGCombine({ISD::LOAD,
+                       ISD::STORE,
+                       ISD::ATOMIC_LOAD,
+                       ISD::ATOMIC_STORE,
+                       ISD::ATOMIC_CMP_SWAP,
+                       ISD::ATOMIC_CMP_SWAP_WITH_SUCCESS,
+                       ISD::ATOMIC_SWAP,
+                       ISD::ATOMIC_LOAD_ADD,
+                       ISD::ATOMIC_LOAD_SUB,
+                       ISD::ATOMIC_LOAD_AND,
+                       ISD::ATOMIC_LOAD_OR,
+                       ISD::ATOMIC_LOAD_XOR,
+                       ISD::ATOMIC_LOAD_NAND,
+                       ISD::ATOMIC_LOAD_MIN,
+                       ISD::ATOMIC_LOAD_MAX,
+                       ISD::ATOMIC_LOAD_UMIN,
+                       ISD::ATOMIC_LOAD_UMAX,
+                       ISD::ATOMIC_LOAD_FADD,
+                       ISD::INTRINSIC_VOID,
+                       ISD::INTRINSIC_W_CHAIN});
 
   // FIXME: In other contexts we pretend this is a per-function property.
   setStackPointerRegisterToSaveRestore(AMDGPU::SGPR32);
@@ -1531,6 +1531,14 @@ bool SITargetLowering::allowsMisalignedMemoryAccessesImpl(
     // requirements.
     //
     if (Size == 64) {
+      // SI has a hardware bug in the LDS / GDS bounds checking: if the base
+      // address is negative, then the instruction is incorrectly treated as
+      // out-of-bounds even if base + offsets is in bounds. Split vectorized
+      // loads here to avoid emitting ds_read2_b32. We may re-combine the
+      // load later in the SILoadStoreOptimizer.
+      if (!Subtarget->hasUsableDSOffset() && Alignment < Align(8))
+        return false;
+
       // 8 byte accessing via ds_read/write_b64 require 8-byte alignment, but we
       // can do a 4 byte aligned, 8 byte access in a single operation using
       // ds_read2/write2_b32 with adjacent offsets.
@@ -11661,6 +11669,19 @@ void SITargetLowering::AdjustInstrPostInstrSelection(MachineInstr &MI,
         // so no use checks are needed.
         MRI.setRegClass(Op.getReg(), NewRC);
       }
+
+      // Resolve the rest of AV operands to AGPRs.
+      if (auto *Src2 = TII->getNamedOperand(MI, AMDGPU::OpName::src2)) {
+        if (Src2->isReg() && Src2->getReg().isVirtual()) {
+          auto *RC = TRI->getRegClassForReg(MRI, Src2->getReg());
+          if (TRI->isVectorSuperClass(RC)) {
+            auto *NewRC = TRI->getEquivalentAGPRClass(RC);
+            MRI.setRegClass(Src2->getReg(), NewRC);
+            if (Src2->isTied())
+              MRI.setRegClass(MI.getOperand(0).getReg(), NewRC);
+          }
+        }
+      }
     }
 
     return;
@@ -12418,6 +12439,9 @@ static bool fpModeMatchesGlobalFPAtomicMode(const AtomicRMWInst *RMW) {
 
 TargetLowering::AtomicExpansionKind
 SITargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *RMW) const {
+  unsigned AS = RMW->getPointerAddressSpace();
+  if (AS == AMDGPUAS::PRIVATE_ADDRESS)
+    return AtomicExpansionKind::NotAtomic;
 
   auto ReportUnsafeHWInst = [&](TargetLowering::AtomicExpansionKind Kind) {
     OptimizationRemarkEmitter ORE(RMW->getFunction());
@@ -12448,8 +12472,6 @@ SITargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *RMW) const {
 
     if (!Ty->isFloatTy() && (!Subtarget->hasGFX90AInsts() || !Ty->isDoubleTy()))
       return AtomicExpansionKind::CmpXChg;
-
-    unsigned AS = RMW->getPointerAddressSpace();
 
     if ((AS == AMDGPUAS::GLOBAL_ADDRESS || AS == AMDGPUAS::FLAT_ADDRESS) &&
          Subtarget->hasAtomicFaddInsts()) {
@@ -12508,6 +12530,27 @@ SITargetLowering::shouldExpandAtomicRMWInIR(AtomicRMWInst *RMW) const {
   }
 
   return AMDGPUTargetLowering::shouldExpandAtomicRMWInIR(RMW);
+}
+
+TargetLowering::AtomicExpansionKind
+SITargetLowering::shouldExpandAtomicLoadInIR(LoadInst *LI) const {
+  return LI->getPointerAddressSpace() == AMDGPUAS::PRIVATE_ADDRESS
+             ? AtomicExpansionKind::NotAtomic
+             : AtomicExpansionKind::None;
+}
+
+TargetLowering::AtomicExpansionKind
+SITargetLowering::shouldExpandAtomicStoreInIR(StoreInst *SI) const {
+  return SI->getPointerAddressSpace() == AMDGPUAS::PRIVATE_ADDRESS
+             ? AtomicExpansionKind::NotAtomic
+             : AtomicExpansionKind::None;
+}
+
+TargetLowering::AtomicExpansionKind
+SITargetLowering::shouldExpandAtomicCmpXchgInIR(AtomicCmpXchgInst *CmpX) const {
+  return CmpX->getPointerAddressSpace() == AMDGPUAS::PRIVATE_ADDRESS
+             ? AtomicExpansionKind::NotAtomic
+             : AtomicExpansionKind::None;
 }
 
 const TargetRegisterClass *

@@ -348,9 +348,8 @@ TestBranchOp::getMutableSuccessorOperands(unsigned index) {
 Optional<MutableOperandRange>
 TestProducingBranchOp::getMutableSuccessorOperands(unsigned index) {
   assert(index <= 1 && "invalid successor index");
-  if (index == 1) {
+  if (index == 1)
     return getFirstOperandsMutable();
-  }
   return getSecondOperandsMutable();
 }
 
@@ -1022,6 +1021,8 @@ LogicalResult OpWithResultShapePerDimInterfaceOp::reifyResultShapes(
 namespace {
 /// A test resource for side effects.
 struct TestResource : public SideEffects::Resource::Base<TestResource> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(TestResource)
+
   StringRef getName() final { return "<Test>"; }
 };
 } // namespace

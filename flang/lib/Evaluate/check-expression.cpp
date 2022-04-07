@@ -124,7 +124,7 @@ bool IsConstantExprHelper<INVARIANT>::operator()(
     } else if (intrinsic->name == "ubound" && call.arguments().size() == 1) {
       // UBOUND(x) without DIM=
       auto base{ExtractNamedEntity(call.arguments()[0]->UnwrapExpr())};
-      return base && IsConstantExprShape(GetUpperBounds(*base));
+      return base && IsConstantExprShape(GetUBOUNDs(*base));
     } else if (intrinsic->name == "shape") {
       auto shape{GetShape(call.arguments()[0]->UnwrapExpr())};
       return shape && IsConstantExprShape(*shape);
@@ -192,6 +192,8 @@ template <typename A> bool IsActuallyConstant(const A &x) {
 }
 
 template bool IsActuallyConstant(const Expr<SomeType> &);
+template bool IsActuallyConstant(const Expr<SomeInteger> &);
+template bool IsActuallyConstant(const Expr<SubscriptInteger> &);
 
 // Object pointer initialization checking predicate IsInitialDataTarget().
 // This code determines whether an expression is allowable as the static

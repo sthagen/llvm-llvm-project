@@ -2762,6 +2762,21 @@ bool TargetLowering::SimplifyDemandedVectorElts(
         if (SimplifyDemandedBits(Src, SrcDemandedBits, SrcDemandedElts, Known,
                                  TLO, Depth + 1))
           return true;
+
+        // The bitcast has split each wide element into a number of
+        // narrow subelements. We have just computed the Known bits
+        // for wide elements. See if element splitting results in
+        // some subelements being zero. Only for demanded elements!
+        for (unsigned SubElt = 0; SubElt != Scale; ++SubElt) {
+          if (!Known.Zero.extractBits(EltSizeInBits, SubElt * EltSizeInBits)
+                   .isAllOnes())
+            continue;
+          for (unsigned SrcElt = 0; SrcElt != NumSrcElts; ++SrcElt) {
+            unsigned Elt = Scale * SrcElt + SubElt;
+            if (DemandedElts[Elt])
+              KnownZero.setBit(Elt);
+          }
+        }
       }
 
       // If the src element is zero/undef then all the output elements will be -
@@ -4642,37 +4657,30 @@ SDValue TargetLowering::SimplifySetCC(EVT VT, SDValue N0, SDValue N1,
       if (auto *RHSC = dyn_cast<ConstantSDNode>(N1)) {
         if (auto *LHSR = dyn_cast<ConstantSDNode>(N0.getOperand(1))) {
           // Turn (X+C1) == C2 --> X == C2-C1
-          if (N0.getOpcode() == ISD::ADD && N0.getNode()->hasOneUse()) {
-            return DAG.getSetCC(dl, VT, N0.getOperand(0),
-                                DAG.getConstant(RHSC->getAPIntValue()-
-                                                LHSR->getAPIntValue(),
-                                dl, N0.getValueType()), Cond);
-          }
+          if (N0.getOpcode() == ISD::ADD && N0.getNode()->hasOneUse())
+            return DAG.getSetCC(
+                dl, VT, N0.getOperand(0),
+                DAG.getConstant(RHSC->getAPIntValue() - LHSR->getAPIntValue(),
+                                dl, N0.getValueType()),
+                Cond);
 
-          // Turn (X^C1) == C2 into X == C1^C2 iff X&~C1 = 0.
-          if (N0.getOpcode() == ISD::XOR)
-            // If we know that all of the inverted bits are zero, don't bother
-            // performing the inversion.
-            if (DAG.MaskedValueIsZero(N0.getOperand(0), ~LHSR->getAPIntValue()))
-              return
-                DAG.getSetCC(dl, VT, N0.getOperand(0),
-                             DAG.getConstant(LHSR->getAPIntValue() ^
-                                               RHSC->getAPIntValue(),
-                                             dl, N0.getValueType()),
-                             Cond);
+          // Turn (X^C1) == C2 --> X == C1^C2
+          if (N0.getOpcode() == ISD::XOR && N0.getNode()->hasOneUse())
+            return DAG.getSetCC(
+                dl, VT, N0.getOperand(0),
+                DAG.getConstant(LHSR->getAPIntValue() ^ RHSC->getAPIntValue(),
+                                dl, N0.getValueType()),
+                Cond);
         }
 
         // Turn (C1-X) == C2 --> X == C1-C2
-        if (auto *SUBC = dyn_cast<ConstantSDNode>(N0.getOperand(0))) {
-          if (N0.getOpcode() == ISD::SUB && N0.getNode()->hasOneUse()) {
-            return
-              DAG.getSetCC(dl, VT, N0.getOperand(1),
-                           DAG.getConstant(SUBC->getAPIntValue() -
-                                             RHSC->getAPIntValue(),
-                                           dl, N0.getValueType()),
-                           Cond);
-          }
-        }
+        if (auto *SUBC = dyn_cast<ConstantSDNode>(N0.getOperand(0)))
+          if (N0.getOpcode() == ISD::SUB && N0.getNode()->hasOneUse())
+            return DAG.getSetCC(
+                dl, VT, N0.getOperand(1),
+                DAG.getConstant(SUBC->getAPIntValue() - RHSC->getAPIntValue(),
+                                dl, N0.getValueType()),
+                Cond);
 
         // Could RHSC fold directly into a compare?
         if (RHSC->getValueType(0).getSizeInBits() <= 64)
@@ -7259,6 +7267,30 @@ bool TargetLowering::expandUINT_TO_FP(SDNode *Node, SDValue &Result,
   return true;
 }
 
+SDValue
+TargetLowering::createSelectForFMINNUM_FMAXNUM(SDNode *Node,
+                                               SelectionDAG &DAG) const {
+  unsigned Opcode = Node->getOpcode();
+  assert((Opcode == ISD::FMINNUM || Opcode == ISD::FMAXNUM ||
+          Opcode == ISD::STRICT_FMINNUM || Opcode == ISD::STRICT_FMAXNUM) &&
+         "Wrong opcode");
+
+  if (Node->getFlags().hasNoNaNs()) {
+    ISD::CondCode Pred = Opcode == ISD::FMINNUM ? ISD::SETLT : ISD::SETGT;
+    SDValue Op1 = Node->getOperand(0);
+    SDValue Op2 = Node->getOperand(1);
+    SDValue SelCC = DAG.getSelectCC(SDLoc(Node), Op1, Op2, Op1, Op2, Pred);
+    // Copy FMF flags, but always set the no-signed-zeros flag
+    // as this is implied by the FMINNUM/FMAXNUM semantics.
+    SDNodeFlags Flags = Node->getFlags();
+    Flags.setNoSignedZeros(true);
+    SelCC->setFlags(Flags);
+    return SelCC;
+  }
+
+  return SDValue();
+}
+
 SDValue TargetLowering::expandFMINNUM_FMAXNUM(SDNode *Node,
                                               SelectionDAG &DAG) const {
   SDLoc dl(Node);
@@ -7301,25 +7333,8 @@ SDValue TargetLowering::expandFMINNUM_FMAXNUM(SDNode *Node,
     }
   }
 
-  // If none of the above worked, but there are no NaNs, then expand to
-  // a compare/select sequence.  This is required for correctness since
-  // InstCombine might have canonicalized a fcmp+select sequence to a
-  // FMINNUM/FMAXNUM node.  If we were to fall through to the default
-  // expansion to libcall, we might introduce a link-time dependency
-  // on libm into a file that originally did not have one.
-  if (Node->getFlags().hasNoNaNs()) {
-    ISD::CondCode Pred =
-        Node->getOpcode() == ISD::FMINNUM ? ISD::SETLT : ISD::SETGT;
-    SDValue Op1 = Node->getOperand(0);
-    SDValue Op2 = Node->getOperand(1);
-    SDValue SelCC = DAG.getSelectCC(dl, Op1, Op2, Op1, Op2, Pred);
-    // Copy FMF flags, but always set the no-signed-zeros flag
-    // as this is implied by the FMINNUM/FMAXNUM semantics.
-    SDNodeFlags Flags = Node->getFlags();
-    Flags.setNoSignedZeros(true);
-    SelCC->setFlags(Flags);
+  if (SDValue SelCC = createSelectForFMINNUM_FMAXNUM(Node, DAG))
     return SelCC;
-  }
 
   return SDValue();
 }
@@ -8716,8 +8731,18 @@ void TargetLowering::expandUADDSUBO(
   EVT ResultType = Node->getValueType(1);
   EVT SetCCType = getSetCCResultType(
       DAG.getDataLayout(), *DAG.getContext(), Node->getValueType(0));
-  ISD::CondCode CC = IsAdd ? ISD::SETULT : ISD::SETUGT;
-  SDValue SetCC = DAG.getSetCC(dl, SetCCType, Result, LHS, CC);
+  SDValue SetCC;
+  if (IsAdd && isOneConstant(RHS)) {
+    // Special case: uaddo X, 1 overflowed if X+1 is 0. This potential reduces
+    // the live range of X. We assume comparing with 0 is cheap.
+    // TODO: This generalizes to (X + C) < C.
+    SetCC =
+        DAG.getSetCC(dl, SetCCType, Result,
+                     DAG.getConstant(0, dl, Node->getValueType(0)), ISD::SETEQ);
+  } else {
+    ISD::CondCode CC = IsAdd ? ISD::SETULT : ISD::SETUGT;
+    SetCC = DAG.getSetCC(dl, SetCCType, Result, LHS, CC);
+  }
   Overflow = DAG.getBoolExtOrTrunc(SetCC, dl, ResultType, ResultType);
 }
 

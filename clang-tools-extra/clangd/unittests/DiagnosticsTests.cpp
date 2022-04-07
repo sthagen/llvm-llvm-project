@@ -22,6 +22,7 @@
 #include "support/Path.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticSema.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Support/TargetSelect.h"
 #include "gmock/gmock.h"
@@ -744,6 +745,40 @@ TEST(DiagnosticsTest, RecursivePreambleIfndefGuard) {
   EXPECT_THAT(*TU.build().getDiagnostics(),
               ElementsAre(diagName("pp_including_mainfile_in_preamble")));
   EXPECT_THAT(TU.build().getLocalTopLevelDecls(), SizeIs(1));
+}
+
+TEST(DiagnosticsTest, PreambleWithPragmaAssumeNonnull) {
+  auto TU = TestTU::withCode(R"cpp(
+#pragma clang assume_nonnull begin
+void foo(int *x);
+#pragma clang assume_nonnull end
+)cpp");
+  auto AST = TU.build();
+  EXPECT_THAT(*AST.getDiagnostics(), IsEmpty());
+  const auto *X = cast<FunctionDecl>(findDecl(AST, "foo")).getParamDecl(0);
+  ASSERT_TRUE(X->getOriginalType()->getNullability(X->getASTContext()) ==
+              NullabilityKind::NonNull);
+}
+
+TEST(DiagnosticsTest, PreambleHeaderWithBadPragmaAssumeNonnull) {
+  Annotations Header(R"cpp(
+#pragma clang assume_nonnull begin  // error-ok
+void foo(int *X);
+)cpp");
+  auto TU = TestTU::withCode(R"cpp(
+#include "foo.h"  // unterminated assume_nonnull should not affect bar.
+void bar(int *Y);
+)cpp");
+  TU.AdditionalFiles = {{"foo.h", std::string(Header.code())}};
+  auto AST = TU.build();
+  EXPECT_THAT(*AST.getDiagnostics(),
+              ElementsAre(diagName("pp_eof_in_assume_nonnull")));
+  const auto *X = cast<FunctionDecl>(findDecl(AST, "foo")).getParamDecl(0);
+  ASSERT_TRUE(X->getOriginalType()->getNullability(X->getASTContext()) ==
+              NullabilityKind::NonNull);
+  const auto *Y = cast<FunctionDecl>(findDecl(AST, "bar")).getParamDecl(0);
+  ASSERT_FALSE(
+      Y->getOriginalType()->getNullability(X->getASTContext()).hasValue());
 }
 
 TEST(DiagnosticsTest, InsideMacros) {
@@ -1680,6 +1715,28 @@ $fix[[  $diag[[#include "unused.h"]]
   EXPECT_THAT(*TU.build().getDiagnostics(), IsEmpty());
 }
 
+TEST(DiagnosticsTest, FixItFromHeader) {
+  llvm::StringLiteral Header(R"cpp(
+    void foo(int *);
+    void foo(int *, int);)cpp");
+  Annotations Source(R"cpp(
+  /*error-ok*/
+    void bar() {
+      int x;
+      $diag[[foo]]($fix[[]]x, 1);
+    })cpp");
+  TestTU TU;
+  TU.Code = Source.code().str();
+  TU.HeaderCode = Header.str();
+  EXPECT_THAT(
+      *TU.build().getDiagnostics(),
+      UnorderedElementsAre(AllOf(
+          Diag(Source.range("diag"), "no matching function for call to 'foo'"),
+          withFix(Fix(Source.range("fix"), "&",
+                      "candidate function not viable: no known conversion from "
+                      "'int' to 'int *' for 1st argument; take the address of "
+                      "the argument with &")))));
+}
 } // namespace
 } // namespace clangd
 } // namespace clang

@@ -10,6 +10,7 @@
 #include "AMDGPU.h"
 #include "Arch/AArch64.h"
 #include "Arch/ARM.h"
+#include "Arch/CSKY.h"
 #include "Arch/M68k.h"
 #include "Arch/Mips.h"
 #include "Arch/PPC.h"
@@ -383,6 +384,9 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   case llvm::Triple::ve:
     ve::getVETargetFeatures(D, Args, Features);
     break;
+  case llvm::Triple::csky:
+    csky::getCSKYTargetFeatures(D, Triple, Args, CmdArgs, Features);
+    break;
   }
 
   for (auto Feature : unifyTargetFeatures(Features)) {
@@ -547,6 +551,7 @@ static bool useFramePointerForTargetByDefault(const ArgList &Args,
   case llvm::Triple::riscv64:
   case llvm::Triple::amdgcn:
   case llvm::Triple::r600:
+  case llvm::Triple::csky:
     return !areOptimizationsEnabled(Args);
   default:
     break;
@@ -3905,7 +3910,7 @@ static void RenderDiagnosticsOptions(const Driver &D, const ArgList &Args,
 
   // -fdiagnostics-fixit-info is default, only pass non-default.
   if (!Args.hasFlag(options::OPT_fdiagnostics_fixit_info,
-                    options::OPT_fno_diagnostics_fixit_info))
+                    options::OPT_fno_diagnostics_fixit_info, true))
     CmdArgs.push_back("-fno-diagnostics-fixit-info");
 
   // Enable -fdiagnostics-show-option by default.
@@ -3974,7 +3979,7 @@ static void RenderDiagnosticsOptions(const Driver &D, const ArgList &Args,
     CmdArgs.push_back("-fansi-escape-codes");
 
   if (!Args.hasFlag(options::OPT_fshow_source_location,
-                    options::OPT_fno_show_source_location))
+                    options::OPT_fno_show_source_location, true))
     CmdArgs.push_back("-fno-show-source-location");
 
   if (Args.hasArg(options::OPT_fdiagnostics_absolute_paths))
@@ -3985,7 +3990,7 @@ static void RenderDiagnosticsOptions(const Driver &D, const ArgList &Args,
     CmdArgs.push_back("-fno-show-column");
 
   if (!Args.hasFlag(options::OPT_fspell_checking,
-                    options::OPT_fno_spell_checking))
+                    options::OPT_fno_spell_checking, true))
     CmdArgs.push_back("-fno-spell-checking");
 }
 
@@ -4295,8 +4300,8 @@ static void renderDebugOptions(const ToolChain &TC, const Driver &D,
                             ? "-gpubnames"
                             : "-ggnu-pubnames");
   const auto *SimpleTemplateNamesArg =
-      Args.getLastArg(options::OPT_gsimple_template_names, options::OPT_gno_simple_template_names,
-                      options::OPT_gsimple_template_names_EQ);
+      Args.getLastArg(options::OPT_gsimple_template_names,
+                      options::OPT_gno_simple_template_names);
   bool ForwardTemplateParams = DebuggerTuning == llvm::DebuggerKind::SCE;
   if (SimpleTemplateNamesArg &&
       checkDebugInfoOption(SimpleTemplateNamesArg, Args, D, TC)) {
@@ -4304,17 +4309,6 @@ static void renderDebugOptions(const ToolChain &TC, const Driver &D,
     if (Opt.matches(options::OPT_gsimple_template_names)) {
       ForwardTemplateParams = true;
       CmdArgs.push_back("-gsimple-template-names=simple");
-    } else if (Opt.matches(options::OPT_gsimple_template_names_EQ)) {
-      ForwardTemplateParams = true;
-      StringRef Value = SimpleTemplateNamesArg->getValue();
-      if (Value == "simple") {
-        CmdArgs.push_back("-gsimple-template-names=simple");
-      } else if (Value == "mangled") {
-        CmdArgs.push_back("-gsimple-template-names=mangled");
-      } else {
-        D.Diag(diag::err_drv_unsupported_option_argument)
-            << Opt.getName() << SimpleTemplateNamesArg->getValue();
-      }
     }
   }
 
@@ -4791,7 +4785,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
     // Render the CodeGen options that need to be passed.
     if (!Args.hasFlag(options::OPT_foptimize_sibling_calls,
-                      options::OPT_fno_optimize_sibling_calls))
+                      options::OPT_fno_optimize_sibling_calls, true))
       CmdArgs.push_back("-mdisable-tail-calls");
 
     RenderFloatingPointOptions(TC, D, isOptimizationLevelFast(Args), Args,
@@ -5167,7 +5161,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_strict_aliasing, TBAAOnByDefault))
     CmdArgs.push_back("-relaxed-aliasing");
   if (!Args.hasFlag(options::OPT_fstruct_path_tbaa,
-                    options::OPT_fno_struct_path_tbaa))
+                    options::OPT_fno_struct_path_tbaa, true))
     CmdArgs.push_back("-no-struct-path-tbaa");
   if (Args.hasFlag(options::OPT_fstrict_enums, options::OPT_fno_strict_enums,
                    false))
@@ -5187,7 +5181,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    false))
     CmdArgs.push_back("-fforce-emit-vtables");
   if (!Args.hasFlag(options::OPT_foptimize_sibling_calls,
-                    options::OPT_fno_optimize_sibling_calls))
+                    options::OPT_fno_optimize_sibling_calls, true))
     CmdArgs.push_back("-mdisable-tail-calls");
   if (Args.hasFlag(options::OPT_fno_escaping_block_tail_calls,
                    options::OPT_fescaping_block_tail_calls, false))
@@ -6309,7 +6303,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   RenderBuiltinOptions(TC, RawTriple, Args, CmdArgs);
 
   if (!Args.hasFlag(options::OPT_fassume_sane_operator_new,
-                    options::OPT_fno_assume_sane_operator_new))
+                    options::OPT_fno_assume_sane_operator_new, true))
     CmdArgs.push_back("-fno-assume-sane-operator-new");
 
   // -fblocks=0 is default.
@@ -6588,7 +6582,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // C++ "sane" operator new.
   if (!Args.hasFlag(options::OPT_fassume_sane_operator_new,
-                    options::OPT_fno_assume_sane_operator_new))
+                    options::OPT_fno_assume_sane_operator_new, true))
     CmdArgs.push_back("-fno-assume-sane-operator-new");
 
   // -frelaxed-template-template-args is off by default, as it is a severe
@@ -6625,9 +6619,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fconstant-cfstrings is default, and may be subject to argument translation
   // on Darwin.
   if (!Args.hasFlag(options::OPT_fconstant_cfstrings,
-                    options::OPT_fno_constant_cfstrings) ||
+                    options::OPT_fno_constant_cfstrings, true) ||
       !Args.hasFlag(options::OPT_mconstant_cfstrings,
-                    options::OPT_mno_constant_cfstrings))
+                    options::OPT_mno_constant_cfstrings, true))
     CmdArgs.push_back("-fno-constant-cfstrings");
 
   // -fno-pascal-strings is default, only pass non-default.
@@ -6671,12 +6665,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fsigned-bitfields is default, and clang doesn't yet support
   // -funsigned-bitfields.
   if (!Args.hasFlag(options::OPT_fsigned_bitfields,
-                    options::OPT_funsigned_bitfields))
+                    options::OPT_funsigned_bitfields, true))
     D.Diag(diag::warn_drv_clang_unsupported)
         << Args.getLastArg(options::OPT_funsigned_bitfields)->getAsString(Args);
 
   // -fsigned-bitfields is default, and clang doesn't support -fno-for-scope.
-  if (!Args.hasFlag(options::OPT_ffor_scope, options::OPT_fno_for_scope))
+  if (!Args.hasFlag(options::OPT_ffor_scope, options::OPT_fno_for_scope, true))
     D.Diag(diag::err_drv_clang_unsupported)
         << Args.getLastArg(options::OPT_fno_for_scope)->getAsString(Args);
 
@@ -6740,14 +6734,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-fdollars-in-identifiers");
     else
       CmdArgs.push_back("-fno-dollars-in-identifiers");
-  }
-
-  // -funit-at-a-time is default, and we don't support -fno-unit-at-a-time for
-  // practical purposes.
-  if (Arg *A = Args.getLastArg(options::OPT_funit_at_a_time,
-                               options::OPT_fno_unit_at_a_time)) {
-    if (A->getOption().matches(options::OPT_fno_unit_at_a_time))
-      D.Diag(diag::warn_drv_clang_unsupported) << A->getAsString(Args);
   }
 
   if (Args.hasFlag(options::OPT_fapple_pragma_pack,
@@ -8047,8 +8033,10 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
   // The bundling command looks like this:
   // clang-offload-bundler -type=bc
   //   -targets=host-triple,openmp-triple1,openmp-triple2
-  //   -outputs=input_file
-  //   -inputs=unbundle_file_host,unbundle_file_tgt1,unbundle_file_tgt2"
+  //   -output=output_file
+  //   -input=unbundle_file_host
+  //   -input=unbundle_file_tgt1
+  //   -input=unbundle_file_tgt2
 
   ArgStringList CmdArgs;
 
@@ -8109,14 +8097,12 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Get bundled file command.
   CmdArgs.push_back(
-      TCArgs.MakeArgString(Twine("-outputs=") + Output.getFilename()));
+      TCArgs.MakeArgString(Twine("-output=") + Output.getFilename()));
 
   // Get unbundled files command.
-  SmallString<128> UB;
-  UB += "-inputs=";
   for (unsigned I = 0; I < Inputs.size(); ++I) {
-    if (I)
-      UB += ',';
+    SmallString<128> UB;
+    UB += "-input=";
 
     // Find ToolChain for this input.
     const ToolChain *CurTC = &getToolChain();
@@ -8131,9 +8117,8 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
     } else {
       UB += CurTC->getInputFilename(Inputs[I]);
     }
+    CmdArgs.push_back(TCArgs.MakeArgString(UB));
   }
-  CmdArgs.push_back(TCArgs.MakeArgString(UB));
-
   // All the inputs are encoded as commands.
   C.addCommand(std::make_unique<Command>(
       JA, *this, ResponseFileSupport::None(),
@@ -8151,8 +8136,10 @@ void OffloadBundler::ConstructJobMultipleOutputs(
   // The unbundling command looks like this:
   // clang-offload-bundler -type=bc
   //   -targets=host-triple,openmp-triple1,openmp-triple2
-  //   -inputs=input_file
-  //   -outputs=unbundle_file_host,unbundle_file_tgt1,unbundle_file_tgt2"
+  //   -input=input_file
+  //   -output=unbundle_file_host
+  //   -output=unbundle_file_tgt1
+  //   -output=unbundle_file_tgt2
   //   -unbundle
 
   ArgStringList CmdArgs;
@@ -8204,17 +8191,15 @@ void OffloadBundler::ConstructJobMultipleOutputs(
 
   // Get bundled file command.
   CmdArgs.push_back(
-      TCArgs.MakeArgString(Twine("-inputs=") + Input.getFilename()));
+      TCArgs.MakeArgString(Twine("-input=") + Input.getFilename()));
 
   // Get unbundled files command.
-  SmallString<128> UB;
-  UB += "-outputs=";
   for (unsigned I = 0; I < Outputs.size(); ++I) {
-    if (I)
-      UB += ',';
+    SmallString<128> UB;
+    UB += "-output=";
     UB += DepInfo[I].DependentToolChain->getInputFilename(Outputs[I]);
+    CmdArgs.push_back(TCArgs.MakeArgString(UB));
   }
-  CmdArgs.push_back(TCArgs.MakeArgString(UB));
   CmdArgs.push_back("-unbundle");
   CmdArgs.push_back("-allow-missing-bundles");
 

@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "NewPMDriver.h"
-#include "PassPrinters.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -117,6 +116,11 @@ static cl::opt<std::string> PipelineEarlySimplificationEPPipeline(
     "passes-ep-pipeline-early-simplification",
     cl::desc("A textual description of the module pass pipeline inserted at "
              "the EarlySimplification extension point into default pipelines"),
+    cl::Hidden);
+static cl::opt<std::string> OptimizerEarlyEPPipeline(
+    "passes-ep-optimizer-early",
+    cl::desc("A textual description of the module pass pipeline inserted at "
+             "the OptimizerEarly extension point into default pipelines"),
     cl::Hidden);
 static cl::opt<std::string> OptimizerLastEPPipeline(
     "passes-ep-optimizer-last",
@@ -230,6 +234,12 @@ static void registerEPCallbacks(PassBuilder &PB) {
         [&PB](ModulePassManager &PM, OptimizationLevel) {
           ExitOnError Err("Unable to parse EarlySimplification pipeline: ");
           Err(PB.parsePassPipeline(PM, PipelineEarlySimplificationEPPipeline));
+        });
+  if (tryParsePipelineText<ModulePassManager>(PB, OptimizerEarlyEPPipeline))
+    PB.registerOptimizerEarlyEPCallback(
+        [&PB](ModulePassManager &PM, OptimizationLevel) {
+          ExitOnError Err("Unable to parse OptimizerEarlyEP pipeline: ");
+          Err(PB.parsePassPipeline(PM, OptimizerEarlyEPPipeline));
         });
   if (tryParsePipelineText<ModulePassManager>(PB, OptimizerLastEPPipeline))
     PB.registerOptimizerLastEPCallback(

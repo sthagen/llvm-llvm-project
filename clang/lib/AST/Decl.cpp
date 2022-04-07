@@ -596,11 +596,12 @@ static bool isExportedFromModuleInterfaceUnit(const NamedDecl *D) {
 }
 
 static LinkageInfo getInternalLinkageFor(const NamedDecl *D) {
-  // Internal linkage declarations within a module interface unit are modeled
-  // as "module-internal linkage", which means that they have internal linkage
-  // formally but can be indirectly accessed from outside the module via inline
-  // functions and templates defined within the module.
-  if (isInModulePurview(D))
+  // (for the modules ts) Internal linkage declarations within a module
+  // interface unit are modeled as "module-internal linkage", which means that
+  // they have internal linkage formally but can be indirectly accessed from
+  // outside the module via inline functions and templates defined within the
+  // module.
+  if (isInModulePurview(D) && D->getASTContext().getLangOpts().ModulesTS)
     return LinkageInfo(ModuleInternalLinkage, DefaultVisibility, false);
 
   return LinkageInfo::internal();
@@ -1547,6 +1548,11 @@ LinkageInfo LinkageComputer::getDeclLinkageAndVisibility(const NamedDecl *D) {
 }
 
 Module *Decl::getOwningModuleForLinkage(bool IgnoreLinkage) const {
+  if (isa<NamespaceDecl>(this))
+    // Namespaces never have module linkage.  It is the entities within them
+    // that [may] do.
+    return nullptr;
+
   Module *M = getOwningModule();
   if (!M)
     return nullptr;
@@ -1561,6 +1567,7 @@ Module *Decl::getOwningModuleForLinkage(bool IgnoreLinkage) const {
   case Module::ModulePartitionImplementation:
     return M;
 
+  case Module::ModuleHeaderUnit:
   case Module::GlobalModuleFragment: {
     // External linkage declarations in the global module have no owning module
     // for linkage purposes. But internal linkage declarations in the global
@@ -1576,7 +1583,8 @@ Module *Decl::getOwningModuleForLinkage(bool IgnoreLinkage) const {
       InternalLinkage = !ND->hasExternalFormalLinkage();
     else
       InternalLinkage = isInAnonymousNamespace();
-    return InternalLinkage ? M->Parent : nullptr;
+    return InternalLinkage ? M->Kind == Module::ModuleHeaderUnit ? M : M->Parent
+                           : nullptr;
   }
 
   case Module::PrivateModuleFragment:

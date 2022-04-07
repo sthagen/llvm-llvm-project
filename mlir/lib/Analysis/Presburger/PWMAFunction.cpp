@@ -27,8 +27,7 @@ static SmallVector<int64_t, 8> subtract(ArrayRef<int64_t> vecA,
 }
 
 PresburgerSet PWMAFunction::getDomain() const {
-  PresburgerSet domain =
-      PresburgerSet::getEmpty(getNumDimIds(), getNumSymbolIds());
+  PresburgerSet domain = PresburgerSet::getEmpty(getSpace());
   for (const MultiAffineFunction &piece : pieces)
     domain.unionInPlace(piece.getDomain());
   return domain;
@@ -84,8 +83,7 @@ void MultiAffineFunction::print(raw_ostream &os) const {
 void MultiAffineFunction::dump() const { print(llvm::errs()); }
 
 bool MultiAffineFunction::isEqual(const MultiAffineFunction &other) const {
-  return PresburgerSpace::isEqual(other) &&
-         getDomain().isEqual(other.getDomain()) &&
+  return isSpaceCompatible(other) && getDomain().isEqual(other.getDomain()) &&
          isEqualWhereDomainsOverlap(other);
 }
 
@@ -111,13 +109,26 @@ void MultiAffineFunction::removeIdRange(IdKind kind, unsigned idStart,
 
 void MultiAffineFunction::eliminateRedundantLocalId(unsigned posA,
                                                     unsigned posB) {
-  output.addToColumn(posB, posA, /*scale=*/1);
+  unsigned localOffset = getIdKindOffset(IdKind::Local);
+  output.addToColumn(localOffset + posB, localOffset + posA, /*scale=*/1);
   IntegerPolyhedron::eliminateRedundantLocalId(posA, posB);
+}
+
+void MultiAffineFunction::truncateOutput(unsigned count) {
+  assert(count <= output.getNumRows());
+  output.resizeVertically(count);
+}
+
+void PWMAFunction::truncateOutput(unsigned count) {
+  assert(count <= numOutputs);
+  for (MultiAffineFunction &piece : pieces)
+    piece.truncateOutput(count);
+  numOutputs = count;
 }
 
 bool MultiAffineFunction::isEqualWhereDomainsOverlap(
     MultiAffineFunction other) const {
-  if (!PresburgerSpace::isEqual(other))
+  if (!isSpaceCompatible(other))
     return false;
 
   // `commonFunc` has the same output as `this`.
@@ -150,7 +161,7 @@ bool MultiAffineFunction::isEqualWhereDomainsOverlap(
 /// Two PWMAFunctions are equal if they have the same dimensionalities,
 /// the same domain, and take the same value at every point in the domain.
 bool PWMAFunction::isEqual(const PWMAFunction &other) const {
-  if (!PresburgerSpace::isEqual(other))
+  if (!isSpaceCompatible(other))
     return false;
 
   if (!this->getDomain().isEqual(other.getDomain()))
@@ -168,7 +179,7 @@ bool PWMAFunction::isEqual(const PWMAFunction &other) const {
 }
 
 void PWMAFunction::addPiece(const MultiAffineFunction &piece) {
-  assert(piece.isSpaceEqual(*this) &&
+  assert(piece.isSpaceCompatible(*this) &&
          "Piece to be added is not compatible with this PWMAFunction!");
   assert(piece.isConsistent() && "Piece is internally inconsistent!");
   assert(this->getDomain()

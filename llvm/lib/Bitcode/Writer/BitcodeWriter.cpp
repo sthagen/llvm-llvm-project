@@ -4387,7 +4387,7 @@ void ModuleBitcodeWriter::writeModuleHash(size_t BlockStartPos) {
     uint32_t Vals[5];
     Hasher.update(ArrayRef<uint8_t>((const uint8_t *)&(Buffer)[BlockStartPos],
                                     Buffer.size() - BlockStartPos));
-    StringRef Hash = Hasher.result();
+    std::array<uint8_t, 20> Hash = Hasher.result();
     for (int Pos = 0; Pos < 20; Pos += 4) {
       Vals[Pos / 4] = support::endian::read32be(Hash.data() + Pos);
     }
@@ -4870,6 +4870,9 @@ static const char *getSectionNameForBitcode(const Triple &T) {
   case Triple::XCOFF:
     llvm_unreachable("XCOFF is not yet implemented");
     break;
+  case Triple::DXContainer:
+    llvm_unreachable("DXContainer is not yet implemented");
+    break;
   }
   llvm_unreachable("Unimplemented ObjectFormatType");
 }
@@ -4888,6 +4891,9 @@ static const char *getSectionNameForCommandline(const Triple &T) {
     break;
   case Triple::XCOFF:
     llvm_unreachable("XCOFF is not yet implemented");
+    break;
+  case Triple::DXContainer:
+    llvm_unreachable("DXC is not yet implemented");
     break;
   }
   llvm_unreachable("Unimplemented ObjectFormatType");

@@ -248,6 +248,7 @@ PrintingPolicy CGDebugInfo::getPrintingPolicy() const {
   PP.PrintCanonicalTypes = true;
   PP.UsePreferredNames = false;
   PP.AlwaysIncludeTypeForTemplateArgument = true;
+  PP.UseEnumerators = false;
 
   // Apply -fdebug-prefix-map.
   PP.Callbacks = &PrintCB;
@@ -5078,6 +5079,7 @@ struct ReconstitutableType : public RecursiveASTVisitor<ReconstitutableType> {
   bool VisitFunctionProtoType(FunctionProtoType *FT) {
     // noexcept is not encoded in DWARF, so the reversi
     Reconstitutable &= !isNoexceptExceptionSpec(FT->getExceptionSpecType());
+    Reconstitutable &= !FT->getNoReturnAttr();
     return Reconstitutable;
   }
   bool VisitRecordType(RecordType *RT) {
@@ -5197,7 +5199,7 @@ std::string CGDebugInfo::GetName(const Decl *D, bool Qualified) const {
         TemplateNamesKind == codegenoptions::DebugTemplateNamesKind::Mangled;
     // check if it's a template
     if (Mangled)
-      OS << "_STN";
+      OS << "_STN|";
 
     OS << ND->getDeclName();
     std::string EncodedOriginalName;

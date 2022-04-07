@@ -836,9 +836,13 @@ struct EraseIdentityGenericOp : public OpRewritePattern<GenericOp> {
             sparse_tensor::getSparseTensorEncoding(resultType))
           returnedArg = rewriter.create<sparse_tensor::ConvertOp>(
               genericOp.getLoc(), resultType, returnedArg);
-        else
+        else {
+          if (!tensor::CastOp::areCastCompatible(returnedArg.getType(),
+                                                 resultType))
+            return failure();
           returnedArg = rewriter.create<tensor::CastOp>(
               genericOp.getLoc(), resultType, returnedArg);
+        }
       }
       returnedArgs.push_back(returnedArg);
     }
@@ -909,35 +913,12 @@ struct DeadArgsGenericOpInputs : public OpRewritePattern<GenericOp> {
     return success();
   }
 };
-
-/// Fold linalg.fill into linalg.generic
-struct FoldFillWithGenericOp : public OpRewritePattern<GenericOp> {
-  using OpRewritePattern<GenericOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(GenericOp genericOp,
-                                PatternRewriter &rewriter) const override {
-    if (!genericOp.hasTensorSemantics())
-      return failure();
-    bool fillFound = false;
-    Block &payload = genericOp.region().front();
-    for (OpOperand *opOperand : genericOp.getInputOperands()) {
-      FillOp fillOp = opOperand->get().getDefiningOp<FillOp>();
-      if (fillOp) {
-        fillFound = true;
-        payload.getArgument(opOperand->getOperandNumber())
-            .replaceAllUsesWith(fillOp.value());
-      }
-    }
-    // fail if there are no FillOps to fold.
-    return success(fillFound);
-  }
-};
 } // namespace
 
 void GenericOp::getCanonicalizationPatterns(RewritePatternSet &results,
                                             MLIRContext *context) {
   results.add<DeduplicateGenericOpInputs, EraseIdentityGenericOp,
-              DeadArgsGenericOpInputs, FoldFillWithGenericOp>(context);
+              DeadArgsGenericOpInputs>(context);
 }
 
 LogicalResult GenericOp::fold(ArrayRef<Attribute>,

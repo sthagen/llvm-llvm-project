@@ -503,6 +503,22 @@ static bool FixupInvocation(CompilerInvocation &Invocation,
     Diags.Report(diag::warn_ignored_hip_only_option)
         << Args.getLastArg(OPT_gpu_max_threads_per_block_EQ)->getAsString(Args);
 
+  // When these options are used, the compiler is allowed to apply
+  // optimizations that may affect the final result. For example
+  // (x+y)+z is transformed to x+(y+z) but may not give the same
+  // final result; it's not value safe.
+  // Another example can be to simplify x/x to 1.0 but x could be 0.0, INF
+  // or NaN. Final result may then differ. An error is issued when the eval
+  // method is set with one of these options.
+  if (Args.hasArg(OPT_ffp_eval_method_EQ)) {
+    if (LangOpts.ApproxFunc)
+      Diags.Report(diag::err_incompatible_fp_eval_method_options) << 0;
+    if (LangOpts.AllowFPReassoc)
+      Diags.Report(diag::err_incompatible_fp_eval_method_options) << 1;
+    if (LangOpts.AllowRecip)
+      Diags.Report(diag::err_incompatible_fp_eval_method_options) << 2;
+  }
+
   // -cl-strict-aliasing needs to emit diagnostic in the case where CL > 1.0.
   // This option should be deprecated for CL > 1.0 because
   // this option was added for compatibility with OpenCL 1.0.
@@ -1982,8 +1998,8 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   else if (Args.hasArg(options::OPT_fno_finite_loops))
     Opts.FiniteLoops = CodeGenOptions::FiniteLoopsKind::Never;
 
-  Opts.EmitIEEENaNCompliantInsts =
-      Args.hasFlag(options::OPT_mamdgpu_ieee, options::OPT_mno_amdgpu_ieee);
+  Opts.EmitIEEENaNCompliantInsts = Args.hasFlag(
+      options::OPT_mamdgpu_ieee, options::OPT_mno_amdgpu_ieee, true);
   if (!Opts.EmitIEEENaNCompliantInsts && !LangOptsRef.NoHonorNaNs)
     Diags.Report(diag::err_drv_amdgpu_ieee_without_no_honor_nans);
 
@@ -2420,6 +2436,7 @@ static const auto &getFrontendActionTable() {
       {frontend::GenerateModule, OPT_emit_module},
       {frontend::GenerateModuleInterface, OPT_emit_module_interface},
       {frontend::GenerateHeaderModule, OPT_emit_header_module},
+      {frontend::GenerateHeaderUnit, OPT_emit_header_unit},
       {frontend::GeneratePCH, OPT_emit_pch},
       {frontend::GenerateInterfaceStubs, OPT_emit_interface_stubs},
       {frontend::InitOnly, OPT_init_only},
@@ -2436,7 +2453,7 @@ static const auto &getFrontendActionTable() {
       {frontend::MigrateSource, OPT_migrate},
       {frontend::RunPreprocessorOnly, OPT_Eonly},
       {frontend::PrintDependencyDirectivesSourceMinimizerOutput,
-          OPT_print_dependency_directives_minimized_source},
+       OPT_print_dependency_directives_minimized_source},
   };
 
   return Table;
@@ -2566,6 +2583,20 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     StringRef Preprocessed = Opts.DashX.isPreprocessed() ? "-cpp-output" : "";
     StringRef ModuleMap =
         Opts.DashX.getFormat() == InputKind::ModuleMap ? "-module-map" : "";
+    StringRef HeaderUnit = "";
+    switch (Opts.DashX.getHeaderUnitKind()) {
+    case InputKind::HeaderUnit_None:
+      break;
+    case InputKind::HeaderUnit_User:
+      HeaderUnit = "-user";
+      break;
+    case InputKind::HeaderUnit_System:
+      HeaderUnit = "-system";
+      break;
+    case InputKind::HeaderUnit_Abs:
+      HeaderUnit = "-header-unit";
+      break;
+    }
     StringRef Header = IsHeader ? "-header" : "";
 
     StringRef Lang;
@@ -2608,9 +2639,13 @@ static void GenerateFrontendArgs(const FrontendOptions &Opts,
     case Language::LLVM_IR:
       Lang = "ir";
       break;
+    case Language::HLSL:
+      Lang = "hlsl";
+      break;
     }
 
-    GenerateArg(Args, OPT_x, Lang + Header + ModuleMap + Preprocessed, SA);
+    GenerateArg(Args, OPT_x,
+                Lang + HeaderUnit + Header + ModuleMap + Preprocessed, SA);
   }
 
   // OPT_INPUT has a unique class, generate it directly.
@@ -2755,13 +2790,32 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   if (const Arg *A = Args.getLastArg(OPT_x)) {
     StringRef XValue = A->getValue();
 
-    // Parse suffixes: '<lang>(-header|[-module-map][-cpp-output])'.
+    // Parse suffixes:
+    // '<lang>(-[{header-unit,user,system}-]header|[-module-map][-cpp-output])'.
     // FIXME: Supporting '<lang>-header-cpp-output' would be useful.
     bool Preprocessed = XValue.consume_back("-cpp-output");
     bool ModuleMap = XValue.consume_back("-module-map");
-    IsHeaderFile = !Preprocessed && !ModuleMap &&
-                   XValue != "precompiled-header" &&
-                   XValue.consume_back("-header");
+    // Detect and consume the header indicator.
+    bool IsHeader =
+        XValue != "precompiled-header" && XValue.consume_back("-header");
+
+    // If we have c++-{user,system}-header, that indicates a header unit input
+    // likewise, if the user put -fmodule-header together with a header with an
+    // absolute path (header-unit-header).
+    InputKind::HeaderUnitKind HUK = InputKind::HeaderUnit_None;
+    if (IsHeader || Preprocessed) {
+      if (XValue.consume_back("-header-unit"))
+        HUK = InputKind::HeaderUnit_Abs;
+      else if (XValue.consume_back("-system"))
+        HUK = InputKind::HeaderUnit_System;
+      else if (XValue.consume_back("-user"))
+        HUK = InputKind::HeaderUnit_User;
+    }
+
+    // The value set by this processing is an un-preprocessed source which is
+    // not intended to be a module map or header unit.
+    IsHeaderFile = IsHeader && !Preprocessed && !ModuleMap &&
+                   HUK == InputKind::HeaderUnit_None;
 
     // Principal languages.
     DashX = llvm::StringSwitch<InputKind>(XValue)
@@ -2774,18 +2828,21 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
                 .Case("objective-c", Language::ObjC)
                 .Case("objective-c++", Language::ObjCXX)
                 .Case("renderscript", Language::RenderScript)
+                .Case("hlsl", Language::HLSL)
                 .Default(Language::Unknown);
 
     // "objc[++]-cpp-output" is an acceptable synonym for
     // "objective-c[++]-cpp-output".
-    if (DashX.isUnknown() && Preprocessed && !IsHeaderFile && !ModuleMap)
+    if (DashX.isUnknown() && Preprocessed && !IsHeaderFile && !ModuleMap &&
+        HUK == InputKind::HeaderUnit_None)
       DashX = llvm::StringSwitch<InputKind>(XValue)
                   .Case("objc", Language::ObjC)
                   .Case("objc++", Language::ObjCXX)
                   .Default(Language::Unknown);
 
     // Some special cases cannot be combined with suffixes.
-    if (DashX.isUnknown() && !Preprocessed && !ModuleMap && !IsHeaderFile)
+    if (DashX.isUnknown() && !Preprocessed && !IsHeaderFile && !ModuleMap &&
+        HUK == InputKind::HeaderUnit_None)
       DashX = llvm::StringSwitch<InputKind>(XValue)
                   .Case("cpp-output", InputKind(Language::C).getPreprocessed())
                   .Case("assembler-with-cpp", Language::Asm)
@@ -2800,6 +2857,12 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
 
     if (Preprocessed)
       DashX = DashX.getPreprocessed();
+    // A regular header is considered mutually exclusive with a header unit.
+    if (HUK != InputKind::HeaderUnit_None) {
+      DashX = DashX.withHeaderUnit(HUK);
+      IsHeaderFile = true;
+    } else if (IsHeaderFile)
+      DashX = DashX.getHeader();
     if (ModuleMap)
       DashX = DashX.withFormat(InputKind::ModuleMap);
   }
@@ -2809,6 +2872,11 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   Opts.Inputs.clear();
   if (Inputs.empty())
     Inputs.push_back("-");
+
+  if (DashX.getHeaderUnitKind() != InputKind::HeaderUnit_None &&
+      Inputs.size() > 1)
+    Diags.Report(diag::err_drv_header_unit_extra_inputs) << Inputs[1];
+
   for (unsigned i = 0, e = Inputs.size(); i != e; ++i) {
     InputKind IK = DashX;
     if (IK.isUnknown()) {
@@ -3172,6 +3240,9 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case Language::HIP:
       LangStd = LangStandard::lang_hip;
       break;
+    case Language::HLSL:
+      LangStd = LangStandard::lang_hlsl2021;
+      break;
     }
   }
 
@@ -3193,6 +3264,8 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.HexFloats = Std.hasHexFloats();
   Opts.ImplicitInt = Std.hasImplicitInt();
 
+  Opts.HLSL = IK.getLanguage() == Language::HLSL;
+
   // Set OpenCL Version.
   Opts.OpenCL = Std.isOpenCL();
   if (LangStd == LangStandard::lang_opencl10)
@@ -3209,6 +3282,18 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.OpenCLCPlusPlusVersion = 100;
   else if (LangStd == LangStandard::lang_openclcpp2021)
     Opts.OpenCLCPlusPlusVersion = 202100;
+  else if (LangStd == LangStandard::lang_hlsl2015)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_2015;
+  else if (LangStd == LangStandard::lang_hlsl2016)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_2016;
+  else if (LangStd == LangStandard::lang_hlsl2017)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_2017;
+  else if (LangStd == LangStandard::lang_hlsl2018)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_2018;
+  else if (LangStd == LangStandard::lang_hlsl2021)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_2021;
+  else if (LangStd == LangStandard::lang_hlsl202x)
+    Opts.HLSLVersion = (unsigned)LangOptions::HLSL_202x;
 
   // OpenCL has some additional defaults.
   if (Opts.OpenCL) {
@@ -3243,6 +3328,10 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     // whereas respecting contract flag in backend.
     Opts.setDefaultFPContractMode(LangOptions::FPM_FastHonorPragmas);
   } else if (Opts.CUDA) {
+    if (T.isSPIRV()) {
+      // Emit OpenCL version metadata in LLVM IR when targeting SPIR-V.
+      Opts.OpenCLVersion = 200;
+    }
     // Allow fuse across statements disregarding pragmas.
     Opts.setDefaultFPContractMode(LangOptions::FPM_Fast);
   }
@@ -3293,6 +3382,9 @@ static bool IsInputCompatibleWithStandard(InputKind IK,
     // FIXME: The -std= value is not ignored; it affects the tokenization
     // and preprocessing rules if we're preprocessing this asm input.
     return true;
+
+  case Language::HLSL:
+    return S.getLanguage() == Language::HLSL;
   }
 
   llvm_unreachable("unexpected input language");
@@ -3324,6 +3416,9 @@ static StringRef GetInputKindName(InputKind IK) {
     return "Asm";
   case Language::LLVM_IR:
     return "LLVM IR";
+
+  case Language::HLSL:
+    return "HLSL";
 
   case Language::Unknown:
     break;
@@ -3856,6 +3951,7 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
   }
   if (Opts.FastRelaxedMath)
     Opts.setDefaultFPContractMode(LangOptions::FPM_Fast);
+
   llvm::sort(Opts.ModuleFeatures);
 
   // -mrtd option
@@ -4160,6 +4256,7 @@ static bool isStrictlyPreprocessorAction(frontend::ActionKind Action) {
   case frontend::GenerateModule:
   case frontend::GenerateModuleInterface:
   case frontend::GenerateHeaderModule:
+  case frontend::GenerateHeaderUnit:
   case frontend::GeneratePCH:
   case frontend::GenerateInterfaceStubs:
   case frontend::ParseSyntaxOnly:
@@ -4363,6 +4460,8 @@ static void GeneratePreprocessorOutputArgs(
     GenerateArg(Args, OPT_dM, SA);
   if (!Generate_dM && Opts.ShowMacros)
     GenerateArg(Args, OPT_dD, SA);
+  if (Opts.DirectivesOnly)
+    GenerateArg(Args, OPT_fdirectives_only, SA);
 }
 
 static bool ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
@@ -4385,6 +4484,7 @@ static bool ParsePreprocessorOutputArgs(PreprocessorOutputOptions &Opts,
 
   Opts.ShowCPP = isStrictlyPreprocessorAction(Action) && !Args.hasArg(OPT_dM);
   Opts.ShowMacros = Args.hasArg(OPT_dM) || Args.hasArg(OPT_dD);
+  Opts.DirectivesOnly = Args.hasArg(OPT_fdirectives_only);
 
   return Diags.getNumErrors() == NumErrorsBefore;
 }

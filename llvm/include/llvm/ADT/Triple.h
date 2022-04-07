@@ -198,6 +198,7 @@ public:
     NVCL,       // NVIDIA OpenCL
     AMDHSA,     // AMD HSA Runtime
     PS4,
+    PS5,
     ELFIAMCU,
     TvOS,       // Apple tvOS
     WatchOS,    // Apple watchOS
@@ -246,6 +247,12 @@ public:
     Domain,
     Compute,
     Library,
+    RayGeneration,
+    Intersection,
+    AnyHit,
+    ClosestHit,
+    Miss,
+    Callable,
     Mesh,
     Amplification,
 
@@ -255,6 +262,7 @@ public:
     UnknownObjectFormat,
 
     COFF,
+    DXContainer,
     ELF,
     GOFF,
     MachO,
@@ -669,6 +677,16 @@ public:
            getVendor() == Triple::SCEI &&
            getOS() == Triple::PS4;
   }
+
+  /// Tests whether the target is the PS5 platform.
+  bool isPS5() const {
+    return getArch() == Triple::x86_64 &&
+      getVendor() == Triple::SCEI &&
+      getOS() == Triple::PS5;
+  }
+
+  /// Tests whether the target is the PS4 or PS5 platform.
+  bool isPS() const { return isPS4() || isPS5(); }
 
   /// Tests whether the target is Android
   bool isAndroid() const { return getEnvironment() == Triple::Android; }

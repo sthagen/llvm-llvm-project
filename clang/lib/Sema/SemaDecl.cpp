@@ -1889,13 +1889,26 @@ static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
   // Types of valid local variables should be complete, so this should succeed.
   if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
 
-    // White-list anything with an __attribute__((unused)) type.
+    const Expr *Init = VD->getInit();
+    if (const auto *Cleanups = dyn_cast_or_null<ExprWithCleanups>(Init))
+      Init = Cleanups->getSubExpr();
+
     const auto *Ty = VD->getType().getTypePtr();
 
     // Only look at the outermost level of typedef.
     if (const TypedefType *TT = Ty->getAs<TypedefType>()) {
+      // Allow anything marked with __attribute__((unused)).
       if (TT->getDecl()->hasAttr<UnusedAttr>())
         return false;
+    }
+
+    // Warn for reference variables whose initializtion performs lifetime
+    // extension.
+    if (const auto *MTE = dyn_cast_or_null<MaterializeTemporaryExpr>(Init)) {
+      if (MTE->getExtendingDecl()) {
+        Ty = VD->getType().getNonReferenceType().getTypePtr();
+        Init = MTE->getSubExpr()->IgnoreImplicitAsWritten();
+      }
     }
 
     // If we failed to complete the type for some reason, or if the type is
@@ -1916,10 +1929,7 @@ static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
         if (!RD->hasTrivialDestructor() && !RD->hasAttr<WarnUnusedAttr>())
           return false;
 
-        if (const Expr *Init = VD->getInit()) {
-          if (const ExprWithCleanups *Cleanups =
-                  dyn_cast<ExprWithCleanups>(Init))
-            Init = Cleanups->getSubExpr();
+        if (Init) {
           const CXXConstructExpr *Construct =
             dyn_cast<CXXConstructExpr>(Init);
           if (Construct && !Construct->isElidable()) {
@@ -1931,10 +1941,16 @@ static bool ShouldDiagnoseUnusedDecl(const NamedDecl *D) {
 
           // Suppress the warning if we don't know how this is constructed, and
           // it could possibly be non-trivial constructor.
-          if (Init->isTypeDependent())
+          if (Init->isTypeDependent()) {
             for (const CXXConstructorDecl *Ctor : RD->ctors())
               if (!Ctor->isTrivial())
                 return false;
+          }
+
+          // Suppress the warning if the constructor is unresolved because
+          // its arguments are dependent.
+          if (isa<CXXUnresolvedConstructExpr>(Init))
+            return false;
         }
       }
     }
@@ -2770,6 +2786,9 @@ static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
     NewAttr = S.mergeEnforceTCBLeafAttr(D, *TCBLA);
   else if (const auto *BTFA = dyn_cast<BTFDeclTagAttr>(Attr))
     NewAttr = S.mergeBTFDeclTagAttr(D, *BTFA);
+  else if (const auto *NT = dyn_cast<HLSLNumThreadsAttr>(Attr))
+    NewAttr =
+        S.mergeHLSLNumThreadsAttr(D, *NT, NT->getX(), NT->getY(), NT->getZ());
   else if (Attr->shouldInheritEvenIfAlreadyPresent() || !DeclHasAttr(D, Attr))
     NewAttr = cast<InheritableAttr>(Attr->clone(S.Context));
 
@@ -11323,6 +11342,11 @@ void Sema::CheckMain(FunctionDecl* FD, const DeclSpec& DS) {
     return;
   }
 
+  // Functions named main in hlsl are default entries, but don't have specific
+  // signatures they are required to conform to.
+  if (getLangOpts().HLSL)
+    return;
+
   QualType T = FD->getType();
   assert(T->isFunctionType() && "function decl is not of function type");
   const FunctionType* FT = T->castAs<FunctionType>();
@@ -13147,11 +13171,9 @@ void Sema::ActOnCXXForRangeDecl(Decl *D) {
   }
 }
 
-StmtResult
-Sema::ActOnCXXForRangeIdentifier(Scope *S, SourceLocation IdentLoc,
-                                 IdentifierInfo *Ident,
-                                 ParsedAttributes &Attrs,
-                                 SourceLocation AttrEnd) {
+StmtResult Sema::ActOnCXXForRangeIdentifier(Scope *S, SourceLocation IdentLoc,
+                                            IdentifierInfo *Ident,
+                                            ParsedAttributes &Attrs) {
   // C++1y [stmt.iter]p1:
   //   A range-based for statement of the form
   //      for ( for-range-identifier : for-range-initializer ) statement
@@ -13166,7 +13188,7 @@ Sema::ActOnCXXForRangeIdentifier(Scope *S, SourceLocation IdentLoc,
 
   Declarator D(DS, DeclaratorContext::ForInit);
   D.SetIdentifier(Ident, IdentLoc);
-  D.takeAttributes(Attrs, AttrEnd);
+  D.takeAttributes(Attrs);
 
   D.AddTypeInfo(DeclaratorChunk::getReference(0, IdentLoc, /*lvalue*/ false),
                 IdentLoc);
@@ -13174,7 +13196,8 @@ Sema::ActOnCXXForRangeIdentifier(Scope *S, SourceLocation IdentLoc,
   cast<VarDecl>(Var)->setCXXForRangeDecl(true);
   FinalizeDeclaration(Var);
   return ActOnDeclStmt(FinalizeDeclaratorGroup(S, DS, Var), IdentLoc,
-                       AttrEnd.isValid() ? AttrEnd : IdentLoc);
+                       Attrs.Range.getEnd().isValid() ? Attrs.Range.getEnd()
+                                                      : IdentLoc);
 }
 
 void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
@@ -14232,6 +14255,11 @@ ShouldWarnAboutMissingPrototype(const FunctionDecl *FD,
 
   // Don't warn on explicitly deleted functions.
   if (FD->isDeleted())
+    return false;
+
+  // Don't warn on implicitly local functions (such as having local-typed
+  // parameters).
+  if (!FD->isExternallyVisible())
     return false;
 
   for (const FunctionDecl *Prev = FD->getPreviousDecl();
@@ -16047,9 +16075,20 @@ Decl *Sema::ActOnTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
       // with C structs, unions, and enums when looking for a matching
       // tag declaration or definition. See the similar lookup tweak
       // in Sema::LookupName; is there a better way to deal with this?
-      while (isa<RecordDecl>(SearchDC) || isa<EnumDecl>(SearchDC))
+      while (isa<RecordDecl, EnumDecl, ObjCContainerDecl>(SearchDC))
+        SearchDC = SearchDC->getParent();
+    } else if (getLangOpts().CPlusPlus) {
+      // Inside ObjCContainer want to keep it as a lexical decl context but go
+      // past it (most often to TranslationUnit) to find the semantic decl
+      // context.
+      while (isa<ObjCContainerDecl>(SearchDC))
         SearchDC = SearchDC->getParent();
     }
+  } else if (getLangOpts().CPlusPlus) {
+    // Don't use ObjCContainerDecl as the semantic decl context for anonymous
+    // TagDecl the same way as we skip it for named TagDecl.
+    while (isa<ObjCContainerDecl>(SearchDC))
+      SearchDC = SearchDC->getParent();
   }
 
   if (Previous.isSingleResult() &&
@@ -16699,8 +16738,7 @@ void Sema::ActOnTagStartDefinition(Scope *S, Decl *TagD) {
   AddPushedVisibilityAttribute(Tag);
 }
 
-bool Sema::ActOnDuplicateDefinition(DeclSpec &DS, Decl *Prev,
-                                    SkipBodyInfo &SkipBody) {
+bool Sema::ActOnDuplicateDefinition(Decl *Prev, SkipBodyInfo &SkipBody) {
   if (!hasStructuralCompatLayout(Prev, SkipBody.New))
     return false;
 
@@ -18708,9 +18746,7 @@ void Sema::ActOnPragmaWeakID(IdentifierInfo* Name,
   if (PrevDecl) {
     PrevDecl->addAttr(WeakAttr::CreateImplicit(Context, PragmaLoc, AttributeCommonInfo::AS_Pragma));
   } else {
-    (void)WeakUndeclaredIdentifiers.insert(
-      std::pair<IdentifierInfo*,WeakInfo>
-        (Name, WeakInfo((IdentifierInfo*)nullptr, NameLoc)));
+    (void)WeakUndeclaredIdentifiers[Name].insert(WeakInfo(nullptr, NameLoc));
   }
 }
 
@@ -18728,8 +18764,7 @@ void Sema::ActOnPragmaWeakAlias(IdentifierInfo* Name,
       if (NamedDecl *ND = dyn_cast<NamedDecl>(PrevDecl))
         DeclApplyPragmaWeak(TUScope, ND, W);
   } else {
-    (void)WeakUndeclaredIdentifiers.insert(
-      std::pair<IdentifierInfo*,WeakInfo>(AliasName, W));
+    (void)WeakUndeclaredIdentifiers[AliasName].insert(W);
   }
 }
 

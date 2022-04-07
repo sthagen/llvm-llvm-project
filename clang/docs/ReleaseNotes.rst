@@ -72,11 +72,33 @@ Bug Fixes
 - Previously invalid member variables with template parameters would crash clang.
   Now fixed by setting identifiers for them.
   This fixes `Issue 28475 (PR28101) <https://github.com/llvm/llvm-project/issues/28475>`_.
-
 - Now allow the `restrict` and `_Atomic` qualifiers to be used in conjunction
   with `__auto_type` to match the behavior in GCC. This fixes
   `Issue 53652 <https://github.com/llvm/llvm-project/issues/53652>`_.
-
+- No longer crash when specifying a variably-modified parameter type in a
+  function with the ``naked`` attribute. This fixes
+  `Issue 50541 <https://github.com/llvm/llvm-project/issues/50541>`_.
+- Allow multiple ``#pragma weak`` directives to name the same undeclared (if an
+  alias, target) identifier instead of only processing one such ``#pragma weak``
+  per identifier.
+  Fixes `Issue 28985 <https://github.com/llvm/llvm-project/issues/28985>`_.
+- Assignment expressions in C11 and later mode now properly strip the _Atomic
+  qualifier when determining the type of the assignment expression. Fixes
+  `Issue 48742 <https://github.com/llvm/llvm-project/issues/48742>`_.
+- Improved the diagnostic when accessing a member of an atomic structure or
+  union object in C; was previously an unhelpful error, but now issues a
+  `-Watomic-access` warning which defaults to an error. Fixes
+  `Issue 54563 <https://github.com/llvm/llvm-project/issues/54563>`_.
+- Unevaluated lambdas in dependant contexts no longer result in clang crashing.
+  This fixes Issues `50376 <https://github.com/llvm/llvm-project/issues/50376>`_,
+  `51414 <https://github.com/llvm/llvm-project/issues/51414>`_,
+  `51416 <https://github.com/llvm/llvm-project/issues/51416>`_,
+  and `51641 <https://github.com/llvm/llvm-project/issues/51641>`_.
+- The builtin function __builtin_dump_struct would crash clang when the target 
+  struct contains a bitfield. It now correctly handles bitfields.
+  This fixes Issue `Issue 54462 <https://github.com/llvm/llvm-project/issues/54462>`_.
+- Statement expressions are now disabled in default arguments in general.
+  This fixes Issue `Issue 53488 <https://github.com/llvm/llvm-project/issues/53488>`_.
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -88,9 +110,19 @@ Improvements to Clang's diagnostics
   extension definitions of an inline namespace and therefore points its note
   at the original definition. This fixes `Issue 50794 (PR51452)
   <https://github.com/llvm/llvm-project/issues/50794>`_.
+- ``-Wunused-but-set-variable`` now also warns if the variable is only used
+  by unary operators.
+- ``-Wunused-variable`` no longer warn for references extending the lifetime
+  of temporaries with side effects. This fixes `Issue 54489
+  <https://github.com/llvm/llvm-project/issues/54489>`_.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
+- Improve __builtin_dump_struct:
+  - Support bitfields in struct and union.
+  - Improve the dump format, dump both bitwidth(if its a bitfield) and field value.
+  - Remove anonymous tag locations.
+  - Beautify dump format, add indent for nested struct and struct members.
 
 New Compiler Flags
 ------------------
@@ -129,6 +161,9 @@ Attribute Changes in Clang
 
 - ``#pragma clang attribute push`` now supports multiple attributes within a single directive.
 
+- The ``__declspec(naked)`` attribute can no longer be written on a member
+  function in Microsoft compatibility mode, matching the behavior of cl.exe.
+
 Windows Support
 ---------------
 
@@ -160,6 +195,18 @@ C++20 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 - Diagnose consteval and constexpr issues that happen at namespace scope. This
   partially addresses `Issue 51593 <https://github.com/llvm/llvm-project/issues/51593>`_.
+- No longer attempt to evaluate a consteval UDL function call at runtime when
+  it is called through a template instantiation. This fixes
+  `Issue 54578 <https://github.com/llvm/llvm-project/issues/54578>`_.
+
+- Implemented `__builtin_source_location()` which enables library support for std::source_location.
+
+- The mangling scheme for C++20 modules has incompatibly changed. The
+  initial mangling was discovered not to be reversible, and the weak
+  ownership design decision did not give the backwards compatibility
+  that was hoped for. C++20 since added ``extern "C++"`` semantics
+  that can be used for such compatibility. The demangler now demangles
+  symbols with named module attachment.
 
 C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
@@ -231,6 +278,12 @@ Internal API Changes
 
 Build System Changes
 --------------------
+
+* CMake ``-DCLANG_DEFAULT_PIE_ON_LINUX=ON`` is now the default. This is used by
+  linux-gnu systems to decide whether ``-fPIE -pie`` is the default (instead of
+  ``-fno-pic -no-pie``). This matches GCC installations on many Linux distros.
+  Note: linux-android and linux-musl always default to ``-fPIE -pie``, ignoring
+  this variable. ``-DCLANG_DEFAULT_PIE_ON_LINUX`` may be removed in the future.
 
 AST Matchers
 ------------

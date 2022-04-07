@@ -52,12 +52,13 @@ public:
   using IntegerPolyhedron::getNumIds;
   using IntegerPolyhedron::getNumLocalIds;
   using IntegerPolyhedron::getNumSymbolIds;
+  using PresburgerSpace::isSpaceCompatible;
+  using PresburgerSpace::isSpaceEqual;
 
   MultiAffineFunction(const IntegerPolyhedron &domain, const Matrix &output)
       : IntegerPolyhedron(domain), output(output) {}
-  MultiAffineFunction(const Matrix &output, unsigned numDims,
-                      unsigned numSymbols = 0, unsigned numLocals = 0)
-      : IntegerPolyhedron(numDims, numSymbols, numLocals), output(output) {}
+  MultiAffineFunction(const Matrix &output, const PresburgerSpace &space)
+      : IntegerPolyhedron(space), output(output) {}
 
   ~MultiAffineFunction() override = default;
   Kind getKind() const override { return Kind::MultiAffineFunction; }
@@ -96,16 +97,6 @@ public:
   /// the intersection of the domains.
   bool isEqualWhereDomainsOverlap(MultiAffineFunction other) const;
 
-  /// Returns whether the underlying PresburgerSpace is equal to `other`.
-  bool isSpaceEqual(const PresburgerSpace &other) const {
-    return PresburgerSpace::isEqual(other);
-  };
-
-  /// Returns whether the underlying PresburgerLocalSpace is equal to `other`.
-  bool isSpaceEqual(const PresburgerLocalSpace &other) const {
-    return PresburgerLocalSpace::isEqual(other);
-  };
-
   /// Return whether the `this` and `other` are equal. This is the case if
   /// they lie in the same space, i.e. have the same dimensions, and their
   /// domains are identical and their outputs are equal on their domain.
@@ -114,6 +105,11 @@ public:
   /// Get the value of the function at the specified point. If the point lies
   /// outside the domain, an empty optional is returned.
   Optional<SmallVector<int64_t, 8>> valueAt(ArrayRef<int64_t> point) const;
+
+  /// Truncate the output dimensions to the first `count` dimensions.
+  ///
+  /// TODO: refactor so that this can be accomplished through removeIdRange.
+  void truncateOutput(unsigned count);
 
   void print(raw_ostream &os) const;
   void dump() const;
@@ -145,9 +141,10 @@ private:
 /// finding the value of the function at a point.
 class PWMAFunction : public PresburgerSpace {
 public:
-  PWMAFunction(unsigned numDims, unsigned numSymbols, unsigned numOutputs)
-      : PresburgerSpace(/*numDomain=*/0, /*numRange=*/numDims, numSymbols),
-        numOutputs(numOutputs) {
+  PWMAFunction(const PresburgerSpace &space, unsigned numOutputs)
+      : PresburgerSpace(space), numOutputs(numOutputs) {
+    assert(getNumDomainIds() == 0 && "Set type space should zero domain ids.");
+    assert(getNumLocalIds() == 0 && "PWMAFunction cannot have local ids.");
     assert(numOutputs >= 1 && "The function must output something!");
   }
 
@@ -172,6 +169,11 @@ public:
   /// they have the same dimensions, the same domain and they take the same
   /// value at every point in the domain.
   bool isEqual(const PWMAFunction &other) const;
+
+  /// Truncate the output dimensions to the first `count` dimensions.
+  ///
+  /// TODO: refactor so that this can be accomplished through removeIdRange.
+  void truncateOutput(unsigned count);
 
   void print(raw_ostream &os) const;
   void dump() const;

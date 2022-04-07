@@ -1830,7 +1830,8 @@ void OpEmitter::genCodeForAddingArgAndRegionForBuilder(
     if (attr.isDerivedAttr() || inferredAttributes.contains(namedAttr.name))
       continue;
 
-    bool emitNotNullCheck = attr.isOptional();
+    bool emitNotNullCheck =
+        attr.isOptional() || (attr.hasDefaultValue() && !isRawValueAttr);
     if (emitNotNullCheck)
       body << formatv("  if ({0}) ", namedAttr.name) << "{\n";
 
@@ -2777,7 +2778,7 @@ static void emitOpClasses(const RecordKeeper &recordKeeper,
       }
       // Emit the TypeID explicit specialization to have a single definition.
       if (!op.getCppNamespace().empty())
-        os << "DECLARE_EXPLICIT_TYPE_ID(" << op.getCppNamespace()
+        os << "MLIR_DECLARE_EXPLICIT_TYPE_ID(" << op.getCppNamespace()
            << "::" << op.getCppClassName() << ")\n\n";
     } else {
       {
@@ -2788,7 +2789,7 @@ static void emitOpClasses(const RecordKeeper &recordKeeper,
       }
       // Emit the TypeID explicit specialization to have a single definition.
       if (!op.getCppNamespace().empty())
-        os << "DEFINE_EXPLICIT_TYPE_ID(" << op.getCppNamespace()
+        os << "MLIR_DEFINE_EXPLICIT_TYPE_ID(" << op.getCppNamespace()
            << "::" << op.getCppClassName() << ")\n\n";
     }
   }
