@@ -294,6 +294,8 @@ module std [system] {
       module pop_heap                 { private header "__algorithm/pop_heap.h" }
       module prev_permutation         { private header "__algorithm/prev_permutation.h" }
       module push_heap                { private header "__algorithm/push_heap.h" }
+      module ranges_count             { private header "__algorithm/ranges_count.h" }
+      module ranges_count_if          { private header "__algorithm/ranges_count_if.h" }
       module ranges_find              { private header "__algorithm/ranges_find.h" }
       module ranges_find_if           { private header "__algorithm/ranges_find_if.h" }
       module ranges_find_if_not       { private header "__algorithm/ranges_find_if_not.h" }
@@ -526,6 +528,7 @@ module std [system] {
 
     module __format {
       module buffer                   { private header "__format/buffer.h" }
+      module enable_insertable        { private header "__format/enable_insertable.h" }
       module format_arg               { private header "__format/format_arg.h" }
       module format_args              { private header "__format/format_args.h" }
       module format_context {
@@ -705,6 +708,7 @@ module std [system] {
 
     module __memory {
       module addressof                       { private header "__memory/addressof.h" }
+      module allocate_at_least               { private header "__memory/allocate_at_least.h" }
       module allocation_guard                { private header "__memory/allocation_guard.h" }
       module allocator                       { private header "__memory/allocator.h" }
       module allocator_arg_t                 { private header "__memory/allocator_arg_t.h" }
@@ -954,6 +958,9 @@ module std [system] {
     header "type_traits"
     export functional.__functional.unwrap_ref
     export *
+
+    module integral_constant { private header "__type_traits/integral_constant.h" }
+    module is_callable       { private header "__type_traits/is_callable.h" }
   }
   module typeindex {
     header "typeindex"

@@ -103,6 +103,8 @@ END-SCRIPT
 #include <__algorithm/pop_heap.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/pop_heap.h'}}
 #include <__algorithm/prev_permutation.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/prev_permutation.h'}}
 #include <__algorithm/push_heap.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/push_heap.h'}}
+#include <__algorithm/ranges_count.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/ranges_count.h'}}
+#include <__algorithm/ranges_count_if.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/ranges_count_if.h'}}
 #include <__algorithm/ranges_find.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/ranges_find.h'}}
 #include <__algorithm/ranges_find_if.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/ranges_find_if.h'}}
 #include <__algorithm/ranges_find_if_not.h> // expected-error@*:* {{use of private header from outside its module: '__algorithm/ranges_find_if_not.h'}}
@@ -230,6 +232,7 @@ END-SCRIPT
 #include <__filesystem/space_info.h> // expected-error@*:* {{use of private header from outside its module: '__filesystem/space_info.h'}}
 #include <__filesystem/u8path.h> // expected-error@*:* {{use of private header from outside its module: '__filesystem/u8path.h'}}
 #include <__format/buffer.h> // expected-error@*:* {{use of private header from outside its module: '__format/buffer.h'}}
+#include <__format/enable_insertable.h> // expected-error@*:* {{use of private header from outside its module: '__format/enable_insertable.h'}}
 #include <__format/format_arg.h> // expected-error@*:* {{use of private header from outside its module: '__format/format_arg.h'}}
 #include <__format/format_args.h> // expected-error@*:* {{use of private header from outside its module: '__format/format_args.h'}}
 #include <__format/format_context.h> // expected-error@*:* {{use of private header from outside its module: '__format/format_context.h'}}
@@ -314,6 +317,7 @@ END-SCRIPT
 #include <__locale> // expected-error@*:* {{use of private header from outside its module: '__locale'}}
 #include <__mbstate_t.h> // expected-error@*:* {{use of private header from outside its module: '__mbstate_t.h'}}
 #include <__memory/addressof.h> // expected-error@*:* {{use of private header from outside its module: '__memory/addressof.h'}}
+#include <__memory/allocate_at_least.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocate_at_least.h'}}
 #include <__memory/allocation_guard.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocation_guard.h'}}
 #include <__memory/allocator.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocator.h'}}
 #include <__memory/allocator_arg_t.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocator_arg_t.h'}}
@@ -419,6 +423,8 @@ END-SCRIPT
 #include <__thread/poll_with_backoff.h> // expected-error@*:* {{use of private header from outside its module: '__thread/poll_with_backoff.h'}}
 #include <__thread/timed_backoff_policy.h> // expected-error@*:* {{use of private header from outside its module: '__thread/timed_backoff_policy.h'}}
 #include <__tuple> // expected-error@*:* {{use of private header from outside its module: '__tuple'}}
+#include <__type_traits/integral_constant.h> // expected-error@*:* {{use of private header from outside its module: '__type_traits/integral_constant.h'}}
+#include <__type_traits/is_callable.h> // expected-error@*:* {{use of private header from outside its module: '__type_traits/is_callable.h'}}
 #include <__utility/as_const.h> // expected-error@*:* {{use of private header from outside its module: '__utility/as_const.h'}}
 #include <__utility/auto_cast.h> // expected-error@*:* {{use of private header from outside its module: '__utility/auto_cast.h'}}
 #include <__utility/cmp.h> // expected-error@*:* {{use of private header from outside its module: '__utility/cmp.h'}}

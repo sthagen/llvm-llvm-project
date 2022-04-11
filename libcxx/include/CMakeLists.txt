@@ -66,6 +66,8 @@ set(files
   __algorithm/pop_heap.h
   __algorithm/prev_permutation.h
   __algorithm/push_heap.h
+  __algorithm/ranges_count.h
+  __algorithm/ranges_count_if.h
   __algorithm/ranges_find.h
   __algorithm/ranges_find_if.h
   __algorithm/ranges_find_if_not.h
@@ -198,6 +200,7 @@ set(files
   __filesystem/space_info.h
   __filesystem/u8path.h
   __format/buffer.h
+  __format/enable_insertable.h
   __format/format_arg.h
   __format/format_args.h
   __format/format_context.h
@@ -283,6 +286,7 @@ set(files
   __locale
   __mbstate_t.h
   __memory/addressof.h
+  __memory/allocate_at_least.h
   __memory/allocation_guard.h
   __memory/allocator.h
   __memory/allocator_arg_t.h
@@ -409,6 +413,8 @@ set(files
   __threading_support
   __tree
   __tuple
+  __type_traits/integral_constant.h
+  __type_traits/is_callable.h
   __undef_macros
   __utility/as_const.h
   __utility/auto_cast.h
