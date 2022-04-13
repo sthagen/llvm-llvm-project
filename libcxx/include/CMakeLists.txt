@@ -291,6 +291,7 @@ set(files
   __memory/allocator.h
   __memory/allocator_arg_t.h
   __memory/allocator_traits.h
+  __memory/assume_aligned.h
   __memory/auto_ptr.h
   __memory/compressed_pair.h
   __memory/concepts.h
@@ -372,6 +373,7 @@ set(files
   __ranges/enable_view.h
   __ranges/iota_view.h
   __ranges/join_view.h
+  __ranges/lazy_split_view.h
   __ranges/non_propagating_cache.h
   __ranges/owning_view.h
   __ranges/range_adaptor.h

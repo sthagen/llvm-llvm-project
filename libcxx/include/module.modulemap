@@ -713,6 +713,7 @@ module std [system] {
       module allocator                       { private header "__memory/allocator.h" }
       module allocator_arg_t                 { private header "__memory/allocator_arg_t.h" }
       module allocator_traits                { private header "__memory/allocator_traits.h" }
+      module assume_aligned                  { private header "__memory/assume_aligned.h" }
       module auto_ptr                        { private header "__memory/auto_ptr.h" }
       module compressed_pair                 { private header "__memory/compressed_pair.h" }
       module concepts                        { private header "__memory/concepts.h" }
@@ -850,6 +851,7 @@ module std [system] {
       module enable_view            { private header "__ranges/enable_view.h" }
       module iota_view              { private header "__ranges/iota_view.h" }
       module join_view              { private header "__ranges/join_view.h" }
+      module lazy_split_view        { private header "__ranges/lazy_split_view.h" }
       module non_propagating_cache  { private header "__ranges/non_propagating_cache.h" }
       module owning_view            { private header "__ranges/owning_view.h" }
       module range_adaptor          { private header "__ranges/range_adaptor.h" }

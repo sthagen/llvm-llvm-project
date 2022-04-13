@@ -322,6 +322,7 @@ END-SCRIPT
 #include <__memory/allocator.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocator.h'}}
 #include <__memory/allocator_arg_t.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocator_arg_t.h'}}
 #include <__memory/allocator_traits.h> // expected-error@*:* {{use of private header from outside its module: '__memory/allocator_traits.h'}}
+#include <__memory/assume_aligned.h> // expected-error@*:* {{use of private header from outside its module: '__memory/assume_aligned.h'}}
 #include <__memory/auto_ptr.h> // expected-error@*:* {{use of private header from outside its module: '__memory/auto_ptr.h'}}
 #include <__memory/compressed_pair.h> // expected-error@*:* {{use of private header from outside its module: '__memory/compressed_pair.h'}}
 #include <__memory/concepts.h> // expected-error@*:* {{use of private header from outside its module: '__memory/concepts.h'}}
@@ -403,6 +404,7 @@ END-SCRIPT
 #include <__ranges/enable_view.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/enable_view.h'}}
 #include <__ranges/iota_view.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/iota_view.h'}}
 #include <__ranges/join_view.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/join_view.h'}}
+#include <__ranges/lazy_split_view.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/lazy_split_view.h'}}
 #include <__ranges/non_propagating_cache.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/non_propagating_cache.h'}}
 #include <__ranges/owning_view.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/owning_view.h'}}
 #include <__ranges/range_adaptor.h> // expected-error@*:* {{use of private header from outside its module: '__ranges/range_adaptor.h'}}
