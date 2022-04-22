@@ -30,12 +30,14 @@ using namespace mlir;
 // Defined in the test directory, no public header.
 namespace mlir {
 void registerConvertToTargetEnvPass();
+void registerCloneTestPasses();
 void registerPassManagerTestPass();
 void registerPrintSpirvAvailabilityPass();
 void registerShapeFunctionTestPasses();
 void registerSideEffectTestPasses();
 void registerSliceAnalysisTestPass();
 void registerSymbolTestPasses();
+void registerRegionTestPasses();
 void registerTestAffineDataCopyPass();
 void registerTestAffineLoopUnswitchingPass();
 void registerTestAllReduceLoweringPass();
@@ -107,16 +109,19 @@ void registerTestRecursiveTypesPass();
 void registerTestSCFUtilsPass();
 void registerTestSliceAnalysisPass();
 void registerTestTensorTransforms();
+void registerTestTransformDialectInterpreterPass();
 void registerTestVectorLowerings();
 } // namespace test
 } // namespace mlir
 
 namespace test {
 void registerTestDialect(DialectRegistry &);
+void registerTestTransformDialectExtension(DialectRegistry &);
 } // namespace test
 
 #ifdef MLIR_INCLUDE_TESTS
 void registerTestPasses() {
+  registerCloneTestPasses();
   registerConvertToTargetEnvPass();
   registerPassManagerTestPass();
   registerPrintSpirvAvailabilityPass();
@@ -124,6 +129,7 @@ void registerTestPasses() {
   registerSideEffectTestPasses();
   registerSliceAnalysisTestPass();
   registerSymbolTestPasses();
+  registerRegionTestPasses();
   registerTestAffineDataCopyPass();
   registerTestAffineLoopUnswitchingPass();
   registerTestAllReduceLoweringPass();
@@ -196,6 +202,7 @@ void registerTestPasses() {
   mlir::test::registerTestSCFUtilsPass();
   mlir::test::registerTestSliceAnalysisPass();
   mlir::test::registerTestTensorTransforms();
+  mlir::test::registerTestTransformDialectInterpreterPass();
   mlir::test::registerTestVectorLowerings();
 }
 #endif
@@ -209,6 +216,7 @@ int main(int argc, char **argv) {
   registerAllDialects(registry);
 #ifdef MLIR_INCLUDE_TESTS
   ::test::registerTestDialect(registry);
+  ::test::registerTestTransformDialectExtension(registry);
 #endif
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "MLIR modular optimizer driver\n", registry,

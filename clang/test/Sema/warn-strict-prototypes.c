@@ -1,5 +1,5 @@
 // RUN: %clang_cc1 -triple i386-pc-unknown -fsyntax-only -Wstrict-prototypes -Wno-implicit-function-declaration -verify %s
-// RUN: %clang_cc1 -triple i386-pc-unknown -fsyntax-only -Wstrict-prototypes -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
+// RUN: %clang_cc1 -triple i386-pc-unknown -fsyntax-only -Wstrict-prototypes -Wno-implicit-function-declaration -fdiagnostics-parseable-fixits %s 2>&1 | FileCheck %s
 
 // function definition with 0 params, no prototype, no preceding declaration.
 void foo0() {} // expected-warning {{a function declaration without a prototype is deprecated in all versions of C}}
@@ -80,3 +80,13 @@ void foo13(...) __attribute__((overloadable)) {}
 void foo14(void) {
   foo14_call(); // no-warning
 }
+
+// Ensure that redeclarations involving a typedef type work properly, even if
+// there are function attributes involved in the declaration.
+typedef void foo_t(unsigned val);
+__attribute__((noreturn)) foo_t foo15;
+foo_t foo15; // OK
+void foo15(unsigned val); // OK
+
+foo_t foo16;
+void foo16(unsigned val); // OK

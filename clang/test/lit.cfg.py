@@ -64,9 +64,11 @@ tool_dirs = [config.clang_tools_dir, config.llvm_tools_dir]
 
 tools = [
     'apinotes-test', 'c-index-test', 'clang-diff', 'clang-format', 'clang-repl',
-    'clang-tblgen', 'clang-scan-deps', 'opt', 'llvm-ifs', 'yaml2obj',
+    'clang-tblgen', 'clang-scan-deps', 'opt', 'llvm-ifs', 'yaml2obj', 'clang-linker-wrapper',
     ToolSubst('%clang_extdef_map', command=FindTool(
         'clang-extdef-mapping'), unresolved='ignore'),
+    ToolSubst('%clang_dxc', command=config.clang,
+        extra_args=['--driver-mode=dxc']),
 ]
 
 if config.clang_examples:
@@ -130,6 +132,9 @@ if config.has_plugins and config.llvm_plugin_ext:
 
 if config.clang_default_pie_on_linux:
     config.available_features.add('default-pie-on-linux')
+
+if config.clang_enable_opaque_pointers:
+    config.available_features.add('enable-opaque-pointers')
 
 # Set available features we allow tests to conditionalize on.
 #

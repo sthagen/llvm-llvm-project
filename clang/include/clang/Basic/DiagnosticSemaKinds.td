@@ -417,9 +417,9 @@ def warn_return_value_udt_incomplete: Warning<
 def warn_implicit_function_decl : Warning<
   "implicit declaration of function %0">,
   InGroup<ImplicitFunctionDeclare>, DefaultIgnore;
-def ext_implicit_function_decl : ExtWarn<
-  "implicit declaration of function %0 is invalid in C99">,
-  InGroup<ImplicitFunctionDeclare>;
+def ext_implicit_function_decl_c99 : ExtWarn<
+  "call to undeclared function %0; ISO C99 and later do not support implicit "
+  "function declarations">, InGroup<ImplicitFunctionDeclare>, DefaultError;
 def note_function_suggestion : Note<"did you mean %0?">;
 
 def err_ellipsis_first_param : Error<
@@ -698,6 +698,10 @@ def note_unreachable_silence : Note<
 def ext_implicit_lib_function_decl : ExtWarn<
   "implicitly declaring library function '%0' with type %1">,
   InGroup<ImplicitFunctionDeclare>;
+def ext_implicit_lib_function_decl_c99 : ExtWarn<
+  "call to undeclared library function '%0' with type %1; ISO C99 and later "
+  "do not support implicit function declarations">,
+  InGroup<ImplicitFunctionDeclare>, DefaultError;
 def note_include_header_or_declare : Note<
   "include the header <%0> or explicitly provide a declaration for '%1'">;
 def note_previous_builtin_declaration : Note<"%0 is a builtin with type %1">;
@@ -4848,7 +4852,7 @@ def ext_adl_only_template_id : ExtWarn<
   "with explicit template arguments is a C++20 extension">, InGroup<CXX20>;
 
 def warn_unqualified_call_to_std_cast_function : Warning<
-  "unqualified call to %0">, InGroup<DiagGroup<"unqualified-std-cast-call">>;
+  "unqualified call to '%0'">, InGroup<DiagGroup<"unqualified-std-cast-call">>;
 
 // C++ Template Argument Lists
 def err_template_missing_args : Error<
@@ -5554,6 +5558,10 @@ def warn_missing_sentinel : Warning <
   InGroup<Sentinel>;
 def note_sentinel_here : Note<
   "%select{function|method|block}0 has been explicitly marked sentinel here">;
+def warn_strict_uses_without_prototype : Warning<
+  "passing arguments to %select{a function|%1}0 without a prototype is "
+  "deprecated in all versions of C and is not supported in C2x">,
+  InGroup<DeprecatedNonPrototype>;
 def warn_missing_prototype : Warning<
   "no previous prototype for function %0">,
   InGroup<DiagGroup<"missing-prototypes">>, DefaultIgnore;
@@ -6582,6 +6590,15 @@ def warn_self_move : Warning<
   "explicitly moving variable of type %0 to itself">,
   InGroup<SelfMove>, DefaultIgnore;
 
+def err_builtin_move_forward_unsupported : Error<
+  "unsupported signature for %q0">;
+def err_use_of_unaddressable_function : Error<
+  "taking address of non-addressable standard library function">;
+// FIXME: This should also be in -Wc++23-compat once we have it.
+def warn_cxx20_compat_use_of_unaddressable_function : Warning<
+  "taking address of non-addressable standard library function "
+  "is incompatible with C++20">, InGroup<CXX20Compat>;
+
 def warn_redundant_move_on_return : Warning<
   "redundant move in return statement">,
   InGroup<RedundantMove>, DefaultIgnore;
@@ -6638,6 +6655,8 @@ def err_subscript_function_type : Error<
   "subscript of pointer to function type %0">;
 def err_subscript_incomplete_or_sizeless_type : Error<
   "subscript of pointer to %select{incomplete|sizeless}0 type %1">;
+def err_subscript_svbool_t : Error<
+  "subscript of svbool_t is not allowed">;
 def err_dereference_incomplete_type : Error<
   "dereference of pointer to incomplete type %0">;
 def ext_gnu_subscript_void_type : Extension<
@@ -11588,7 +11607,15 @@ def err_hlsl_numthreads_argument_oor : Error<"argument '%select{X|Y|Z}0' to numt
 def err_hlsl_numthreads_invalid : Error<"total number of threads cannot exceed %0">;
 def err_hlsl_attribute_param_mismatch : Error<"%0 attribute parameters do not match the previous declaration">;
 
-// Layout randomization warning.
+def err_hlsl_pointers_unsupported : Error<
+  "%select{pointers|references}0 are unsupported in HLSL">;
+
+def err_hlsl_operator_unsupported : Error<
+  "the '%select{&|*|->}0' operator is unsupported in HLSL">;
+
+// Layout randomization diagnostics.
+def err_non_designated_init_used : Error<
+  "a randomized struct can only be initialized with a designated initializer">;
 def err_cast_from_randomized_struct : Error<
   "casting from randomized structure pointer type %0 to %1">;
 } // end of sema component.

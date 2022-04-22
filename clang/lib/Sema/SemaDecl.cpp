@@ -504,9 +504,11 @@ ParsedType Sema::getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
     FoundUsingShadow = nullptr;
   } else if (AllowDeducedTemplate) {
     if (auto *TD = getAsTypeTemplateDecl(IIDecl)) {
-      // FIXME: TemplateName should include FoundUsingShadow sugar.
-      T = Context.getDeducedTemplateSpecializationType(TemplateName(TD),
-                                                       QualType(), false);
+      assert(!FoundUsingShadow || FoundUsingShadow->getTargetDecl() == TD);
+      TemplateName Template =
+          FoundUsingShadow ? TemplateName(FoundUsingShadow) : TemplateName(TD);
+      T = Context.getDeducedTemplateSpecializationType(Template, QualType(),
+                                                       false);
       // Don't wrap in a further UsingType.
       FoundUsingShadow = nullptr;
     }
@@ -931,9 +933,12 @@ Corrected:
       //
       //   appeared.
       //
-      // We also allow this in C99 as an extension.
-      if (NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *Name, S))
-        return NameClassification::NonType(D);
+      // We also allow this in C99 as an extension. However, this is not
+      // allowed in C2x as there are no functions without prototypes there.
+      if (!getLangOpts().C2x) {
+        if (NamedDecl *D = ImplicitlyDefineFunction(NameLoc, *Name, S))
+          return NameClassification::NonType(D);
+      }
     }
 
     if (getLangOpts().CPlusPlus20 && SS.isEmpty() && NextToken.is(tok::less)) {
@@ -1107,12 +1112,16 @@ Corrected:
       IsFunctionTemplate = isa<FunctionTemplateDecl>(TD);
       IsVarTemplate = isa<VarTemplateDecl>(TD);
 
+      UsingShadowDecl *FoundUsingShadow =
+          dyn_cast<UsingShadowDecl>(*Result.begin());
+      assert(!FoundUsingShadow ||
+             TD == cast<TemplateDecl>(FoundUsingShadow->getTargetDecl()));
+      Template =
+          FoundUsingShadow ? TemplateName(FoundUsingShadow) : TemplateName(TD);
       if (SS.isNotEmpty())
-        Template =
-            Context.getQualifiedTemplateName(SS.getScopeRep(),
-                                             /*TemplateKeyword=*/false, TD);
-      else
-        Template = TemplateName(TD);
+        Template = Context.getQualifiedTemplateName(SS.getScopeRep(),
+                                                    /*TemplateKeyword=*/false,
+                                                    Template);
     } else {
       // All results were non-template functions. This is a function template
       // name.
@@ -2292,7 +2301,8 @@ NamedDecl *Sema::LazilyCreateBuiltin(IdentifierInfo *II, unsigned ID,
   if (!ForRedeclaration &&
       (Context.BuiltinInfo.isPredefinedLibFunction(ID) ||
        Context.BuiltinInfo.isHeaderDependentFunction(ID))) {
-    Diag(Loc, diag::ext_implicit_lib_function_decl)
+    Diag(Loc, LangOpts.C99 ? diag::ext_implicit_lib_function_decl_c99
+                           : diag::ext_implicit_lib_function_decl)
         << Context.BuiltinInfo.getName(ID) << R;
     if (const char *Header = Context.BuiltinInfo.getHeaderName(ID))
       Diag(Loc, diag::note_include_header_or_declare)
@@ -2796,6 +2806,8 @@ static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
   else if (const auto *NT = dyn_cast<HLSLNumThreadsAttr>(Attr))
     NewAttr =
         S.mergeHLSLNumThreadsAttr(D, *NT, NT->getX(), NT->getY(), NT->getZ());
+  else if (const auto *SA = dyn_cast<HLSLShaderAttr>(Attr))
+    NewAttr = S.mergeHLSLShaderAttr(D, *SA, SA->getType());
   else if (Attr->shouldInheritEvenIfAlreadyPresent() || !DeclHasAttr(D, Attr))
     NewAttr = cast<InheritableAttr>(Attr->clone(S.Context));
 
@@ -3246,6 +3258,10 @@ getNoteDiagForInvalidRedeclaration(const T *Old, const T *New) {
     PrevDiag = diag::note_previous_definition;
   else if (Old->isImplicit()) {
     PrevDiag = diag::note_previous_implicit_declaration;
+    if (const auto *FD = dyn_cast<FunctionDecl>(Old)) {
+      if (FD->getBuiltinID())
+        PrevDiag = diag::note_previous_builtin_declaration;
+    }
     if (OldLocation.isInvalid())
       OldLocation = New->getLocation();
   } else
@@ -8789,15 +8805,24 @@ static FunctionDecl *CreateNewFunctionDecl(Sema &SemaRef, Declarator &D,
   bool isInline = D.getDeclSpec().isInlineSpecified();
 
   if (!SemaRef.getLangOpts().CPlusPlus) {
-    // Determine whether the function was written with a
-    // prototype. This true when:
+    // Determine whether the function was written with a prototype. This is
+    // true when:
     //   - there is a prototype in the declarator, or
     //   - the type R of the function is some kind of typedef or other non-
     //     attributed reference to a type name (which eventually refers to a
-    //     function type).
+    //     function type). Note, we can't always look at the adjusted type to
+    //     check this case because attributes may cause a non-function
+    //     declarator to still have a function type. e.g.,
+    //       typedef void func(int a);
+    //       __attribute__((noreturn)) func other_func; // This has a prototype
     bool HasPrototype =
-      (D.isFunctionDeclarator() && D.getFunctionTypeInfo().hasPrototype) ||
-      (!R->getAsAdjusted<FunctionType>() && R->isFunctionProtoType());
+        (D.isFunctionDeclarator() && D.getFunctionTypeInfo().hasPrototype) ||
+        (D.getDeclSpec().isTypeRep() &&
+         D.getDeclSpec().getRepAsType().get()->isFunctionProtoType()) ||
+        (!R->getAsAdjusted<FunctionType>() && R->isFunctionProtoType());
+    assert(
+        (HasPrototype || !SemaRef.getLangOpts().requiresStrictPrototypes()) &&
+        "Strict prototypes are required");
 
     NewFD = FunctionDecl::Create(
         SemaRef.Context, DC, D.getBeginLoc(), NameInfo, R, TInfo, SC,
@@ -9247,6 +9272,32 @@ static Scope *getTagInjectionScope(Scope *S, const LangOptions &LangOpts) {
          (S->getEntity() && S->getEntity()->isTransparentContext()))
     S = S->getParent();
   return S;
+}
+
+/// Determine whether a declaration matches a known function in namespace std.
+static bool isStdBuiltin(ASTContext &Ctx, FunctionDecl *FD,
+                         unsigned BuiltinID) {
+  switch (BuiltinID) {
+  case Builtin::BI__GetExceptionInfo:
+    // No type checking whatsoever.
+    return Ctx.getTargetInfo().getCXXABI().isMicrosoft();
+
+  case Builtin::BIaddressof:
+  case Builtin::BI__addressof:
+  case Builtin::BIforward:
+  case Builtin::BImove:
+  case Builtin::BImove_if_noexcept:
+  case Builtin::BIas_const: {
+    // Ensure that we don't treat the algorithm
+    //   OutputIt std::move(InputIt, InputIt, OutputIt)
+    // as the builtin std::move.
+    const auto *FPT = FD->getType()->castAs<FunctionProtoType>();
+    return FPT->getNumParams() == 1 && !FPT->isVariadic();
+  }
+
+  default:
+    return false;
+  }
 }
 
 NamedDecl*
@@ -10101,28 +10152,30 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
 
   // If this is the first declaration of a library builtin function, add
   // attributes as appropriate.
-  if (!D.isRedeclaration() &&
-      NewFD->getDeclContext()->getRedeclContext()->isFileContext()) {
+  if (!D.isRedeclaration()) {
     if (IdentifierInfo *II = Previous.getLookupName().getAsIdentifierInfo()) {
       if (unsigned BuiltinID = II->getBuiltinID()) {
-        if (NewFD->getLanguageLinkage() == CLanguageLinkage) {
-          // Validate the type matches unless this builtin is specified as
-          // matching regardless of its declared type.
-          if (Context.BuiltinInfo.allowTypeMismatch(BuiltinID)) {
-            NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
-          } else {
-            ASTContext::GetBuiltinTypeError Error;
-            LookupNecessaryTypesForBuiltin(S, BuiltinID);
-            QualType BuiltinType = Context.GetBuiltinType(BuiltinID, Error);
-
-            if (!Error && !BuiltinType.isNull() &&
-                Context.hasSameFunctionTypeIgnoringExceptionSpec(
-                    NewFD->getType(), BuiltinType))
+        bool InStdNamespace = Context.BuiltinInfo.isInStdNamespace(BuiltinID);
+        if (!InStdNamespace &&
+            NewFD->getDeclContext()->getRedeclContext()->isFileContext()) {
+          if (NewFD->getLanguageLinkage() == CLanguageLinkage) {
+            // Validate the type matches unless this builtin is specified as
+            // matching regardless of its declared type.
+            if (Context.BuiltinInfo.allowTypeMismatch(BuiltinID)) {
               NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
+            } else {
+              ASTContext::GetBuiltinTypeError Error;
+              LookupNecessaryTypesForBuiltin(S, BuiltinID);
+              QualType BuiltinType = Context.GetBuiltinType(BuiltinID, Error);
+
+              if (!Error && !BuiltinType.isNull() &&
+                  Context.hasSameFunctionTypeIgnoringExceptionSpec(
+                      NewFD->getType(), BuiltinType))
+                NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
+            }
           }
-        } else if (BuiltinID == Builtin::BI__GetExceptionInfo &&
-                   Context.getTargetInfo().getCXXABI().isMicrosoft()) {
-          // FIXME: We should consider this a builtin only in the std namespace.
+        } else if (InStdNamespace && NewFD->isInStdNamespace() &&
+                   isStdBuiltin(Context, NewFD, BuiltinID)) {
           NewFD->addAttr(BuiltinAttr::CreateImplicit(Context, BuiltinID));
         }
       }
@@ -15219,6 +15272,9 @@ void Sema::ActOnFinishDelayedAttribute(Scope *S, Decl *D,
 /// call, forming a call to an implicitly defined function (per C99 6.5.1p2).
 NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                                           IdentifierInfo &II, Scope *S) {
+  // It is not valid to implicitly define a function in C2x.
+  assert(!LangOpts.C2x && "Cannot implicitly define a function in C2x");
+
   // Find the scope in which the identifier is injected and the corresponding
   // DeclContext.
   // FIXME: C89 does not say what happens if there is no enclosing block scope.
@@ -15257,7 +15313,7 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
     }
   }
 
-  // Extension in C99.  Legal in C90, but warn about it.
+  // Extension in C99 (defaults to error). Legal in C89, but warn about it.
   unsigned diag_id;
   if (II.getName().startswith("__builtin_"))
     diag_id = diag::warn_builtin_unknown;
@@ -15265,7 +15321,7 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   else if (getLangOpts().OpenCL)
     diag_id = diag::err_opencl_implicit_function_decl;
   else if (getLangOpts().C99)
-    diag_id = diag::ext_implicit_function_decl;
+    diag_id = diag::ext_implicit_function_decl_c99;
   else
     diag_id = diag::warn_implicit_function_decl;
 
@@ -15283,9 +15339,16 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
   }
 
   Diag(Loc, diag_id) << &II;
-  if (Corrected)
-    diagnoseTypo(Corrected, PDiag(diag::note_function_suggestion),
-                 /*ErrorRecovery*/ false);
+  if (Corrected) {
+    // If the correction is going to suggest an implicitly defined function,
+    // skip the correction as not being a particularly good idea.
+    bool Diagnose = true;
+    if (const auto *D = Corrected.getCorrectionDecl())
+      Diagnose = !D->isImplicit();
+    if (Diagnose)
+      diagnoseTypo(Corrected, PDiag(diag::note_function_suggestion),
+                   /*ErrorRecovery*/ false);
+  }
 
   // If we found a prior declaration of this function, don't bother building
   // another one. We've already pushed that one into scope, so there's nothing

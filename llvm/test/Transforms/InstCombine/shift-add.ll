@@ -120,3 +120,133 @@ define <4 x i32> @lshr_C1_add_A_C2_v4i32_splat(i16 %I) {
   %E = lshr <4 x i32> <i32 6, i32 2, i32 1, i32 -7>, %D
   ret <4 x i32> %E
 }
+
+define i32 @shl_add_nuw(i32 %x) {
+; CHECK-LABEL: @shl_add_nuw(
+; CHECK-NEXT:    [[R:%.*]] = shl i32 192, [[X:%.*]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add nuw i32 %x, 5
+  %r = shl i32 6, %a
+  ret i32 %r
+}
+
+; vectors with arbitrary constants work too
+
+define <2 x i12> @lshr_add_nuw(<2 x i12> %x) {
+; CHECK-LABEL: @lshr_add_nuw(
+; CHECK-NEXT:    [[R:%.*]] = lshr <2 x i12> <i12 0, i12 21>, [[X:%.*]]
+; CHECK-NEXT:    ret <2 x i12> [[R]]
+;
+  %a = add nuw <2 x i12> %x, <i12 5, i12 1>
+  %r = lshr <2 x i12> <i12 6, i12 42>, %a
+  ret <2 x i12> %r
+}
+
+; extra use is ok and in this case the result can be simplified to a constant
+
+define i32 @ashr_add_nuw(i32 %x, i32* %p) {
+; CHECK-LABEL: @ashr_add_nuw(
+; CHECK-NEXT:    [[A:%.*]] = add nuw i32 [[X:%.*]], 5
+; CHECK-NEXT:    store i32 [[A]], i32* [[P:%.*]], align 4
+; CHECK-NEXT:    ret i32 -1
+;
+  %a = add nuw i32 %x, 5
+  store i32 %a, i32* %p
+  %r = ashr i32 -6, %a
+  ret i32 %r
+}
+
+; negative test - must have 'nuw'
+
+define i32 @shl_add_nsw(i32 %x) {
+; CHECK-LABEL: @shl_add_nsw(
+; CHECK-NEXT:    [[A:%.*]] = add nsw i32 [[X:%.*]], 5
+; CHECK-NEXT:    [[R:%.*]] = shl i32 6, [[A]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add nsw i32 %x, 5
+  %r = shl i32 6, %a
+  ret i32 %r
+}
+
+; PR54890
+
+define i32 @shl_nsw_add_negative(i32 %x) {
+; CHECK-LABEL: @shl_nsw_add_negative(
+; CHECK-NEXT:    [[R:%.*]] = shl i32 1, [[X:%.*]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add i32 %x, -1
+  %r = shl nsw i32 2, %a
+  ret i32 %r
+}
+
+; vectors and extra uses are allowed
+; nuw propagates to the new shift
+
+define <2 x i8> @shl_nuw_add_negative_splat_uses(<2 x i8> %x, <2 x i8>* %p) {
+; CHECK-LABEL: @shl_nuw_add_negative_splat_uses(
+; CHECK-NEXT:    [[A:%.*]] = add <2 x i8> [[X:%.*]], <i8 -2, i8 -2>
+; CHECK-NEXT:    store <2 x i8> [[A]], <2 x i8>* [[P:%.*]], align 2
+; CHECK-NEXT:    [[R:%.*]] = shl nuw <2 x i8> <i8 3, i8 3>, [[X]]
+; CHECK-NEXT:    ret <2 x i8> [[R]]
+;
+  %a = add <2 x i8> %x, <i8 -2, i8 -2>
+  store <2 x i8> %a, <2 x i8>* %p
+  %r = shl nuw <2 x i8> <i8 12, i8 12>, %a
+  ret <2 x i8> %r
+}
+
+; negative test - shift constant must have enough trailing zeros to allow the pre-shift
+
+define i32 @shl_nsw_add_negative_invalid_constant(i32 %x) {
+; CHECK-LABEL: @shl_nsw_add_negative_invalid_constant(
+; CHECK-NEXT:    [[A:%.*]] = add i32 [[X:%.*]], -2
+; CHECK-NEXT:    [[R:%.*]] = shl nsw i32 2, [[A]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add i32 %x, -2
+  %r = shl nsw i32 2, %a
+  ret i32 %r
+}
+
+; negative test - the offset constant must be negative
+
+define i32 @shl_nsw_add_positive_invalid_constant(i32 %x) {
+; CHECK-LABEL: @shl_nsw_add_positive_invalid_constant(
+; CHECK-NEXT:    [[A:%.*]] = add i32 [[X:%.*]], 2
+; CHECK-NEXT:    [[R:%.*]] = shl nsw i32 4, [[A]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add i32 %x, 2
+  %r = shl nsw i32 4, %a
+  ret i32 %r
+}
+
+; negative test - a large shift must be detected without crashing
+
+define i32 @shl_nsw_add_negative_invalid_constant2(i32 %x) {
+; CHECK-LABEL: @shl_nsw_add_negative_invalid_constant2(
+; CHECK-NEXT:    [[A:%.*]] = add i32 [[X:%.*]], -33
+; CHECK-NEXT:    [[R:%.*]] = shl nsw i32 2, [[A]]
+; CHECK-NEXT:    ret i32 [[R]]
+;
+  %a = add i32 %x, -33
+  %r = shl nsw i32 2, %a
+  ret i32 %r
+}
+
+; negative test - currently transformed to 'xor' before we see it,
+; but INT_MIN should be handled too
+
+define i4 @shl_nsw_add_negative_invalid_constant3(i4 %x) {
+; CHECK-LABEL: @shl_nsw_add_negative_invalid_constant3(
+; CHECK-NEXT:    [[A:%.*]] = xor i4 [[X:%.*]], -8
+; CHECK-NEXT:    [[R:%.*]] = shl nsw i4 2, [[A]]
+; CHECK-NEXT:    ret i4 [[R]]
+;
+  %a = add i4 %x, 8
+  %r = shl nsw i4 2, %a
+  ret i4 %r
+}
