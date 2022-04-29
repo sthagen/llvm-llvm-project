@@ -6322,7 +6322,8 @@ static SDValue widenSubVector(SDValue Vec, bool ZeroNewElements,
 // Helper function to collect subvector ops that are concatenated together,
 // either by ISD::CONCAT_VECTORS or a ISD::INSERT_SUBVECTOR series.
 // The subvectors in Ops are guaranteed to be the same type.
-static bool collectConcatOps(SDNode *N, SmallVectorImpl<SDValue> &Ops) {
+static bool collectConcatOps(SDNode *N, SmallVectorImpl<SDValue> &Ops,
+                             SelectionDAG &DAG) {
   assert(Ops.empty() && "Expected an empty ops vector");
 
   if (N->getOpcode() == ISD::CONCAT_VECTORS) {
@@ -6338,21 +6339,34 @@ static bool collectConcatOps(SDNode *N, SmallVectorImpl<SDValue> &Ops) {
     EVT SubVT = Sub.getValueType();
 
     // TODO - Handle more general insert_subvector chains.
-    if (VT.getSizeInBits() == (SubVT.getSizeInBits() * 2) &&
-        Idx == (VT.getVectorNumElements() / 2)) {
-      // insert_subvector(insert_subvector(undef, x, lo), y, hi)
-      if (Src.getOpcode() == ISD::INSERT_SUBVECTOR &&
-          Src.getOperand(1).getValueType() == SubVT &&
-          isNullConstant(Src.getOperand(2))) {
-        Ops.push_back(Src.getOperand(1));
+    if (VT.getSizeInBits() == (SubVT.getSizeInBits() * 2)) {
+      // insert_subvector(undef, x, lo)
+      if (Idx == 0 && Src.isUndef()) {
         Ops.push_back(Sub);
+        Ops.push_back(DAG.getUNDEF(SubVT));
         return true;
       }
-      // insert_subvector(x, extract_subvector(x, lo), hi)
-      if (Sub.getOpcode() == ISD::EXTRACT_SUBVECTOR &&
-          Sub.getOperand(0) == Src && isNullConstant(Sub.getOperand(1))) {
-        Ops.append(2, Sub);
-        return true;
+      if (Idx == (VT.getVectorNumElements() / 2)) {
+        // insert_subvector(insert_subvector(undef, x, lo), y, hi)
+        if (Src.getOpcode() == ISD::INSERT_SUBVECTOR &&
+            Src.getOperand(1).getValueType() == SubVT &&
+            isNullConstant(Src.getOperand(2))) {
+          Ops.push_back(Src.getOperand(1));
+          Ops.push_back(Sub);
+          return true;
+        }
+        // insert_subvector(x, extract_subvector(x, lo), hi)
+        if (Sub.getOpcode() == ISD::EXTRACT_SUBVECTOR &&
+            Sub.getOperand(0) == Src && isNullConstant(Sub.getOperand(1))) {
+          Ops.append(2, Sub);
+          return true;
+        }
+        // insert_subvector(undef, x, hi)
+        if (Src.isUndef()) {
+          Ops.push_back(DAG.getUNDEF(SubVT));
+          Ops.push_back(Sub);
+          return true;
+        }
       }
     }
   }
@@ -6811,7 +6825,7 @@ static SDValue IsNOT(SDValue V, SelectionDAG &DAG) {
     }
   }
   SmallVector<SDValue, 2> CatOps;
-  if (collectConcatOps(V.getNode(), CatOps)) {
+  if (collectConcatOps(V.getNode(), CatOps, DAG)) {
     for (SDValue &CatOp : CatOps) {
       SDValue NotCat = IsNOT(CatOp, DAG);
       if (!NotCat) return SDValue();
@@ -8027,11 +8041,11 @@ static bool getFauxShuffleMask(SDValue N, const APInt &DemandedElts,
     uint64_t ZeroMask = IsAndN ? 255 : 0;
     if (!getTargetConstantBitsFromNode(IsAndN ? N0 : N1, 8, UndefElts, EltBits))
       return false;
+    // We can't assume an undef src element gives an undef dst - the other src
+    // might be zero.
+    if (!UndefElts.isZero())
+      return false;
     for (int i = 0, e = (int)EltBits.size(); i != e; ++i) {
-      if (UndefElts[i]) {
-        Mask.push_back(SM_SentinelUndef);
-        continue;
-      }
       const APInt &ByteBits = EltBits[i];
       if (ByteBits != 0 && ByteBits != 255)
         return false;
@@ -17272,8 +17286,7 @@ static SDValue lowerShuffleAsRepeatedMaskAndLanePermute(
     return SDValue();
 
   // Bail if we already have a repeated lane shuffle mask.
-  SmallVector<int, 8> RepeatedShuffleMask;
-  if (is128BitLaneRepeatedShuffleMask(VT, Mask, RepeatedShuffleMask))
+  if (is128BitLaneRepeatedShuffleMask(VT, Mask))
     return SDValue();
 
   // On AVX2 targets we can permute 256-bit vectors as 64-bit sub-lanes
@@ -22962,8 +22975,19 @@ static SDValue getBT(SDValue Src, SDValue BitNo, const SDLoc &DL, SelectionDAG &
 
   // If the operand types disagree, extend the shift amount to match.  Since
   // BT ignores high bits (like shifts) we can use anyextend.
-  if (Src.getValueType() != BitNo.getValueType())
-    BitNo = DAG.getNode(ISD::ANY_EXTEND, DL, Src.getValueType(), BitNo);
+  if (Src.getValueType() != BitNo.getValueType()) {
+    // Peek through a mask/modulo operation.
+    // TODO: DAGCombine fails to do this as it just checks isTruncateFree, but
+    // we probably need a better IsDesirableToPromoteOp to handle this as well.
+    if (BitNo.getOpcode() == ISD::AND && BitNo->hasOneUse())
+      BitNo = DAG.getNode(ISD::AND, DL, Src.getValueType(),
+                          DAG.getNode(ISD::ANY_EXTEND, DL, Src.getValueType(),
+                                      BitNo.getOperand(0)),
+                          DAG.getNode(ISD::ANY_EXTEND, DL, Src.getValueType(),
+                                      BitNo.getOperand(1)));
+    else
+      BitNo = DAG.getNode(ISD::ANY_EXTEND, DL, Src.getValueType(), BitNo);
+  }
 
   return DAG.getNode(X86ISD::BT, DL, MVT::i32, Src, BitNo);
 }
@@ -25278,7 +25302,8 @@ static SDValue LowerStore(SDValue Op, const X86Subtarget &Subtarget,
       ((StoreVT == MVT::v32i16 || StoreVT == MVT::v64i8) &&
        !Subtarget.hasBWI())) {
     SmallVector<SDValue, 4> CatOps;
-    if (StoredVal.hasOneUse() && collectConcatOps(StoredVal.getNode(), CatOps))
+    if (StoredVal.hasOneUse() &&
+        collectConcatOps(StoredVal.getNode(), CatOps, DAG))
       return splitVectorStore(St, DAG);
     return SDValue();
   }
@@ -25772,53 +25797,23 @@ static SDValue getTargetVShiftByConstNode(unsigned Opc, const SDLoc &dl, MVT VT,
   // Fold this packed vector shift into a build vector if SrcOp is a
   // vector of Constants or UNDEFs.
   if (ISD::isBuildVectorOfConstantSDNodes(SrcOp.getNode())) {
-    SmallVector<SDValue, 8> Elts;
-    unsigned NumElts = SrcOp->getNumOperands();
-
+    unsigned ShiftOpc;
     switch (Opc) {
     default: llvm_unreachable("Unknown opcode!");
     case X86ISD::VSHLI:
-      for (unsigned i = 0; i != NumElts; ++i) {
-        SDValue CurrentOp = SrcOp->getOperand(i);
-        if (CurrentOp->isUndef()) {
-          // Must produce 0s in the correct bits.
-          Elts.push_back(DAG.getConstant(0, dl, ElementType));
-          continue;
-        }
-        auto *ND = cast<ConstantSDNode>(CurrentOp);
-        const APInt &C = ND->getAPIntValue();
-        Elts.push_back(DAG.getConstant(C.shl(ShiftAmt), dl, ElementType));
-      }
+      ShiftOpc = ISD::SHL;
       break;
     case X86ISD::VSRLI:
-      for (unsigned i = 0; i != NumElts; ++i) {
-        SDValue CurrentOp = SrcOp->getOperand(i);
-        if (CurrentOp->isUndef()) {
-          // Must produce 0s in the correct bits.
-          Elts.push_back(DAG.getConstant(0, dl, ElementType));
-          continue;
-        }
-        auto *ND = cast<ConstantSDNode>(CurrentOp);
-        const APInt &C = ND->getAPIntValue();
-        Elts.push_back(DAG.getConstant(C.lshr(ShiftAmt), dl, ElementType));
-      }
+      ShiftOpc = ISD::SRL;
       break;
     case X86ISD::VSRAI:
-      for (unsigned i = 0; i != NumElts; ++i) {
-        SDValue CurrentOp = SrcOp->getOperand(i);
-        if (CurrentOp->isUndef()) {
-          // All shifted in bits must be the same so use 0.
-          Elts.push_back(DAG.getConstant(0, dl, ElementType));
-          continue;
-        }
-        auto *ND = cast<ConstantSDNode>(CurrentOp);
-        const APInt &C = ND->getAPIntValue();
-        Elts.push_back(DAG.getConstant(C.ashr(ShiftAmt), dl, ElementType));
-      }
+      ShiftOpc = ISD::SRA;
       break;
     }
 
-    return DAG.getBuildVector(VT, dl, Elts);
+    SDValue Amt = DAG.getConstant(ShiftAmt, dl, VT);
+    if (SDValue C = DAG.FoldConstantArithmetic(ShiftOpc, dl, VT, {SrcOp, Amt}))
+      return C;
   }
 
   return DAG.getNode(Opc, dl, VT, SrcOp,
@@ -39744,7 +39739,7 @@ static SDValue combineTargetShuffle(SDValue N, SelectionDAG &DAG,
         return SDValue();
       SDValue Src = peekThroughBitcasts(N.getOperand(Idx < 2 ? 0 : 1));
       SmallVector<SDValue> SubOps;
-      if (collectConcatOps(Src.getNode(), SubOps) && SubOps.size() == 2)
+      if (collectConcatOps(Src.getNode(), SubOps, DAG) && SubOps.size() == 2)
         return SubOps[Idx & 1];
       unsigned NumElts = Src.getValueType().getVectorNumElements();
       if ((Idx & 1) == 1 && Src.getOpcode() == ISD::INSERT_SUBVECTOR &&
@@ -40296,7 +40291,7 @@ static SDValue combineShuffle(SDNode *N, SelectionDAG &DAG,
     // Canonicalize SHUFFLE(BINOP(X,Y)) -> BINOP(SHUFFLE(X),SHUFFLE(Y)).
     // Perform this after other shuffle combines to allow inner shuffles to be
     // combined away first.
-    if (SDValue BinOp = canonicalizeShuffleWithBinOps(Op, DAG, SDLoc(N)))
+    if (SDValue BinOp = canonicalizeShuffleWithBinOps(Op, DAG, dl))
       return BinOp;
   }
 
@@ -43724,8 +43719,8 @@ static SDValue narrowVectorSelect(SDNode *N, SelectionDAG &DAG,
   SDValue FVal = N->getOperand(2);
   SmallVector<SDValue, 4> CatOpsT, CatOpsF;
   if (!TVal.hasOneUse() || !FVal.hasOneUse() ||
-      !collectConcatOps(TVal.getNode(), CatOpsT) ||
-      !collectConcatOps(FVal.getNode(), CatOpsF))
+      !collectConcatOps(TVal.getNode(), CatOpsT, DAG) ||
+      !collectConcatOps(FVal.getNode(), CatOpsF, DAG))
     return SDValue();
 
   auto makeBlend = [Opcode](SelectionDAG &DAG, const SDLoc &DL,
@@ -45048,7 +45043,7 @@ static SDValue combineSetCCMOVMSK(SDValue EFLAGS, X86::CondCode &CC,
   // MOVMSK(CONCAT(X,Y)) != -1 ->  MOVMSK(AND(X,Y)).
   if (VecVT.is256BitVector() && NumElts <= CmpBits && IsOneUse) {
     SmallVector<SDValue> Ops;
-    if (collectConcatOps(peekThroughBitcasts(Vec).getNode(), Ops) &&
+    if (collectConcatOps(peekThroughBitcasts(Vec).getNode(), Ops, DAG) &&
         Ops.size() == 2) {
       SDLoc DL(EFLAGS);
       EVT SubVT = Ops[0].getValueType().changeTypeToInteger();
@@ -47385,11 +47380,13 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
             Src.getOpcode() == ISD::TRUNCATE) &&
            Src.getOperand(0)->hasOneUse())
       Src = Src.getOperand(0);
+    bool ContainsNOT = false;
     X86::CondCode X86CC = X86::COND_B;
     // Peek through AND(NOT(SRL(X,Y)),1).
     if (isBitwiseNot(Src)) {
       Src = Src.getOperand(0);
       X86CC = X86::COND_AE;
+      ContainsNOT = true;
     }
     if (Src.getOpcode() == ISD::SRL &&
         !isa<ConstantSDNode>(Src.getOperand(1))) {
@@ -47399,9 +47396,12 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
       if (isBitwiseNot(Src)) {
         Src = Src.getOperand(0);
         X86CC = X86CC == X86::COND_AE ? X86::COND_B : X86::COND_AE;
+        ContainsNOT = true;
       }
-      if (SDValue BT = getBT(Src, BitNo, dl, DAG))
-        return DAG.getZExtOrTrunc(getSETCC(X86CC, BT, dl, DAG), dl, VT);
+      // If we have BMI2 then SHRX should be faster for i32/i64 cases.
+      if (!(Subtarget.hasBMI2() && !ContainsNOT && VT.getSizeInBits() >= 32))
+        if (SDValue BT = getBT(Src, BitNo, dl, DAG))
+          return DAG.getZExtOrTrunc(getSETCC(X86CC, BT, dl, DAG), dl, VT);
     }
   }
 
@@ -49683,7 +49683,8 @@ static SDValue combineVectorSignBitsTruncation(SDNode *N, const SDLoc &DL,
     // PACK should still be worth it for 128-bit vectors if the sources were
     // originally concatenated from subvectors.
     SmallVector<SDValue> ConcatOps;
-    if (VT.getSizeInBits() > 128 || !collectConcatOps(In.getNode(), ConcatOps))
+    if (VT.getSizeInBits() > 128 ||
+        !collectConcatOps(In.getNode(), ConcatOps, DAG))
       return SDValue();
   }
 
@@ -50663,6 +50664,11 @@ static SDValue combineAndnp(SDNode *N, SelectionDAG &DAG,
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   MVT VT = N->getSimpleValueType(0);
+
+  // ANDNP(undef, x) -> 0
+  // ANDNP(x, undef) -> 0
+  if (N0.isUndef() || N1.isUndef())
+    return DAG.getConstant(0, SDLoc(N), VT);
 
   // ANDNP(0, x) -> x
   if (ISD::isBuildVectorAllZeros(N0.getNode()))
@@ -53607,7 +53613,7 @@ static SDValue combineInsertSubvector(SDNode *N, SelectionDAG &DAG,
 
   // Match concat_vector style patterns.
   SmallVector<SDValue, 2> SubVectorOps;
-  if (collectConcatOps(N, SubVectorOps)) {
+  if (collectConcatOps(N, SubVectorOps, DAG)) {
     if (SDValue Fold =
             combineConcatVectorOps(dl, OpVT, SubVectorOps, DAG, DCI, Subtarget))
       return Fold;
@@ -53669,7 +53675,7 @@ static SDValue narrowExtractedVectorSelect(SDNode *Ext, SelectionDAG &DAG) {
   SDValue Sel = peekThroughBitcasts(Ext->getOperand(0));
   SmallVector<SDValue, 4> CatOps;
   if (Sel.getOpcode() != ISD::VSELECT ||
-      !collectConcatOps(Sel.getOperand(0).getNode(), CatOps))
+      !collectConcatOps(Sel.getOperand(0).getNode(), CatOps, DAG))
     return SDValue();
 
   // Note: We assume simple value types because this should only be called with

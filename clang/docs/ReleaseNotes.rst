@@ -179,7 +179,7 @@ Non-comprehensive list of changes in this release
   - Remove anonymous tag locations.
   - Beautify dump format, add indent for nested struct and struct members.
 - Previously disabled sanitizer options now enabled by default:
-  - ASAN_OPTIONS=detect_stack_use_after_return=1 (except Windows).
+  - ASAN_OPTIONS=detect_stack_use_after_return=1 (only on Linux).
   - MSAN_OPTIONS=poison_in_dtor=1.
 
 New Compiler Flags
