@@ -15,6 +15,7 @@
 #include "clang/Analysis/FlowSensitive/DataflowEnvironment.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/Analysis/FlowSensitive/DataflowLattice.h"
 #include "clang/Analysis/FlowSensitive/StorageLocation.h"
@@ -364,14 +365,15 @@ StorageLocation *Environment::getStorageLocation(const ValueDecl &D,
 }
 
 void Environment::setStorageLocation(const Expr &E, StorageLocation &Loc) {
-  assert(ExprToLoc.find(&E) == ExprToLoc.end());
-  ExprToLoc[&E] = &Loc;
+  const Expr &CanonE = ignoreCFGOmittedNodes(E);
+  assert(ExprToLoc.find(&CanonE) == ExprToLoc.end());
+  ExprToLoc[&CanonE] = &Loc;
 }
 
 StorageLocation *Environment::getStorageLocation(const Expr &E,
                                                  SkipPast SP) const {
   // FIXME: Add a test with parens.
-  auto It = ExprToLoc.find(E.IgnoreParens());
+  auto It = ExprToLoc.find(&ignoreCFGOmittedNodes(E));
   return It == ExprToLoc.end() ? nullptr : &skip(*It->second, SP);
 }
 
