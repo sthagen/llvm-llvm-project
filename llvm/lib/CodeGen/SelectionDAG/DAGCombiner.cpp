@@ -13686,8 +13686,7 @@ SDValue DAGCombiner::visitBITCAST(SDNode *N) {
       if (Op.getOpcode() == ISD::BITCAST &&
           Op.getOperand(0).getValueType() == VT)
         return SDValue(Op.getOperand(0));
-      if (Op.isUndef() || ISD::isBuildVectorOfConstantSDNodes(Op.getNode()) ||
-          ISD::isBuildVectorOfConstantFPSDNodes(Op.getNode()))
+      if (Op.isUndef() || isAnyConstantBuildVector(Op))
         return DAG.getBitcast(VT, Op);
       return SDValue();
     };
@@ -22042,6 +22041,9 @@ static SDValue combineShuffleOfBitcast(ShuffleVectorSDNode *SVN,
   if (!InVT.isVector() ||
       (!Op1.isUndef() && (Op1.getOpcode() != ISD::BITCAST ||
                           Op1.getOperand(0).getValueType() != InVT)))
+    return SDValue();
+  if (isAnyConstantBuildVector(Op0.getOperand(0)) &&
+      (Op1.isUndef() || isAnyConstantBuildVector(Op1.getOperand(0))))
     return SDValue();
 
   int VTLanes = VT.getVectorNumElements();
