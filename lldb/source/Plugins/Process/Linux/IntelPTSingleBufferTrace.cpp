@@ -146,8 +146,9 @@ static Error CheckPsbPeriod(size_t psb_period) {
   return createStringError(inconvertibleErrorCode(), error.str().c_str());
 }
 
+#ifdef PERF_ATTR_SIZE_VER5
 static Expected<uint64_t>
-GeneratePerfEventConfigValue(bool enable_tsc, Optional<size_t> psb_period) {
+GeneratePerfEventConfigValue(bool enable_tsc, Optional<uint64_t> psb_period) {
   uint64_t config = 0;
   // tsc is always supported
   if (enable_tsc) {
@@ -178,10 +179,7 @@ GeneratePerfEventConfigValue(bool enable_tsc, Optional<size_t> psb_period) {
 ///   or an \a llvm::Error otherwise.
 static Expected<perf_event_attr>
 CreateIntelPTPerfEventConfiguration(bool enable_tsc,
-                                    llvm::Optional<size_t> psb_period) {
-#ifndef PERF_ATTR_SIZE_VER5
-  return llvm_unreachable("Intel PT Linux perf event not supported");
-#else
+                                    llvm::Optional<uint64_t> psb_period) {
   perf_event_attr attr;
   memset(&attr, 0, sizeof(attr));
   attr.size = sizeof(attr);
@@ -204,8 +202,8 @@ CreateIntelPTPerfEventConfiguration(bool enable_tsc,
     return intel_pt_type.takeError();
 
   return attr;
-#endif
 }
+#endif
 
 size_t IntelPTSingleBufferTrace::GetTraceBufferSize() const {
   return m_perf_event.GetAuxBuffer().size();
@@ -263,6 +261,10 @@ IntelPTSingleBufferTrace::GetTraceBuffer(size_t offset, size_t size) const {
 Expected<IntelPTSingleBufferTraceUP>
 IntelPTSingleBufferTrace::Start(const TraceIntelPTStartRequest &request,
                                 lldb::tid_t tid) {
+#ifndef PERF_ATTR_SIZE_VER5
+  return createStringError(inconvertibleErrorCode(),
+                           "Intel PT Linux perf event not supported");
+#else
   Log *log = GetLog(POSIXLog::Trace);
 
   LLDB_LOG(log, "Will start tracing thread id {0}", tid);
@@ -299,4 +301,5 @@ IntelPTSingleBufferTrace::Start(const TraceIntelPTStartRequest &request,
   } else {
     return perf_event.takeError();
   }
+#endif
 }
