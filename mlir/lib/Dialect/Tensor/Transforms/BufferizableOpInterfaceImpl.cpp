@@ -320,8 +320,8 @@ struct ExtractSliceOpInterface
     if (!inplace) {
       // Do not copy if the copied data is never read.
       if (state.getAnalysisState().isValueRead(extractSliceOp.result()))
-        if (failed(createMemCpy(rewriter, extractSliceOp.getLoc(), subView,
-                                alloc, state.getOptions())))
+        if (failed(state.getOptions().createMemCpy(
+                rewriter, extractSliceOp.getLoc(), subView, alloc)))
           return failure();
       subView = alloc;
     }
@@ -445,13 +445,12 @@ struct GenerateOpInterface
 
     // Allocate memory.
     Location loc = op->getLoc();
-    MemRefType memrefType =
-        getContiguousMemRefType(generateOp.getType().cast<RankedTensorType>());
     FailureOr<Value> maybeResult =
         state.createAlloc(rewriter, loc, generateOp.result());
     if (failed(maybeResult))
       return failure();
     Value result = *maybeResult;
+    MemRefType memrefType = result.getType().cast<MemRefType>();
 
     // Collect loop bounds.
     int64_t rank = memrefType.getRank();
@@ -718,8 +717,8 @@ struct InsertSliceOpInterface
     // tensor.extract_slice, the copy operation will eventually fold away.
     auto srcMemref =
         state.getBuffer(rewriter, insertSliceOp->getOpOperand(0) /*source*/);
-    if (failed(srcMemref) || failed(createMemCpy(rewriter, loc, *srcMemref,
-                                                 subView, state.getOptions())))
+    if (failed(srcMemref) || failed(state.getOptions().createMemCpy(
+                                 rewriter, loc, *srcMemref, subView)))
       return failure();
 
     replaceOpWithBufferizedValues(rewriter, op, *dstMemref);
