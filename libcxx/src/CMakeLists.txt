@@ -211,7 +211,7 @@ if (LIBCXX_ENABLE_SHARED)
       COMPILE_FLAGS "${LIBCXX_COMPILE_FLAGS}"
       LINK_FLAGS    "${LIBCXX_LINK_FLAGS}"
       OUTPUT_NAME   "c++"
-      VERSION       "${LIBCXX_ABI_VERSION}.0"
+      VERSION       "${LIBCXX_LIBRARY_VERSION}"
       SOVERSION     "${LIBCXX_ABI_VERSION}"
       DEFINE_SYMBOL ""
   )
@@ -251,7 +251,7 @@ if (LIBCXX_ENABLE_SHARED)
   if (LIBCXX_OSX_REEXPORT_LIBCXXABI_SYMBOLS)
     target_link_libraries(cxx_shared PRIVATE
       "-Wl,-unexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/../lib/libc++unexp.exp"
-      "-Wl,-reexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/../lib/libc++abi.v${LIBCXX_LIBCPPABI_VERSION}.exp"
+      "-Wl,-reexported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/../lib/libc++abi.exp"
       "-Wl,-force_symbols_not_weak_list,${CMAKE_CURRENT_SOURCE_DIR}/../lib/notweak.exp"
       "-Wl,-force_symbols_weak_list,${CMAKE_CURRENT_SOURCE_DIR}/../lib/weak.exp")
 
@@ -300,7 +300,9 @@ if (LIBCXX_ENABLE_STATIC)
       append_flags_if_supported(CXX_STATIC_LIBRARY_FLAGS -fvisibility-global-new-delete-hidden)
     endif()
     target_compile_options(cxx_static PRIVATE ${CXX_STATIC_LIBRARY_FLAGS})
-    target_compile_definitions(cxx_static PRIVATE _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS)
+    # _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS can be defined in __config_site
+    # too. Define it in the same way here, to avoid redefinition conflicts.
+    target_compile_definitions(cxx_static PRIVATE _LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS=)
   endif()
 
   list(APPEND LIBCXX_BUILD_TARGETS "cxx_static")

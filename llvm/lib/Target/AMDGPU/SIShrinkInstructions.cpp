@@ -46,6 +46,7 @@ public:
   void copyExtraImplicitOps(MachineInstr &NewMI, MachineInstr &MI) const;
   void shrinkScalarCompare(MachineInstr &MI) const;
   void shrinkMIMG(MachineInstr &MI) const;
+  void shrinkMadFma(MachineInstr &MI) const;
   bool shrinkScalarLogicOp(MachineInstr &MI) const;
   bool instAccessReg(iterator_range<MachineInstr::const_mop_iterator> &&R,
                      Register Reg, unsigned SubReg) const;
@@ -92,7 +93,7 @@ bool SIShrinkInstructions::foldImmediates(MachineInstr &MI,
   MachineOperand &Src0 = MI.getOperand(Src0Idx);
   if (Src0.isReg()) {
     Register Reg = Src0.getReg();
-    if (Reg.isVirtual() && MRI->hasOneUse(Reg)) {
+    if (Reg.isVirtual()) {
       MachineInstr *Def = MRI->getUniqueVRegDef(Reg);
       if (Def && Def->isMoveImmediate()) {
         MachineOperand &MovSrc = Def->getOperand(1);
@@ -114,8 +115,8 @@ bool SIShrinkInstructions::foldImmediates(MachineInstr &MI,
         }
 
         if (ConstantFolded) {
-          assert(MRI->use_empty(Reg));
-          Def->eraseFromParent();
+          if (MRI->use_nodbg_empty(Reg))
+            Def->eraseFromParent();
           ++NumLiteralConstantsFolded;
           return true;
         }
@@ -321,6 +322,94 @@ void SIShrinkInstructions::shrinkMIMG(MachineInstr &MI) const {
     MI.tieOperands(
         AMDGPU::getNamedOperandIdx(MI.getOpcode(), AMDGPU::OpName::vdata),
         ToUntie - (Info->VAddrDwords - 1));
+  }
+}
+
+// Shrink MAD to MADAK/MADMK and FMA to FMAAK/FMAMK.
+void SIShrinkInstructions::shrinkMadFma(MachineInstr &MI) const {
+  if (!ST->hasVOP3Literal())
+    return;
+
+  if (TII->hasAnyModifiersSet(MI))
+    return;
+
+  const unsigned Opcode = MI.getOpcode();
+  MachineOperand &Src0 = *TII->getNamedOperand(MI, AMDGPU::OpName::src0);
+  MachineOperand &Src1 = *TII->getNamedOperand(MI, AMDGPU::OpName::src1);
+  MachineOperand &Src2 = *TII->getNamedOperand(MI, AMDGPU::OpName::src2);
+  unsigned NewOpcode = AMDGPU::INSTRUCTION_LIST_END;
+
+  bool Swap;
+
+  // Detect "Dst = VSrc * VGPR + Imm" and convert to AK form.
+  if (Src2.isImm() && !TII->isInlineConstant(Src2)) {
+    if (Src1.isReg() && TRI->isVGPR(*MRI, Src1.getReg()))
+      Swap = false;
+    else if (Src0.isReg() && TRI->isVGPR(*MRI, Src0.getReg()))
+      Swap = true;
+    else
+      return;
+
+    switch (Opcode) {
+    default:
+      llvm_unreachable("Unexpected mad/fma opcode!");
+    case AMDGPU::V_MAD_F32_e64:
+      NewOpcode = AMDGPU::V_MADAK_F32;
+      break;
+    case AMDGPU::V_FMA_F32_e64:
+      NewOpcode = AMDGPU::V_FMAAK_F32;
+      break;
+    case AMDGPU::V_MAD_F16_e64:
+      NewOpcode = AMDGPU::V_MADAK_F16;
+      break;
+    case AMDGPU::V_FMA_F16_e64:
+      NewOpcode = AMDGPU::V_FMAAK_F16;
+      break;
+    }
+  }
+
+  // Detect "Dst = VSrc * Imm + VGPR" and convert to MK form.
+  if (Src2.isReg() && TRI->isVGPR(*MRI, Src2.getReg())) {
+    if (Src1.isImm() && !TII->isInlineConstant(Src1))
+      Swap = false;
+    else if (Src0.isImm() && !TII->isInlineConstant(Src0))
+      Swap = true;
+    else
+      return;
+
+    switch (Opcode) {
+    default:
+      llvm_unreachable("Unexpected mad/fma opcode!");
+    case AMDGPU::V_MAD_F32_e64:
+      NewOpcode = AMDGPU::V_MADMK_F32;
+      break;
+    case AMDGPU::V_FMA_F32_e64:
+      NewOpcode = AMDGPU::V_FMAMK_F32;
+      break;
+    case AMDGPU::V_MAD_F16_e64:
+      NewOpcode = AMDGPU::V_MADMK_F16;
+      break;
+    case AMDGPU::V_FMA_F16_e64:
+      NewOpcode = AMDGPU::V_FMAMK_F16;
+      break;
+    }
+  }
+
+  if (NewOpcode == AMDGPU::INSTRUCTION_LIST_END)
+    return;
+
+  if (Swap) {
+    // Swap Src0 and Src1 by building a new instruction.
+    BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), TII->get(NewOpcode),
+            MI.getOperand(0).getReg())
+        .add(Src1)
+        .add(Src0)
+        .add(Src2)
+        .setMIFlags(MI.getFlags());
+    MI.eraseFromParent();
+  } else {
+    TII->removeModOperands(MI);
+    MI.setDesc(TII->get(NewOpcode));
   }
 }
 
@@ -650,11 +739,7 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
         }
       }
 
-      // FIXME: We also need to consider movs of constant operands since
-      // immediate operands are not folded if they have more than one use, and
-      // the operand folding pass is unaware if the immediate will be free since
-      // it won't know if the src == dest constraint will end up being
-      // satisfied.
+      // Try to use S_ADDK_I32 and S_MULK_I32.
       if (MI.getOpcode() == AMDGPU::S_ADD_I32 ||
           MI.getOpcode() == AMDGPU::S_MUL_I32) {
         const MachineOperand *Dest = &MI.getOperand(0);
@@ -723,6 +808,17 @@ bool SIShrinkInstructions::runOnMachineFunction(MachineFunction &MF) {
           MF.getProperties().hasProperty(
               MachineFunctionProperties::Property::NoVRegs)) {
         shrinkMIMG(MI);
+        continue;
+      }
+
+      if (!TII->isVOP3(MI))
+        continue;
+
+      if (MI.getOpcode() == AMDGPU::V_MAD_F32_e64 ||
+          MI.getOpcode() == AMDGPU::V_FMA_F32_e64 ||
+          MI.getOpcode() == AMDGPU::V_MAD_F16_e64 ||
+          MI.getOpcode() == AMDGPU::V_FMA_F16_e64) {
+        shrinkMadFma(MI);
         continue;
       }
 

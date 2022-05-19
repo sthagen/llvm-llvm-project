@@ -6418,9 +6418,9 @@ SDValue DAGCombiner::MatchBSwapHWordLow(SDNode *N, SDValue N0, SDValue N1,
   bool LookPassAnd0 = false;
   bool LookPassAnd1 = false;
   if (N0.getOpcode() == ISD::AND && N0.getOperand(0).getOpcode() == ISD::SRL)
-      std::swap(N0, N1);
+    std::swap(N0, N1);
   if (N1.getOpcode() == ISD::AND && N1.getOperand(0).getOpcode() == ISD::SHL)
-      std::swap(N0, N1);
+    std::swap(N0, N1);
   if (N0.getOpcode() == ISD::AND) {
     if (!N0->hasOneUse())
       return SDValue();
@@ -6490,19 +6490,23 @@ SDValue DAGCombiner::MatchBSwapHWordLow(SDNode *N, SDValue N0, SDValue N1,
   // Make sure everything beyond the low halfword gets set to zero since the SRL
   // 16 will clear the top bits.
   unsigned OpSizeInBits = VT.getSizeInBits();
-  if (DemandHighBits && OpSizeInBits > 16) {
+  if (OpSizeInBits > 16) {
     // If the left-shift isn't masked out then the only way this is a bswap is
     // if all bits beyond the low 8 are 0. In that case the entire pattern
     // reduces to a left shift anyway: leave it for other parts of the combiner.
-    if (!LookPassAnd0)
+    if (DemandHighBits && !LookPassAnd0)
       return SDValue();
 
     // However, if the right shift isn't masked out then it might be because
-    // it's not needed. See if we can spot that too.
-    if (!LookPassAnd1 &&
-        !DAG.MaskedValueIsZero(
-            N10, APInt::getHighBitsSet(OpSizeInBits, OpSizeInBits - 16)))
-      return SDValue();
+    // it's not needed. See if we can spot that too. If the high bits aren't
+    // demanded, we only need bits 23:16 to be zero. Otherwise, we need all
+    // upper bits to be zero.
+    if (!LookPassAnd1) {
+      unsigned HighBit = DemandHighBits ? OpSizeInBits : 24;
+      if (!DAG.MaskedValueIsZero(N10,
+                                 APInt::getBitsSet(OpSizeInBits, 16, HighBit)))
+        return SDValue();
+    }
   }
 
   SDValue Res = DAG.getNode(ISD::BSWAP, SDLoc(N), VT, N00);
@@ -8937,8 +8941,8 @@ SDValue DAGCombiner::visitSHL(SDNode *N) {
     //                               (and (srl x, (sub c1, c2), MASK)
     // Only fold this if the inner shift has no other uses -- if it does,
     // folding this will increase the total number of instructions.
-    // TODO - drop hasOneUse requirement if c1 == c2?
-    if (N0.getOpcode() == ISD::SRL && N0.hasOneUse() &&
+    if (N0.getOpcode() == ISD::SRL &&
+        (N0.getOperand(1) == N1 || N0.hasOneUse()) &&
         TLI.shouldFoldConstantShiftPairToMask(N, Level)) {
       if (ISD::matchBinaryPredicate(N1, N0.getOperand(1), MatchShiftAmount,
                                     /*AllowUndefs*/ false,
@@ -10446,12 +10450,12 @@ bool refineIndexType(SDValue &Index, ISD::MemIndexType &IndexType,
   if (Index.getOpcode() == ISD::ZERO_EXTEND) {
     SDValue Op = Index.getOperand(0);
     if (TLI.shouldRemoveExtendFromGSIndex(Op.getValueType())) {
-      IndexType = ISD::getUnsignedIndexType(IndexType);
+      IndexType = ISD::UNSIGNED_SCALED;
       Index = Op;
       return true;
     }
     if (ISD::isIndexTypeSigned(IndexType)) {
-      IndexType = ISD::getUnsignedIndexType(IndexType);
+      IndexType = ISD::UNSIGNED_SCALED;
       return true;
     }
   }
