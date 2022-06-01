@@ -1805,6 +1805,7 @@ td_library(
         ":ControlFlowInterfacesTdFiles",
         ":LoopLikeInterfaceTdFiles",
         ":SideEffectInterfacesTdFiles",
+        ":ViewLikeInterfaceTdFiles",
     ],
 )
 
@@ -2599,6 +2600,7 @@ cc_library(
     includes = ["include"],
     deps = [
         ":ArithmeticDialect",
+        ":ArithmeticUtils",
         ":BufferizationDialect",
         ":ControlFlowInterfaces",
         ":ControlFlowOps",
@@ -2611,6 +2613,7 @@ cc_library(
         ":SCFPassIncGen",
         ":Support",
         ":TensorDialect",
+        ":ViewLikeInterface",
         "//llvm:Support",
     ],
 )
@@ -4045,6 +4048,10 @@ gentbl_cc_library(
         (
             ["-gen-llvmir-conversions"],
             "include/mlir/Dialect/LLVMIR/LLVMIntrinsicConversions.inc",
+        ),
+        (
+            ["-gen-llvmintrinsic-to-llvmirop-pairs"],
+            "include/mlir/Dialect/LLVMIR/LLVMIntrinsicToLLVMIROpPairs.inc",
         ),
     ],
     tblgen = ":mlir-tblgen",
@@ -6065,6 +6072,7 @@ cc_library(
         ":IR",
         ":LLVMConversionIncGen",
         ":LLVMDialect",
+        ":LLVMIntrinsicConversionIncGen",
         ":Support",
         ":Translation",
         "//llvm:Core",
