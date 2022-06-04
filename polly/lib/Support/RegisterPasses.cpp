@@ -30,6 +30,7 @@
 #include "polly/ForwardOpTree.h"
 #include "polly/JSONExporter.h"
 #include "polly/LinkAllPasses.h"
+#include "polly/MaximalStaticExpansion.h"
 #include "polly/PolyhedralInfo.h"
 #include "polly/PruneUnprofitable.h"
 #include "polly/ScheduleOptimizer.h"
@@ -64,12 +65,12 @@ namespace polly {
 static cl::opt<bool>
     PollyEnabled("polly",
                  cl::desc("Enable the polly optimizer (with -O1, -O2 or -O3)"),
-                 cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+                 cl::cat(PollyCategory));
 
 static cl::opt<bool> PollyDetectOnly(
     "polly-only-scop-detection",
     cl::desc("Only run scop detection, but no other optimizations"),
-    cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::cat(PollyCategory));
 
 enum PassPositionChoice {
   POSITION_EARLY,
@@ -135,22 +136,21 @@ static cl::opt<VectorizerChoice, true> Vectorizer(
 static cl::opt<bool> ImportJScop(
     "polly-import",
     cl::desc("Import the polyhedral description of the detected Scops"),
-    cl::Hidden, cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::Hidden, cl::cat(PollyCategory));
 
 static cl::opt<bool> FullyIndexedStaticExpansion(
     "polly-enable-mse",
     cl::desc("Fully expand the memory accesses of the detected Scops"),
-    cl::Hidden, cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::Hidden, cl::cat(PollyCategory));
 
 static cl::opt<bool> ExportJScop(
     "polly-export",
     cl::desc("Export the polyhedral description of the detected Scops"),
-    cl::Hidden, cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::Hidden, cl::cat(PollyCategory));
 
 static cl::opt<bool> DeadCodeElim("polly-run-dce",
                                   cl::desc("Run the dead code elimination"),
-                                  cl::Hidden, cl::init(false), cl::ZeroOrMore,
-                                  cl::cat(PollyCategory));
+                                  cl::Hidden, cl::cat(PollyCategory));
 
 static cl::opt<bool> PollyViewer(
     "polly-show",
@@ -263,7 +263,7 @@ void initializePollyPasses(llvm::PassRegistry &Registry) {
   initializeJSONExporterPass(Registry);
   initializeJSONImporterPass(Registry);
   initializeJSONImporterPrinterLegacyPassPass(Registry);
-  initializeMaximalStaticExpanderPass(Registry);
+  initializeMaximalStaticExpanderWrapperPassPass(Registry);
   initializeIslAstInfoWrapperPassPass(Registry);
   initializeIslAstInfoPrinterLegacyPassPass(Registry);
   initializeIslScheduleOptimizerWrapperPassPass(Registry);
