@@ -99,7 +99,7 @@ static cl::opt<std::string>
 static cl::opt<bool>
     GreedyFusion("polly-loopfusion-greedy",
                  cl::desc("Aggressively try to fuse everything"), cl::Hidden,
-                 cl::ZeroOrMore, cl::cat(PollyCategory));
+                 cl::cat(PollyCategory));
 
 static cl::opt<std::string> OuterCoincidence(
     "polly-opt-outer-coincidence",
@@ -121,14 +121,13 @@ static cl::opt<int> FirstLevelDefaultTileSize(
     "polly-default-tile-size",
     cl::desc("The default tile size (if not enough were provided by"
              " --polly-tile-sizes)"),
-    cl::Hidden, cl::init(32), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::Hidden, cl::init(32), cl::cat(PollyCategory));
 
 static cl::list<int>
     FirstLevelTileSizes("polly-tile-sizes",
                         cl::desc("A tile size for each loop dimension, filled "
                                  "with --polly-default-tile-size"),
-                        cl::Hidden, cl::ZeroOrMore, cl::CommaSeparated,
-                        cl::cat(PollyCategory));
+                        cl::Hidden, cl::CommaSeparated, cl::cat(PollyCategory));
 
 static cl::opt<bool>
     SecondLevelTiling("polly-2nd-level-tiling",
@@ -145,7 +144,7 @@ static cl::list<int>
     SecondLevelTileSizes("polly-2nd-level-tile-sizes",
                          cl::desc("A tile size for each loop dimension, filled "
                                   "with --polly-default-tile-size"),
-                         cl::Hidden, cl::ZeroOrMore, cl::CommaSeparated,
+                         cl::Hidden, cl::CommaSeparated,
                          cl::cat(PollyCategory));
 
 static cl::opt<bool> RegisterTiling("polly-register-tiling",
@@ -156,14 +155,13 @@ static cl::opt<int> RegisterDefaultTileSize(
     "polly-register-tiling-default-tile-size",
     cl::desc("The default register tile size (if not enough were provided by"
              " --polly-register-tile-sizes)"),
-    cl::Hidden, cl::init(2), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::Hidden, cl::init(2), cl::cat(PollyCategory));
 
 static cl::list<int>
     RegisterTileSizes("polly-register-tile-sizes",
                       cl::desc("A tile size for each loop dimension, filled "
                                "with --polly-register-tile-size"),
-                      cl::Hidden, cl::ZeroOrMore, cl::CommaSeparated,
-                      cl::cat(PollyCategory));
+                      cl::Hidden, cl::CommaSeparated, cl::cat(PollyCategory));
 
 static cl::opt<bool> PragmaBasedOpts(
     "polly-pragma-based-opts",
@@ -190,7 +188,7 @@ static cl::opt<bool> OptimizedScops(
     cl::desc("Polly - Dump polyhedral description of Scops optimized with "
              "the isl scheduling optimizer and the set of post-scheduling "
              "transformations is applied on the schedule tree"),
-    cl::init(false), cl::ZeroOrMore, cl::cat(PollyCategory));
+    cl::cat(PollyCategory));
 
 STATISTIC(ScopsProcessed, "Number of scops processed");
 STATISTIC(ScopsRescheduled, "Number of scops rescheduled");
