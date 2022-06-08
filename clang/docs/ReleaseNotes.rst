@@ -168,6 +168,8 @@ Bug Fixes
   `Issue 55562 <https://github.com/llvm/llvm-project/issues/55562>`_.
 - Clang will allow calling a ``consteval`` function in a default argument. This
   fixes `Issue 48230 <https://github.com/llvm/llvm-project/issues/48230>`_.
+- Fixed memory leak due to ``VarTemplateSpecializationDecl`` using
+  ``TemplateArgumentListInfo`` instead of ``ASTTemplateArgumentListInfo``.
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -352,6 +354,11 @@ Windows Support
   turned on. With this addition, clang-cl can be used in Visual Studio for the
   JustMyCode feature. Note, you may need to manually add ``/JMC`` as additional
   compile options in the Visual Studio since it currently assumes clang-cl does not support ``/JMC``.
+
+- Implemented generation of SEH unwind information on ARM. (C++ exception
+  handling in MSVC mode is still unimplemented though.)
+
+- Switched MinGW mode on ARM to use SEH instead of DWARF for unwind information.
 
 AIX Support
 -----------
