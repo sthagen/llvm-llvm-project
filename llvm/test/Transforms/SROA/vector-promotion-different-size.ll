@@ -18,18 +18,18 @@ define <4 x i1> @vector_bitcast() {
   ret <4 x i1> %vec
 }
 
-define void @vector_bitcast_2(<32 x i16> %v) {
+define <64 x i16> @vector_bitcast_2(<32 x i16> %v) {
 ; CHECK-LABEL: @vector_bitcast_2(
-; CHECK-NEXT:    %"sum$1.host2" = alloca <32 x i16>, align 64
-; CHECK-NEXT:    store <32 x i16> [[V:%.*]], <32 x i16>* %"sum$1.host2", align 64
-; CHECK-NEXT:    %"sum$1.host2.0.bc.sroa_cast" = bitcast <32 x i16>* %"sum$1.host2" to <64 x i16>*
-; CHECK-NEXT:    %"sum$1.host2.0.bcl" = load <64 x i16>, <64 x i16>* %"sum$1.host2.0.bc.sroa_cast", align 64
-; CHECK-NEXT:    ret void
+; CHECK-NEXT:    [[P:%.*]] = alloca <32 x i16>, align 64
+; CHECK-NEXT:    store <32 x i16> [[V:%.*]], <32 x i16>* [[P]], align 64
+; CHECK-NEXT:    [[P_0_Q_SROA_CAST:%.*]] = bitcast <32 x i16>* [[P]] to <64 x i16>*
+; CHECK-NEXT:    [[P_0_LOAD:%.*]] = load <64 x i16>, <64 x i16>* [[P_0_Q_SROA_CAST]], align 64
+; CHECK-NEXT:    ret <64 x i16> [[P_0_LOAD]]
 ;
 
-  %"sum$1.host2" = alloca <32 x i16>
-  store <32 x i16> %v, <32 x i16>* %"sum$1.host2"
-  %bc = bitcast <32 x i16>* %"sum$1.host2" to <64 x i16>*
-  %bcl = load <64 x i16>, <64 x i16>* %bc
-  ret void
+  %p = alloca <32 x i16>
+  store <32 x i16> %v, <32 x i16>* %p
+  %q = bitcast <32 x i16>* %p to <64 x i16>*
+  %load = load <64 x i16>, <64 x i16>* %q
+  ret <64 x i16> %load
 }
