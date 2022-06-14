@@ -256,6 +256,10 @@ Improvements to Clang's diagnostics
 - The ``-Wdeprecated`` diagnostic will now warn on out-of-line ``constexpr``
   declarations downgraded to definitions in C++1z, in addition to the
   existing warning on out-of-line ``const`` declarations.
+- ``-Wshift-overflow`` will not warn for signed left shifts in C++20 mode
+  (and newer), as it will always wrap and never overflow. This fixes
+  `Issue 52873 <https://github.com/llvm/llvm-project/issues/52873>`_.
+
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -549,6 +553,12 @@ Static Analyzer
   from common memory copy/manipulation functions such as ``memcpy``, ``mempcpy``, ``memmove``, ``memcmp``, `
   `strcmp``, ``strncmp``, ``strcpy``, ``strlen``, ``strsep`` and many more. Although
   this checker currently is in list of alpha checkers due to a false positive.
+
+- Deprecate the ``-analyzer-store region`` and
+  ``-analyzer-opt-analyze-nested-blocks`` analyzer flags.
+  These flags are still accepted, but a warning will be displayed.
+  These flags will be rejected, thus turned into a hard error starting with
+  ``clang-16``.
 
 .. _release-notes-ubsan:
 
