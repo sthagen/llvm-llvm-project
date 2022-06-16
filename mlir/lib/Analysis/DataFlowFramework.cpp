@@ -45,15 +45,7 @@ void ProgramPoint::print(raw_ostream &os) const {
     return op->print(os);
   if (auto value = dyn_cast<Value>())
     return value.print(os);
-  if (auto *block = dyn_cast<Block *>())
-    return block->print(os);
-  auto *region = get<Region *>();
-  os << "{\n";
-  for (Block &block : *region) {
-    block.print(os);
-    os << "\n";
-  }
-  os << "}";
+  return get<Block *>()->print(os);
 }
 
 Location ProgramPoint::getLoc() const {
@@ -63,9 +55,7 @@ Location ProgramPoint::getLoc() const {
     return op->getLoc();
   if (auto value = dyn_cast<Value>())
     return value.getLoc();
-  if (auto *block = dyn_cast<Block *>())
-    return block->getParent()->getLoc();
-  return get<Region *>()->getLoc();
+  return get<Block *>()->getParent()->getLoc();
 }
 
 //===----------------------------------------------------------------------===//

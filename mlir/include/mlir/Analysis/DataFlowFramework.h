@@ -129,10 +129,10 @@ private:
 //===----------------------------------------------------------------------===//
 
 /// Fundamental IR components are supported as first-class program points.
-struct ProgramPoint : public PointerUnion<GenericProgramPoint *, Operation *,
-                                          Value, Block *, Region *> {
-  using ParentTy = PointerUnion<GenericProgramPoint *, Operation *, Value,
-                                Block *, Region *>;
+struct ProgramPoint
+    : public PointerUnion<GenericProgramPoint *, Operation *, Value, Block *> {
+  using ParentTy =
+      PointerUnion<GenericProgramPoint *, Operation *, Value, Block *>;
   /// Inherit constructors.
   using ParentTy::PointerUnion;
   /// Allow implicit conversion from the parent type.
