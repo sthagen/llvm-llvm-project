@@ -889,12 +889,12 @@ struct ForOpTensorCastFolder : public OpRewritePattern<ForOp> {
 
       // Must be a tensor.cast op pair with matching types.
       if (outgoingCastOp.getResult().getType() !=
-          incomingCast.source().getType())
+          incomingCast.getSource().getType())
         continue;
 
       // Create a new ForOp with that iter operand replaced.
       auto newForOp = replaceTensorCastForOpIterArg(rewriter, iterOpOperand,
-                                                    incomingCast.source());
+                                                    incomingCast.getSource());
 
       // Insert outgoing cast and use it to replace the corresponding result.
       rewriter.setInsertionPointAfter(newForOp);
@@ -902,7 +902,8 @@ struct ForOpTensorCastFolder : public OpRewritePattern<ForOp> {
       unsigned returnIdx =
           iterOpOperand.getOperandNumber() - op.getNumControlOperands();
       replacements[returnIdx] = rewriter.create<tensor::CastOp>(
-          op.getLoc(), incomingCast.dest().getType(), replacements[returnIdx]);
+          op.getLoc(), incomingCast.getDest().getType(),
+          replacements[returnIdx]);
       rewriter.replaceOp(op, replacements);
       return success();
     }
@@ -1134,8 +1135,12 @@ ParseResult ForeachThreadOp::parse(OpAsmParser &parser,
 // Bodyless builder, result types must be specified.
 void ForeachThreadOp::build(mlir::OpBuilder &builder,
                             mlir::OperationState &result, TypeRange resultTypes,
-                            ValueRange numThreads) {
+                            ValueRange numThreads,
+                            ArrayRef<int64_t> threadDimMapping) {
   result.addOperands(numThreads);
+  result.addAttribute(
+      // TODO: getThreadDimMappingAttrName() but it is not a static member.
+      "thread_dim_mapping", builder.getI64ArrayAttr(threadDimMapping));
 
   Region *bodyRegion = result.addRegion();
   OpBuilder::InsertionGuard g(builder);
@@ -1155,9 +1160,12 @@ void ForeachThreadOp::build(mlir::OpBuilder &builder,
 // the terminator.
 void ForeachThreadOp::build(
     mlir::OpBuilder &builder, mlir::OperationState &result,
-    ValueRange numThreads,
+    ValueRange numThreads, ArrayRef<int64_t> threadDimMapping,
     function_ref<void(OpBuilder &, Location, ValueRange)> bodyBuilder) {
   result.addOperands(numThreads);
+  result.addAttribute(
+      // TODO: getThreadDimMappingAttrName() but it is not a static member.
+      "thread_dim_mapping", builder.getI64ArrayAttr(threadDimMapping));
 
   OpBuilder::InsertionGuard g(builder);
   Region *bodyRegion = result.addRegion();
