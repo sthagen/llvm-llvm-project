@@ -76,17 +76,17 @@ nested-name-specifier := nested-name-specifier IDENTIFIER ::
 nested-name-specifier := nested-name-specifier TEMPLATE_opt simple-template-id ::
 lambda-expression := lambda-introducer lambda-declarator_opt compound-statement
 lambda-expression := lambda-introducer < template-parameter-list > requires-clause_opt lambda-declarator_opt compound-statement
-lambda-introducer := [ lambda-capture_opt ]
+#! We allow a capture-default to appear anywhere in a capture-list.
+# This simplifies the grammar and error recovery.
+lambda-introducer := [ capture-list_opt ]
 lambda-declarator := ( parameter-declaration-clause_opt ) decl-specifier-seq_opt noexcept-specifier_opt trailing-return-type_opt requires-clause_opt
-lambda-capture := capture-default
-lambda-capture := capture-list
-lambda-capture := capture-default , capture-list
-capture-default := &
-capture-default := =
 capture-list := capture
 capture-list := capture-list , capture
+capture := capture-default
 capture := simple-capture
 capture := init-capture
+capture-default := &
+capture-default := =
 simple-capture := IDENTIFIER ..._opt
 simple-capture := & IDENTIFIER ..._opt
 simple-capture := THIS
@@ -158,7 +158,10 @@ postfix-expression := REINTERPRET_CAST < type-id > ( expression )
 postfix-expression := CONST_CAST < type-id > ( expression )
 postfix-expression := TYPEID ( expression )
 postfix-expression := TYPEID ( type-id )
-expression-list := initializer-list
+#! Standard defines expression-list in terms of initializer-list, but our
+#  initializer-list allows designators.
+expression-list := initializer-clause ..._opt
+expression-list := expression-list , initializer-clause ..._opt
 # expr.unary
 unary-expression := postfix-expression
 unary-expression := unary-operator cast-expression
@@ -453,15 +456,17 @@ brace-or-equal-initializer := = initializer-clause
 brace-or-equal-initializer := braced-init-list
 initializer-clause := assignment-expression
 initializer-clause := braced-init-list
+#! Allow mixed designated/non-designated init-list.
+# This is standard C, and accepted by clang and others as an extension.
 braced-init-list := { initializer-list ,_opt }
-braced-init-list := { designated-initializer-list ,_opt }
 braced-init-list := { }
-initializer-list := initializer-clause ..._opt
-initializer-list := initializer-list , initializer-clause ..._opt
-designated-initializer-list := designated-initializer-clause
-designated-initializer-list := designated-initializer-list , designated-initializer-clause
-designated-initializer-clause := designator brace-or-equal-initializer
+initializer-list := initializer-list-item
+initializer-list := initializer-list , initializer-list-item
+initializer-list-item := initializer-clause ..._opt
+initializer-list-item := designator brace-or-equal-initializer ..._opt
 designator := . IDENTIFIER
+#! Array designators are legal in C, and a common extension in C++.
+designator := [ expression ]
 expr-or-braced-init-list := expression
 expr-or-braced-init-list := braced-init-list
 # dcl.fct

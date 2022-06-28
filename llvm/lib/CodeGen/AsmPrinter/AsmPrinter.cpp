@@ -1004,6 +1004,24 @@ void AsmPrinter::emitFunctionHeader() {
   // Emit the prologue data.
   if (F.hasPrologueData())
     emitGlobalConstant(F.getParent()->getDataLayout(), F.getPrologueData());
+
+  // Emit the function prologue data for the indirect call sanitizer.
+  if (const MDNode *MD = F.getMetadata(LLVMContext::MD_func_sanitize)) {
+    assert(TM.getTargetTriple().getArch() == Triple::x86 ||
+           TM.getTargetTriple().getArch() == Triple::x86_64);
+    assert(MD->getNumOperands() == 2);
+
+    auto *PrologueSig = mdconst::extract<Constant>(MD->getOperand(0));
+    auto *FTRTTIProxy = mdconst::extract<Constant>(MD->getOperand(1));
+    assert(PrologueSig && FTRTTIProxy);
+    emitGlobalConstant(F.getParent()->getDataLayout(), PrologueSig);
+
+    const MCExpr *Proxy = lowerConstant(FTRTTIProxy);
+    const MCExpr *FnExp = MCSymbolRefExpr::create(CurrentFnSym, OutContext);
+    const MCExpr *PCRel = MCBinaryExpr::createSub(Proxy, FnExp, OutContext);
+    // Use 32 bit since only small code model is supported.
+    OutStreamer->emitValue(PCRel, 4u);
+  }
 }
 
 /// EmitFunctionEntryLabel - Emit the label that is the entrypoint for the
@@ -1309,19 +1327,27 @@ void AsmPrinter::emitBBAddrMapSection(const MachineFunction &MF) {
 
   OutStreamer->pushSection();
   OutStreamer->switchSection(BBAddrMapSection);
+  OutStreamer->AddComment("version");
+  OutStreamer->emitInt8(OutStreamer->getContext().getBBAddrMapVersion());
+  OutStreamer->AddComment("feature");
+  OutStreamer->emitInt8(0);
+  OutStreamer->AddComment("function address");
   OutStreamer->emitSymbolValue(FunctionSymbol, getPointerSize());
-  // Emit the total number of basic blocks in this function.
+  OutStreamer->AddComment("number of basic blocks");
   OutStreamer->emitULEB128IntValue(MF.size());
+  const MCSymbol *PrevMBBEndSymbol = FunctionSymbol;
   // Emit BB Information for each basic block in the funciton.
   for (const MachineBasicBlock &MBB : MF) {
     const MCSymbol *MBBSymbol =
         MBB.isEntryBlock() ? FunctionSymbol : MBB.getSymbol();
-    // Emit the basic block offset.
-    emitLabelDifferenceAsULEB128(MBBSymbol, FunctionSymbol);
+    // Emit the basic block offset relative to the end of the previous block.
+    // This is zero unless the block is padded due to alignment.
+    emitLabelDifferenceAsULEB128(MBBSymbol, PrevMBBEndSymbol);
     // Emit the basic block size. When BBs have alignments, their size cannot
     // always be computed from their offsets.
     emitLabelDifferenceAsULEB128(MBB.getEndSymbol(), MBBSymbol);
     OutStreamer->emitULEB128IntValue(getBBAddrMapMetadata(MBB));
+    PrevMBBEndSymbol = MBB.getEndSymbol();
   }
   OutStreamer->popSection();
 }
