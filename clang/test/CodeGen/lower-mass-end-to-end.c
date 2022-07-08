@@ -1,3 +1,4 @@
+// REQUIRES: powerpc-registered-target
 // RUN: %clang -mllvm -enable-ppc-gen-scalar-mass -O3 -fapprox-func --target=powerpc64le-unknown-linux-gnu -S %s -o -| FileCheck %s -check-prefix=CHECK-MASS-AFN
 // RUN: %clang -mllvm -enable-ppc-gen-scalar-mass -Ofast --target=powerpc64le-unknown-linux-gnu -S %s -o -| FileCheck %s -check-prefix=CHECK-MASS-FAST
 // RUN: %clang -mllvm -enable-ppc-gen-scalar-mass -O3 -fapprox-func --target=powerpc-ibm-aix-xcoff -S %s -o -| FileCheck %s -check-prefix=CHECK-MASS-AFN
