@@ -189,7 +189,8 @@ void VPInstruction::generateInstruction(VPTransformState &State,
   if (Instruction::isBinaryOp(getOpcode())) {
     Value *A = State.get(getOperand(0), Part);
     Value *B = State.get(getOperand(1), Part);
-    Value *V = Builder.CreateBinOp((Instruction::BinaryOps)getOpcode(), A, B);
+    Value *V =
+        Builder.CreateBinOp((Instruction::BinaryOps)getOpcode(), A, B, Name);
     State.set(this, V, Part);
     return;
   }
@@ -197,14 +198,14 @@ void VPInstruction::generateInstruction(VPTransformState &State,
   switch (getOpcode()) {
   case VPInstruction::Not: {
     Value *A = State.get(getOperand(0), Part);
-    Value *V = Builder.CreateNot(A);
+    Value *V = Builder.CreateNot(A, Name);
     State.set(this, V, Part);
     break;
   }
   case VPInstruction::ICmpULE: {
     Value *IV = State.get(getOperand(0), Part);
     Value *TC = State.get(getOperand(1), Part);
-    Value *V = Builder.CreateICmpULE(IV, TC);
+    Value *V = Builder.CreateICmpULE(IV, TC, Name);
     State.set(this, V, Part);
     break;
   }
@@ -212,7 +213,7 @@ void VPInstruction::generateInstruction(VPTransformState &State,
     Value *Cond = State.get(getOperand(0), Part);
     Value *Op1 = State.get(getOperand(1), Part);
     Value *Op2 = State.get(getOperand(2), Part);
-    Value *V = Builder.CreateSelect(Cond, Op1, Op2);
+    Value *V = Builder.CreateSelect(Cond, Op1, Op2, Name);
     State.set(this, V, Part);
     break;
   }
@@ -226,7 +227,7 @@ void VPInstruction::generateInstruction(VPTransformState &State,
     auto *PredTy = VectorType::get(Int1Ty, State.VF);
     Instruction *Call = Builder.CreateIntrinsic(
         Intrinsic::get_active_lane_mask, {PredTy, ScalarTC->getType()},
-        {VIVElem0, ScalarTC}, nullptr, "active.lane.mask");
+        {VIVElem0, ScalarTC}, nullptr, Name);
     State.set(this, Call, Part);
     break;
   }
@@ -250,7 +251,8 @@ void VPInstruction::generateInstruction(VPTransformState &State,
       State.set(this, PartMinus1, Part);
     } else {
       Value *V2 = State.get(getOperand(1), Part);
-      State.set(this, Builder.CreateVectorSplice(PartMinus1, V2, -1), Part);
+      State.set(this, Builder.CreateVectorSplice(PartMinus1, V2, -1, Name),
+                Part);
     }
     break;
   }
@@ -264,11 +266,28 @@ void VPInstruction::generateInstruction(VPTransformState &State,
       // elements) times the unroll factor (num of SIMD instructions).
       Value *Step =
           createStepForVF(Builder, Phi->getType(), State.VF, State.UF);
-      Next = Builder.CreateAdd(Phi, Step, "index.next", IsNUW, false);
+      Next = Builder.CreateAdd(Phi, Step, Name, IsNUW, false);
     } else {
       Next = State.get(this, 0);
     }
 
+    State.set(this, Next, Part);
+    break;
+  }
+
+  case VPInstruction::CanonicalIVIncrementForPart:
+  case VPInstruction::CanonicalIVIncrementForPartNUW: {
+    bool IsNUW = getOpcode() == VPInstruction::CanonicalIVIncrementForPartNUW;
+    auto *IV = State.get(getOperand(0), VPIteration(0, 0));
+    if (Part == 0) {
+      State.set(this, IV, Part);
+      break;
+    }
+
+    // The canonical IV is incremented by the vectorization factor (num of SIMD
+    // elements) times the unroll part.
+    Value *Step = createStepForVF(Builder, IV->getType(), State.VF, Part);
+    Value *Next = Builder.CreateAdd(IV, Step, Name, IsNUW, false);
     State.set(this, Next, Part);
     break;
   }
@@ -372,6 +391,12 @@ void VPInstruction::print(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::BranchOnCond:
     O << "branch-on-cond";
+    break;
+  case VPInstruction::CanonicalIVIncrementForPart:
+    O << "VF * Part + ";
+    break;
+  case VPInstruction::CanonicalIVIncrementForPartNUW:
+    O << "VF * Part +(nuw) ";
     break;
   case VPInstruction::BranchOnCount:
     O << "branch-on-count ";
@@ -641,7 +666,82 @@ void VPScalarIVStepsRecipe::print(raw_ostream &O, const Twine &Indent,
   O << Indent << "= SCALAR-STEPS ";
   printOperands(O, SlotTracker);
 }
+#endif
 
+void VPWidenGEPRecipe::execute(VPTransformState &State) {
+  auto *GEP = cast<GetElementPtrInst>(getUnderlyingInstr());
+  // Construct a vector GEP by widening the operands of the scalar GEP as
+  // necessary. We mark the vector GEP 'inbounds' if appropriate. A GEP
+  // results in a vector of pointers when at least one operand of the GEP
+  // is vector-typed. Thus, to keep the representation compact, we only use
+  // vector-typed operands for loop-varying values.
+
+  if (State.VF.isVector() && IsPtrLoopInvariant && IsIndexLoopInvariant.all()) {
+    // If we are vectorizing, but the GEP has only loop-invariant operands,
+    // the GEP we build (by only using vector-typed operands for
+    // loop-varying values) would be a scalar pointer. Thus, to ensure we
+    // produce a vector of pointers, we need to either arbitrarily pick an
+    // operand to broadcast, or broadcast a clone of the original GEP.
+    // Here, we broadcast a clone of the original.
+    //
+    // TODO: If at some point we decide to scalarize instructions having
+    //       loop-invariant operands, this special case will no longer be
+    //       required. We would add the scalarization decision to
+    //       collectLoopScalars() and teach getVectorValue() to broadcast
+    //       the lane-zero scalar value.
+    auto *Clone = State.Builder.Insert(GEP->clone());
+    for (unsigned Part = 0; Part < State.UF; ++Part) {
+      Value *EntryPart = State.Builder.CreateVectorSplat(State.VF, Clone);
+      State.set(this, EntryPart, Part);
+      State.addMetadata(EntryPart, GEP);
+    }
+  } else {
+    // If the GEP has at least one loop-varying operand, we are sure to
+    // produce a vector of pointers. But if we are only unrolling, we want
+    // to produce a scalar GEP for each unroll part. Thus, the GEP we
+    // produce with the code below will be scalar (if VF == 1) or vector
+    // (otherwise). Note that for the unroll-only case, we still maintain
+    // values in the vector mapping with initVector, as we do for other
+    // instructions.
+    for (unsigned Part = 0; Part < State.UF; ++Part) {
+      // The pointer operand of the new GEP. If it's loop-invariant, we
+      // won't broadcast it.
+      auto *Ptr = IsPtrLoopInvariant
+                      ? State.get(getOperand(0), VPIteration(0, 0))
+                      : State.get(getOperand(0), Part);
+
+      // Collect all the indices for the new GEP. If any index is
+      // loop-invariant, we won't broadcast it.
+      SmallVector<Value *, 4> Indices;
+      for (unsigned I = 1, E = getNumOperands(); I < E; I++) {
+        VPValue *Operand = getOperand(I);
+        if (IsIndexLoopInvariant[I - 1])
+          Indices.push_back(State.get(Operand, VPIteration(0, 0)));
+        else
+          Indices.push_back(State.get(Operand, Part));
+      }
+
+      // If the GEP instruction is vectorized and was in a basic block that
+      // needed predication, we can't propagate the poison-generating 'inbounds'
+      // flag. The control flow has been linearized and the GEP is no longer
+      // guarded by the predicate, which could make the 'inbounds' properties to
+      // no longer hold.
+      bool IsInBounds =
+          GEP->isInBounds() && State.MayGeneratePoisonRecipes.count(this) == 0;
+
+      // Create the new GEP. Note that this GEP may be a scalar if VF == 1,
+      // but it should be a vector, otherwise.
+      auto *NewGEP = State.Builder.CreateGEP(GEP->getSourceElementType(), Ptr,
+                                             Indices, "", IsInBounds);
+      assert((State.VF.isScalar() || NewGEP->getType()->isVectorTy()) &&
+             "NewGEP is not a pointer vector");
+      State.set(this, NewGEP, Part);
+      State.addMetadata(NewGEP, GEP);
+    }
+  }
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
 void VPWidenGEPRecipe::print(raw_ostream &O, const Twine &Indent,
                              VPSlotTracker &SlotTracker) const {
   O << Indent << "WIDEN-GEP ";
@@ -986,6 +1086,31 @@ void VPWidenPHIRecipe::print(raw_ostream &O, const Twine &Indent,
     O << VPlanIngredient(OriginalPhi);
     return;
   }
+
+  printAsOperand(O, SlotTracker);
+  O << " = phi ";
+  printOperands(O, SlotTracker);
+}
+#endif
+
+// TODO: It would be good to use the existing VPWidenPHIRecipe instead and
+// remove VPActiveLaneMaskPHIRecipe.
+void VPActiveLaneMaskPHIRecipe::execute(VPTransformState &State) {
+  BasicBlock *VectorPH = State.CFG.getPreheaderBBFor(this);
+  for (unsigned Part = 0, UF = State.UF; Part < UF; ++Part) {
+    Value *StartMask = State.get(getOperand(0), Part);
+    PHINode *EntryPart =
+        State.Builder.CreatePHI(StartMask->getType(), 2, "active.lane.mask");
+    EntryPart->addIncoming(StartMask, VectorPH);
+    EntryPart->setDebugLoc(DL);
+    State.set(this, EntryPart, Part);
+  }
+}
+
+#if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
+void VPActiveLaneMaskPHIRecipe::print(raw_ostream &O, const Twine &Indent,
+                                      VPSlotTracker &SlotTracker) const {
+  O << Indent << "ACTIVE-LANE-MASK-PHI ";
 
   printAsOperand(O, SlotTracker);
   O << " = phi ";
