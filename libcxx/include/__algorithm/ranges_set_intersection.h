@@ -66,7 +66,7 @@ struct __fn {
         std::move(__last2),
         std::move(__result),
         ranges::__make_projected_comp(__comp, __proj1, __proj2));
-    return {std::move(__ret.in1), std::move(__ret.in2), std::move(__ret.out)};
+    return {std::move(__ret.__in1_), std::move(__ret.__in2_), std::move(__ret.__out_)};
   }
 
   template <
@@ -100,7 +100,7 @@ struct __fn {
         ranges::end(__range2),
         std::move(__result),
         ranges::__make_projected_comp(__comp, __proj1, __proj2));
-    return {std::move(__ret.in1), std::move(__ret.in2), std::move(__ret.out)};
+    return {std::move(__ret.__in1_), std::move(__ret.__in2_), std::move(__ret.__out_)};
   }
 };
 
