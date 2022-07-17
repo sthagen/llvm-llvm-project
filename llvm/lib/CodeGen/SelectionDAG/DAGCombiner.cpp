@@ -7935,7 +7935,7 @@ SDValue DAGCombiner::mergeTruncStores(StoreSDNode *N) {
   int64_t FirstOffset = INT64_MAX;
   StoreSDNode *FirstStore = nullptr;
   Optional<BaseIndexOffset> Base;
-  for (auto Store : Stores) {
+  for (auto *Store : Stores) {
     // All the stores store different parts of the CombinedValue. A truncate is
     // required to get the partial value.
     SDValue Trunc = Store->getValue();
@@ -13151,6 +13151,19 @@ SDValue DAGCombiner::visitTRUNCATE(SDNode *N) {
     // if the source and dest are the same type, we can drop both the extend
     // and the truncate.
     return N0.getOperand(0);
+  }
+
+  // Try to narrow a truncate-of-sext_in_reg to the destination type:
+  // trunc (sign_ext_inreg X, iM) to iN --> sign_ext_inreg (trunc X to iN), iM
+  if (!LegalTypes && N0.getOpcode() == ISD::SIGN_EXTEND_INREG &&
+      N0.hasOneUse()) {
+    SDValue X = N0.getOperand(0);
+    SDValue ExtVal = N0.getOperand(1);
+    EVT ExtVT = cast<VTSDNode>(ExtVal)->getVT();
+    if (ExtVT.bitsLT(VT)) {
+      SDValue TrX = DAG.getNode(ISD::TRUNCATE, SDLoc(N), VT, X);
+      return DAG.getNode(ISD::SIGN_EXTEND_INREG, SDLoc(N), VT, TrX, ExtVal);
+    }
   }
 
   // If this is anyext(trunc), don't fold it, allow ourselves to be folded.
