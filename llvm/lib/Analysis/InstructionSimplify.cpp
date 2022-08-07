@@ -2181,10 +2181,10 @@ static Value *simplifyAndInst(Value *Op0, Value *Op1, const SimplifyQuery &Q,
     }
     if (Optional<bool> Implied = isImpliedCondition(Op1, Op0, Q.DL)) {
       // If Op1 is true implies Op0 is true, then Op1 is a subset of Op0.
-      if (Implied.getValue())
+      if (Implied.value())
         return Op1;
       // If Op1 is true implies Op0 is false, then they are not true together.
-      if (!Implied.getValue())
+      if (!Implied.value())
         return ConstantInt::getFalse(Op1->getType());
     }
   }
@@ -2660,7 +2660,7 @@ static Constant *computePointerICmp(CmpInst::Predicate Pred, Value *LHS,
   default:
     return nullptr;
 
-    // Equality comaprisons are easy to fold.
+    // Equality comparisons are easy to fold.
   case CmpInst::ICMP_EQ:
   case CmpInst::ICMP_NE:
     break;
