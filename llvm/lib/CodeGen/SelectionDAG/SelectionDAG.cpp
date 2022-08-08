@@ -4535,6 +4535,52 @@ bool SelectionDAG::isGuaranteedNotToBeUndefOrPoison(SDValue Op,
   return false;
 }
 
+bool SelectionDAG::canCreateUndefOrPoison(SDValue Op, bool PoisonOnly,
+                                          bool ConsiderFlags,
+                                          unsigned Depth) const {
+  // TODO: Assume we don't know anything for now.
+  EVT VT = Op.getValueType();
+  if (VT.isScalableVector())
+    return true;
+
+  APInt DemandedElts = VT.isVector()
+                           ? APInt::getAllOnes(VT.getVectorNumElements())
+                           : APInt(1, 1);
+  return canCreateUndefOrPoison(Op, DemandedElts, PoisonOnly, ConsiderFlags,
+                                Depth);
+}
+
+bool SelectionDAG::canCreateUndefOrPoison(SDValue Op, const APInt &DemandedElts,
+                                          bool PoisonOnly, bool ConsiderFlags,
+                                          unsigned Depth) const {
+  // TODO: Assume we don't know anything for now.
+  EVT VT = Op.getValueType();
+  if (VT.isScalableVector())
+    return true;
+
+  unsigned Opcode = Op.getOpcode();
+  switch (Opcode) {
+  case ISD::FREEZE:
+  case ISD::BSWAP:
+  case ISD::BITREVERSE:
+  case ISD::SIGN_EXTEND:
+  case ISD::ZERO_EXTEND:
+  case ISD::BITCAST:
+    return false;
+
+  default:
+    // Allow the target to implement this method for its nodes.
+    if (Opcode >= ISD::BUILTIN_OP_END || Opcode == ISD::INTRINSIC_WO_CHAIN ||
+        Opcode == ISD::INTRINSIC_W_CHAIN || Opcode == ISD::INTRINSIC_VOID)
+      return TLI->canCreateUndefOrPoisonForTargetNode(
+          Op, DemandedElts, *this, PoisonOnly, ConsiderFlags, Depth);
+    break;
+  }
+
+  // Be conservative and return true.
+  return true;
+}
+
 bool SelectionDAG::isBaseWithConstantOffset(SDValue Op) const {
   if ((Op.getOpcode() != ISD::ADD && Op.getOpcode() != ISD::OR) ||
       !isa<ConstantSDNode>(Op.getOperand(1)))
@@ -5465,6 +5511,23 @@ static llvm::Optional<APInt> FoldValue(unsigned Opcode, const APInt &C1,
   return llvm::None;
 }
 
+// Handle constant folding with UNDEF.
+// TODO: Handle more cases.
+static llvm::Optional<APInt> FoldValueWithUndef(unsigned Opcode,
+                                                const APInt &C1, bool IsUndef1,
+                                                const APInt &C2,
+                                                bool IsUndef2) {
+  if (!(IsUndef1 || IsUndef2))
+    return FoldValue(Opcode, C1, C2);
+
+  // Fold and(x, undef) -> 0
+  // Fold mul(x, undef) -> 0
+  if (Opcode == ISD::AND || Opcode == ISD::MUL)
+    return APInt::getZero(C1.getBitWidth());
+
+  return llvm::None;
+}
+
 SDValue SelectionDAG::FoldSymbolOffset(unsigned Opcode, EVT VT,
                                        const GlobalAddressSDNode *GA,
                                        const SDNode *N2) {
@@ -5565,7 +5628,6 @@ SDValue SelectionDAG::FoldConstantArithmetic(unsigned Opcode, const SDLoc &DL,
   ElementCount NumElts = VT.getVectorElementCount();
 
   // See if we can fold through bitcasted integer ops.
-  // TODO: Can we handle undef elements?
   if (NumOps == 2 && VT.isFixedLengthVector() && VT.isInteger() &&
       Ops[0].getValueType() == VT && Ops[1].getValueType() == VT &&
       Ops[0].getOpcode() == ISD::BITCAST &&
@@ -5581,11 +5643,11 @@ SDValue SelectionDAG::FoldConstantArithmetic(unsigned Opcode, const SDLoc &DL,
       SmallVector<APInt> RawBits1, RawBits2;
       BitVector UndefElts1, UndefElts2;
       if (BV1->getConstantRawBits(IsLE, EltBits, RawBits1, UndefElts1) &&
-          BV2->getConstantRawBits(IsLE, EltBits, RawBits2, UndefElts2) &&
-          UndefElts1.none() && UndefElts2.none()) {
+          BV2->getConstantRawBits(IsLE, EltBits, RawBits2, UndefElts2)) {
         SmallVector<APInt> RawBits;
         for (unsigned I = 0, E = NumElts.getFixedValue(); I != E; ++I) {
-          Optional<APInt> Fold = FoldValue(Opcode, RawBits1[I], RawBits2[I]);
+          Optional<APInt> Fold = FoldValueWithUndef(
+              Opcode, RawBits1[I], UndefElts1[I], RawBits2[I], UndefElts2[I]);
           if (!Fold)
             break;
           RawBits.push_back(*Fold);

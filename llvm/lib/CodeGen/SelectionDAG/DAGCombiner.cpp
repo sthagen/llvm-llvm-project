@@ -13863,13 +13863,15 @@ SDValue DAGCombiner::visitFREEZE(SDNode *N) {
   if (DAG.isGuaranteedNotToBeUndefOrPoison(N0, /*PoisonOnly*/ false))
     return N0;
 
-  // Fold freeze(bitcast(x)) -> bitcast(freeze(x)).
-  // TODO: Replace with pushFreezeToPreventPoisonFromPropagating fold.
-  if (N0.getOpcode() == ISD::BITCAST)
-    return DAG.getBitcast(N->getValueType(0),
-                          DAG.getNode(ISD::FREEZE, SDLoc(N0),
-                                      N0.getOperand(0).getValueType(),
-                                      N0.getOperand(0)));
+  // Fold freeze(unaryop(x)) -> unaryop(freeze(x)).
+  // TODO: Replace with pushFreezeToPreventPoisonFromPropagating fold and
+  // support getNumOperands() >= 1.
+  if (N0.getNumOperands() == 1 &&
+      !DAG.canCreateUndefOrPoison(N0, /*PoisonOnly*/ false) && N0->hasOneUse())
+    return DAG.getNode(N0.getOpcode(), SDLoc(N0), N->getValueType(0),
+                       DAG.getNode(ISD::FREEZE, SDLoc(N0),
+                                   N0.getOperand(0).getValueType(),
+                                   N0.getOperand(0)));
 
   return SDValue();
 }
@@ -22763,6 +22765,7 @@ SDValue DAGCombiner::visitVECTOR_SHUFFLE(SDNode *N) {
       SDLoc DL(N);
       EVT IntVT = VT.changeVectorElementTypeToInteger();
       EVT IntSVT = VT.getVectorElementType().changeTypeToInteger();
+      IntSVT = TLI.getTypeToTransformTo(*DAG.getContext(), IntSVT);
       SDValue ZeroElt = DAG.getConstant(0, DL, IntSVT);
       SDValue AllOnesElt = DAG.getAllOnesConstant(DL, IntSVT);
       SmallVector<SDValue, 16> AndMask(NumElts, DAG.getUNDEF(IntSVT));

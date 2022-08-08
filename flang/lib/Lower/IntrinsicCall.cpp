@@ -1207,10 +1207,10 @@ static mlir::Value genMathOp(fir::FirOpBuilder &builder, mlir::Location loc,
 ///       See https://gcc.gnu.org/onlinedocs/gcc-12.1.0/gfortran/\
 ///       Intrinsic-Procedures.html for a reference.
 static constexpr MathOperation mathOperations[] = {
-    {"abs", "fabsf", genF32F32FuncType, genMathOp<mlir::math::AbsOp>},
-    {"abs", "fabs", genF64F64FuncType, genMathOp<mlir::math::AbsOp>},
+    {"abs", "fabsf", genF32F32FuncType, genMathOp<mlir::math::AbsFOp>},
+    {"abs", "fabs", genF64F64FuncType, genMathOp<mlir::math::AbsFOp>},
     {"abs", "llvm.fabs.f128", genF128F128FuncType,
-     genMathOp<mlir::math::AbsOp>},
+     genMathOp<mlir::math::AbsFOp>},
     // llvm.trunc behaves the same way as libm's trunc.
     {"aint", "llvm.trunc.f32", genF32F32FuncType, genLibCall},
     {"aint", "llvm.trunc.f64", genF64F64FuncType, genLibCall},
@@ -3297,6 +3297,7 @@ mlir::Value IntrinsicLibrary::genMask(mlir::Type resultType,
                                       llvm::ArrayRef<mlir::Value> args) {
   assert(args.size() == 2);
 
+  mlir::Value zero = builder.createIntegerConstant(loc, resultType, 0);
   mlir::Value ones = builder.createIntegerConstant(loc, resultType, -1);
   mlir::Value bitSize = builder.createIntegerConstant(
       loc, resultType, resultType.getIntOrFloatBitWidth());
@@ -3309,7 +3310,11 @@ mlir::Value IntrinsicLibrary::genMask(mlir::Type resultType,
   // in this case either, so we choose the most efficient implementation.
   mlir::Value shift =
       builder.create<mlir::arith::SubIOp>(loc, bitSize, bitsToSet);
-  return builder.create<Shift>(loc, ones, shift);
+  mlir::Value shifted = builder.create<Shift>(loc, ones, shift);
+  mlir::Value isZero = builder.create<mlir::arith::CmpIOp>(
+      loc, mlir::arith::CmpIPredicate::eq, bitsToSet, zero);
+
+  return builder.create<mlir::arith::SelectOp>(loc, isZero, zero, shifted);
 }
 
 // MATMUL
