@@ -300,6 +300,10 @@ bool ISD::allOperandsUndef(const SDNode *N) {
   return all_of(N->op_values(), [](SDValue Op) { return Op.isUndef(); });
 }
 
+bool ISD::isFreezeUndef(const SDNode *N) {
+  return N->getOpcode() == ISD::FREEZE && N->getOperand(0).isUndef();
+}
+
 bool ISD::matchUnaryPredicate(SDValue Op,
                               std::function<bool(ConstantSDNode *)> Match,
                               bool AllowUndefs) {
@@ -4567,8 +4571,16 @@ bool SelectionDAG::canCreateUndefOrPoison(SDValue Op, const APInt &DemandedElts,
   case ISD::PARITY:
   case ISD::SIGN_EXTEND:
   case ISD::ZERO_EXTEND:
+  case ISD::TRUNCATE:
   case ISD::BITCAST:
     return false;
+
+  case ISD::ADD:
+  case ISD::SUB:
+  case ISD::MUL:
+    // Matches hasPoisonGeneratingFlags().
+    return ConsiderFlags && (Op->getFlags().hasNoSignedWrap() ||
+                             Op->getFlags().hasNoUnsignedWrap());
 
   default:
     // Allow the target to implement this method for its nodes.

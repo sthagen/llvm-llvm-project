@@ -4845,11 +4845,8 @@ struct AAInstanceInfoImpl : public AAInstanceInfo {
     auto EquivalentUseCB = [&](const Use &OldU, const Use &NewU) {
       if (auto *SI = dyn_cast<StoreInst>(OldU.getUser())) {
         auto *Ptr = SI->getPointerOperand()->stripPointerCasts();
-        if (isa<AllocaInst>(Ptr) && AA::isDynamicallyUnique(A, *this, *Ptr))
-          return true;
-        auto *TLI = A.getInfoCache().getTargetLibraryInfoForFunction(
-            *SI->getFunction());
-        if (isAllocationFn(Ptr, TLI) && AA::isDynamicallyUnique(A, *this, *Ptr))
+        if ((isa<AllocaInst>(Ptr) || isNoAliasCall(Ptr)) &&
+            AA::isDynamicallyUnique(A, *this, *Ptr))
           return true;
       }
       return false;
@@ -9518,7 +9515,7 @@ private:
                         ArrayRef<const AACallEdges *> AAEdgesList) {
       ChangeStatus Change = ChangeStatus::UNCHANGED;
 
-      for (auto *AAEdges : AAEdgesList) {
+      for (const auto *AAEdges : AAEdgesList) {
         if (AAEdges->hasUnknownCallee()) {
           if (!CanReachUnknownCallee) {
             LLVM_DEBUG(dbgs()
@@ -9566,7 +9563,7 @@ private:
                           const Function &Fn) const {
 
       // Handle the most trivial case first.
-      for (auto *AAEdges : AAEdgesList) {
+      for (const auto *AAEdges : AAEdgesList) {
         const SetVector<Function *> &Edges = AAEdges->getOptimisticEdges();
 
         if (Edges.count(const_cast<Function *>(&Fn)))
@@ -9594,7 +9591,7 @@ private:
       }
 
       // The result is false for now, set dependencies and leave.
-      for (auto *Dep : Deps)
+      for (const auto *Dep : Deps)
         A.recordDependence(*Dep, AA, DepClassTy::REQUIRED);
 
       return false;
@@ -9898,6 +9895,15 @@ struct AAPotentialValuesImpl : AAPotentialValues {
   struct ItemInfo {
     AA::ValueAndContext I;
     AA::ValueScope S;
+
+    bool operator==(const ItemInfo &II) const {
+      return II.I == I && II.S == S;
+    };
+    bool operator<(const ItemInfo &II) const {
+      if (I == II.I)
+        return S < II.S;
+      return I < II.I;
+    };
   };
 
   bool recurseForValue(Attributor &A, const IRPosition &IRP, AA::ValueScope S) {
@@ -10270,7 +10276,7 @@ struct AAPotentialValuesFloating : AAPotentialValuesImpl {
     SmallMapVector<const Function *, LivenessInfo, 4> LivenessAAs;
 
     Value *InitialV = &getAssociatedValue();
-    SmallSet<AA::ValueAndContext, 16> Visited;
+    SmallSet<ItemInfo, 16> Visited;
     SmallVector<ItemInfo, 16> Worklist;
     Worklist.push_back({{*InitialV, getCtxI()}, AA::AnyScope});
 
@@ -10284,7 +10290,7 @@ struct AAPotentialValuesFloating : AAPotentialValuesImpl {
 
       // Check if we should process the current value. To prevent endless
       // recursion keep a record of the values we followed!
-      if (!Visited.insert(II.I).second)
+      if (!Visited.insert(II).second)
         continue;
 
       // Make sure we limit the compile time for complex expressions.
