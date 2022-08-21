@@ -564,8 +564,24 @@ MCSectionELF *MCContext::getELFSection(const Twine &Section, unsigned Type,
     Kind = SectionKind::getExecuteOnly();
   else if (Flags & ELF::SHF_EXECINSTR)
     Kind = SectionKind::getText();
-  else
+  else if (~Flags & ELF::SHF_WRITE)
     Kind = SectionKind::getReadOnly();
+  else if (Flags & ELF::SHF_TLS)
+    // FIXME: should we differentiate between SHT_PROGBITS and SHT_NOBITS?
+    Kind = SectionKind::getThreadData();
+  else if (CachedName.startswith(".debug_"))
+    Kind = SectionKind::getMetadata();
+  else
+    Kind = llvm::StringSwitch<SectionKind>(CachedName)
+               .Case(".bss", SectionKind::getBSS())
+               .Case(".data", SectionKind::getData())
+               .Case(".data1", SectionKind::getMergeable1ByteCString())
+               .Case(".data.rel.ro", SectionKind::getReadOnlyWithRel())
+               .Case(".rodata", SectionKind::getReadOnly())
+               .Case(".rodata1", SectionKind::getReadOnly())
+               .Case(".tbss", SectionKind::getThreadBSS())
+               .Case(".tdata", SectionKind::getThreadData())
+               .Default(SectionKind::getText());
 
   MCSectionELF *Result =
       createELFSectionImpl(CachedName, Type, Flags, Kind, EntrySize, GroupSym,
@@ -869,7 +885,7 @@ void MCContext::RemapDebugPaths() {
   // Remap compilation directory.
   remapDebugPath(CompilationDir);
 
-  // Remap MCDwarfDirs in all compilation units.
+  // Remap MCDwarfDirs and RootFile.Name in all compilation units.
   SmallString<256> P;
   for (auto &CUIDTablePair : MCDwarfLineTablesCUMap) {
     for (auto &Dir : CUIDTablePair.second.getMCDwarfDirs()) {
@@ -877,6 +893,12 @@ void MCContext::RemapDebugPaths() {
       remapDebugPath(P);
       Dir = std::string(P);
     }
+
+    // Used by DW_TAG_compile_unit's DT_AT_name and DW_TAG_label's
+    // DW_AT_decl_file for DWARF v5 generated for assembly source.
+    P = CUIDTablePair.second.getRootFile().Name;
+    remapDebugPath(P);
+    CUIDTablePair.second.getRootFile().Name = std::string(P);
   }
 }
 

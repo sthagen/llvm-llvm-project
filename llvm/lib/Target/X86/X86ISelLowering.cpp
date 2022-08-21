@@ -27038,7 +27038,7 @@ SDValue X86TargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
 
       // Avoid false dependency.
       if (PassThru.isUndef())
-        PassThru = DAG.getConstant(0, dl, VT);
+        PassThru = getZeroVector(VT, Subtarget, DAG, dl);
 
       return DAG.getNode(IntrData->Opc0, dl, VT, DataToCompress, PassThru,
                          Mask);
@@ -29735,8 +29735,22 @@ static SDValue LowerShiftByScalarImmediate(SDValue Op, SelectionDAG &DAG,
 
   uint64_t ShiftAmt = APIntShiftAmt.getZExtValue();
 
-  if (supportedVectorShiftWithImm(VT, Subtarget, Op.getOpcode()))
+  if (supportedVectorShiftWithImm(VT, Subtarget, Op.getOpcode())) {
+    // Hardware support for vector shifts is sparse which makes us scalarize the
+    // vector operations in many cases. Also, on sandybridge ADD is faster than
+    // shl: (shl V, 1) -> (add (freeze V), (freeze V))
+    if (Op.getOpcode() == ISD::SHL && ShiftAmt == 1) {
+      // R may be undef at run-time, but (shl R, 1) must be an even number (LSB
+      // must be 0). (add undef, undef) however can be any value. To make this
+      // safe, we must freeze R to ensure that register allocation uses the same
+      // register for an undefined value. This ensures that the result will
+      // still be even and preserves the original semantics.
+      R = DAG.getFreeze(R);
+      return DAG.getNode(ISD::ADD, dl, VT, R, R);
+    }
+
     return getTargetVShiftByConstNode(X86Opc, dl, VT, R, ShiftAmt, DAG);
+  }
 
   // i64 SRA needs to be performed as partial shifts.
   if (((!Subtarget.hasXOP() && VT == MVT::v2i64) ||
@@ -35626,7 +35640,7 @@ X86TargetLowering::emitEHSjLjSetJmp(MachineInstr &MI,
   MF->insert(I, mainMBB);
   MF->insert(I, sinkMBB);
   MF->push_back(restoreMBB);
-  restoreMBB->setHasAddressTaken();
+  restoreMBB->setMachineBlockAddressTaken();
 
   MachineInstrBuilder MIB;
 
@@ -41691,7 +41705,7 @@ bool X86TargetLowering::SimplifyDemandedBitsForTargetNode(
   case X86ISD::PMULDQ:
   case X86ISD::PMULUDQ: {
     // PMULDQ/PMULUDQ only uses lower 32 bits from each vector element.
-    KnownBits KnownOp;
+    KnownBits KnownLHS, KnownRHS;
     SDValue LHS = Op.getOperand(0);
     SDValue RHS = Op.getOperand(1);
 
@@ -41708,11 +41722,20 @@ bool X86TargetLowering::SimplifyDemandedBitsForTargetNode(
       DemandedMaskRHS = DemandedMask;
 
     if (SimplifyDemandedBits(LHS, DemandedMaskLHS, OriginalDemandedElts,
-                             KnownOp, TLO, Depth + 1))
+                             KnownLHS, TLO, Depth + 1))
       return true;
     if (SimplifyDemandedBits(RHS, DemandedMaskRHS, OriginalDemandedElts,
-                             KnownOp, TLO, Depth + 1))
+                             KnownRHS, TLO, Depth + 1))
       return true;
+
+    // PMULUDQ(X,1) -> AND(X,(1<<32)-1) 'getZeroExtendInReg'.
+    KnownRHS = KnownRHS.trunc(32);
+    if (Opc == X86ISD::PMULUDQ && KnownRHS.isConstant() &&
+        KnownRHS.getConstant().isOne()) {
+      SDLoc DL(Op);
+      SDValue Mask = TLO.DAG.getConstant(DemandedMask, DL, VT);
+      return TLO.CombineTo(Op, TLO.DAG.getNode(ISD::AND, DL, VT, LHS, Mask));
+    }
 
     // Aggressively peek through ops to get at the demanded low bits.
     SDValue DemandedLHS = SimplifyMultipleUseDemandedBits(
@@ -46674,20 +46697,6 @@ static SDValue combineShiftLeft(SDNode *N, SelectionDAG &DAG) {
     }
   }
 
-  // Hardware support for vector shifts is sparse which makes us scalarize the
-  // vector operations in many cases. Also, on sandybridge ADD is faster than
-  // shl.
-  // (shl V, 1) -> add V,V
-  if (auto *N1BV = dyn_cast<BuildVectorSDNode>(N1))
-    if (auto *N1SplatC = N1BV->getConstantSplatNode()) {
-      assert(N0.getValueType().isVector() && "Invalid vector shift type");
-      // We shift all of the values by one. In many cases we do not have
-      // hardware support for this operation. This is better expressed as an ADD
-      // of two values.
-      if (N1SplatC->isOne())
-        return DAG.getNode(ISD::ADD, SDLoc(N), VT, N0, N0);
-    }
-
   return SDValue();
 }
 
@@ -47202,10 +47211,8 @@ static SDValue combineVectorShiftImm(SDNode *N, SelectionDAG &DAG,
     // result are all ones, not undef.
     return DAG.getConstant(-1, SDLoc(N), VT);
 
-  // (shift (shift X, C2), C1) -> (shift X, (C1 + C2))
-  if (Opcode == N0.getOpcode()) {
-    unsigned ShiftVal2 = cast<ConstantSDNode>(N0.getOperand(1))->getZExtValue();
-    unsigned NewShiftVal = ShiftVal + ShiftVal2;
+  auto MergeShifts = [&](SDValue X, uint64_t Amt0, uint64_t Amt1) {
+    unsigned NewShiftVal = Amt0 + Amt1;
     if (NewShiftVal >= NumBitsPerElt) {
       // Out of range logical bit shifts are guaranteed to be zero.
       // Out of range arithmetic bit shifts splat the sign bit.
@@ -47215,7 +47222,16 @@ static SDValue combineVectorShiftImm(SDNode *N, SelectionDAG &DAG,
     }
     return DAG.getNode(Opcode, SDLoc(N), VT, N0.getOperand(0),
                        DAG.getTargetConstant(NewShiftVal, SDLoc(N), MVT::i8));
-  }
+  };
+
+  // (shift (shift X, C2), C1) -> (shift X, (C1 + C2))
+  if (Opcode == N0.getOpcode())
+    return MergeShifts(N0.getOperand(0), ShiftVal, N0.getConstantOperandVal(1));
+
+  // (shl (add X, X), C) -> (shl X, (C + 1))
+  if (Opcode == X86ISD::VSHLI && N0.getOpcode() == ISD::ADD &&
+      N0.getOperand(0) == N0.getOperand(1))
+    return MergeShifts(N0.getOperand(0), ShiftVal, 1);
 
   // We can decode 'whole byte' logical bit shifts as shuffles.
   if (LogicalShift && (ShiftVal % 8) == 0) {
@@ -47262,12 +47278,18 @@ static SDValue combineVectorInsert(SDNode *N, SelectionDAG &DAG,
                                    TargetLowering::DAGCombinerInfo &DCI,
                                    const X86Subtarget &Subtarget) {
   EVT VT = N->getValueType(0);
-  assert(((N->getOpcode() == X86ISD::PINSRB && VT == MVT::v16i8) ||
-          (N->getOpcode() == X86ISD::PINSRW && VT == MVT::v8i16) ||
-          N->getOpcode() == ISD::INSERT_VECTOR_ELT) &&
+  unsigned Opcode = N->getOpcode();
+  assert(((Opcode == X86ISD::PINSRB && VT == MVT::v16i8) ||
+          (Opcode == X86ISD::PINSRW && VT == MVT::v8i16) ||
+          Opcode == ISD::INSERT_VECTOR_ELT) &&
          "Unexpected vector insertion");
 
-  if (N->getOpcode() == X86ISD::PINSRB || N->getOpcode() == X86ISD::PINSRW) {
+  // Fold insert_vector_elt(undef, elt, 0) --> scalar_to_vector(elt).
+  if (Opcode == ISD::INSERT_VECTOR_ELT && N->getOperand(0).isUndef() &&
+      isNullConstant(N->getOperand(2)))
+    return DAG.getNode(ISD::SCALAR_TO_VECTOR, SDLoc(N), VT, N->getOperand(1));
+
+  if (Opcode == X86ISD::PINSRB || Opcode == X86ISD::PINSRW) {
     unsigned NumBitsPerElt = VT.getScalarSizeInBits();
     const TargetLowering &TLI = DAG.getTargetLoweringInfo();
     if (TLI.SimplifyDemandedBits(SDValue(N, 0),
@@ -55982,9 +56004,9 @@ void X86TargetLowering::LowerAsmOperandForConstraint(SDValue Op,
 
     // In any sort of PIC mode addresses need to be computed at runtime by
     // adding in a register or some sort of table lookup.  These can't
-    // be used as immediates. BlockAddresses are fine though.
+    // be used as immediates. BlockAddresses and BasicBlocks are fine though.
     if ((Subtarget.isPICStyleGOT() || Subtarget.isPICStyleStubPIC()) &&
-        !isa<BlockAddressSDNode>(Op))
+        !(isa<BlockAddressSDNode>(Op) || isa<BasicBlockSDNode>(Op)))
       return;
 
     // If we are in non-pic codegen mode, we allow the address of a global (with
@@ -56463,35 +56485,6 @@ X86TargetLowering::getRegForInlineAsmConstraint(const TargetRegisterInfo *TRI,
   }
 
   return Res;
-}
-
-InstructionCost X86TargetLowering::getScalingFactorCost(const DataLayout &DL,
-                                                        const AddrMode &AM,
-                                                        Type *Ty,
-                                                        unsigned AS) const {
-  // Scaling factors are not free at all.
-  // An indexed folded instruction, i.e., inst (reg1, reg2, scale),
-  // will take 2 allocations in the out of order engine instead of 1
-  // for plain addressing mode, i.e. inst (reg1).
-  // E.g.,
-  // vaddps (%rsi,%rdx), %ymm0, %ymm1
-  // Requires two allocations (one for the load, one for the computation)
-  // whereas:
-  // vaddps (%rsi), %ymm0, %ymm1
-  // Requires just 1 allocation, i.e., freeing allocations for other operations
-  // and having less micro operations to execute.
-  //
-  // For some X86 architectures, this is even worse because for instance for
-  // stores, the complex addressing mode forces the instruction to use the
-  // "load" ports instead of the dedicated "store" port.
-  // E.g., on Haswell:
-  // vmovaps %ymm1, (%r8, %rdi) can use port 2 or 3.
-  // vmovaps %ymm1, (%r8) can use port 2, 3, or 7.
-  if (isLegalAddressingMode(DL, AM, Ty, AS))
-    // Scale represents reg2 * scale, thus account for 1
-    // as soon as we use a second register.
-    return AM.Scale != 0;
-  return -1;
 }
 
 bool X86TargetLowering::isIntDivCheap(EVT VT, AttributeList Attr) const {

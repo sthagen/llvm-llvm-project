@@ -2065,6 +2065,11 @@ private:
     if (PreviousNotConst->isSimpleTypeSpecifier())
       return true;
 
+    // type[] a in Java
+    if (Style.Language == FormatStyle::LK_Java &&
+        PreviousNotConst->is(tok::r_square))
+      return true;
+
     // const a = in JavaScript.
     return Style.isJavaScript() && PreviousNotConst->is(tok::kw_const);
   }
@@ -3332,9 +3337,11 @@ bool TokenAnnotator::spaceRequiredBetween(const AnnotatedLine &Line,
   }
 
   // trailing return type 'auto': []() -> auto {}, auto foo() -> auto {}
-  if (Left.is(tok::kw_auto) &&
-      Right.isOneOf(TT_LambdaLBrace, TT_FunctionLBrace))
+  if (Left.is(tok::kw_auto) && Right.isOneOf(TT_LambdaLBrace, TT_FunctionLBrace,
+                                             // function return type 'auto'
+                                             TT_FunctionTypeLParen)) {
     return true;
+  }
 
   // auto{x} auto(x)
   if (Left.is(tok::kw_auto) && Right.isOneOf(tok::l_paren, tok::l_brace))

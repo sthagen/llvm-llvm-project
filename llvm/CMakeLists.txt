@@ -55,7 +55,15 @@ project(LLVM
   VERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}
   LANGUAGES C CXX ASM)
 
-# Must go after project(..)
+if (NOT DEFINED CMAKE_INSTALL_LIBDIR AND DEFINED LLVM_LIBDIR_SUFFIX)
+  # Must go before `include(GNUInstallDirs)`.
+  set(CMAKE_INSTALL_LIBDIR "lib${LLVM_LIBDIR_SUFFIX}")
+endif()
+
+# Must go after `DEFINED LLVM_LIBDIR_SUFFIX` check.
+set(LLVM_LIBDIR_SUFFIX "" CACHE STRING "Define suffix of library directory name (32/64)" )
+
+# Must go after `project(..)`.
 include(GNUInstallDirs)
 
 # This C++ standard is required to build LLVM.
@@ -337,7 +345,11 @@ if (CMAKE_BUILD_TYPE AND
   message(FATAL_ERROR "Invalid value for CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
 endif()
 
-set(LLVM_LIBDIR_SUFFIX "" CACHE STRING "Define suffix of library directory name (32/64)" )
+# LLVM_INSTALL_PACKAGE_DIR needs to be declared prior to adding the tools
+# subdirectory in order to have the value available for llvm-config.
+include(GNUInstallPackageDir)
+set(LLVM_INSTALL_PACKAGE_DIR "${CMAKE_INSTALL_PACKAGEDIR}/llvm" CACHE STRING
+  "Path for CMake subdirectory for LLVM (defaults to '${CMAKE_INSTALL_PACKAGEDIR}/llvm')")
 
 set(LLVM_TOOLS_INSTALL_DIR "${CMAKE_INSTALL_BINDIR}" CACHE STRING
     "Path for binary subdirectory (defaults to '${CMAKE_INSTALL_BINDIR}')")
@@ -1141,6 +1153,9 @@ if( LLVM_INCLUDE_UTILS )
   add_subdirectory(utils/UnicodeData)
   add_subdirectory(utils/yaml-bench)
   add_subdirectory(utils/split-file)
+  if( LLVM_INCLUDE_TESTS )
+    add_subdirectory(utils/unittest)
+  endif()
 else()
   if ( LLVM_INCLUDE_TESTS )
     message(FATAL_ERROR "Including tests when not building utils will not work.
@@ -1185,9 +1200,6 @@ if( LLVM_INCLUDE_TESTS )
   add_subdirectory(utils/lit)
   add_subdirectory(test)
   add_subdirectory(unittests)
-  if( LLVM_INCLUDE_UTILS )
-    add_subdirectory(utils/unittest)
-  endif()
 
   if (WIN32)
     # This utility is used to prevent crashing tests from calling Dr. Watson on
