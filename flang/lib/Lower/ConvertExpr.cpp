@@ -917,13 +917,6 @@ public:
       std::string name = converter.mangleName(*symbol);
       mlir::func::FuncOp func =
           Fortran::lower::getOrDeclareFunction(name, proc, converter);
-      // Abstract results require later rewrite of the function type.
-      // This currently does not happen inside GloalOps, causing LLVM
-      // IR verification failure. This helper is only here to catch these
-      // cases and emit a TODOs for now.
-      if (inInitializer && fir::hasAbstractResult(func.getFunctionType()))
-        TODO(converter.genLocation(symbol->name()),
-             "static description of non trivial procedure bindings");
       funcPtr = builder.create<fir::AddrOfOp>(loc, func.getFunctionType(),
                                               builder.getSymbolRefAttr(name));
     }
@@ -1315,7 +1308,11 @@ public:
   ExtValue genval(const Fortran::evaluate::SetLength<KIND> &x) {
     mlir::Value newLenValue = genunbox(x.right());
     fir::ExtendedValue lhs = gen(x.left());
-    return replaceScalarCharacterLength(lhs, newLenValue);
+    fir::factory::CharacterExprHelper charHelper(builder, getLoc());
+    fir::CharBoxValue temp = charHelper.createCharacterTemp(
+        charHelper.getCharacterType(fir::getBase(lhs).getType()), newLenValue);
+    charHelper.createAssign(temp, lhs);
+    return fir::ExtendedValue{temp};
   }
 
   template <int KIND>

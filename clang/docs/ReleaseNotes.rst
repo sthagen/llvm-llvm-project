@@ -78,6 +78,13 @@ Bug Fixes
 - ``-Wtautological-compare`` missed warnings for tautological comparisons
   involving a negative integer literal. This fixes
   `Issue 42918 <https://github.com/llvm/llvm-project/issues/42918>`_.
+- Fix a crash when generating code coverage information for an
+  ``if consteval`` statement. This fixes
+  `Issue 57377 <https://github.com/llvm/llvm-project/issues/57377>`_.
+- Fix assert that triggers a crash during template name lookup when a type was
+  incomplete but was not also a TagType. This fixes
+  `Issue 57387 <https://github.com/llvm/llvm-project/issues/57387>`_.
+
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -106,6 +113,13 @@ Improvements to Clang's diagnostics
   compile-time value and printed out if the assertion fails.
 - Diagnostics about uninitialized ``constexpr`` varaibles have been improved
   to mention the missing constant initializer.
+- Correctly diagnose a future keyword if it exist as a keyword in the higher
+  language version and specifies in which version it will be a keyword. This
+  supports both c and c++ language.
+
+Non-comprehensive list of changes in this release
+-------------------------------------------------
+
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -128,6 +142,11 @@ New Pragmas in Clang
 
 Attribute Changes in Clang
 --------------------------
+- Added support for ``__attribute__((guard(nocf)))`` and C++-style
+  ``[[clang::guard(nocf)]]``, which is equivalent to ``__declspec(guard(nocf))``
+  when using the MSVC environment. This is to support enabling Windows Control
+  Flow Guard checks with the ability to disable them for specific functions when
+  using the MinGW environment.
 
 Windows Support
 ---------------
@@ -144,7 +163,7 @@ C2x Feature Support
 C++ Language Changes in Clang
 -----------------------------
 
-- Implemented DR692, DR1395 and DR1432. Use the ``-fclang-abi-compat=14`` option
+- Implemented DR692, DR1395 and DR1432. Use the ``-fclang-abi-compat=15`` option
   to get the old partial ordering behavior regarding packs.
 
 C++20 Feature Support
@@ -162,7 +181,16 @@ C++20 Feature Support
   (C++14 [dcl.constexpr]p6 (CWG DR647/CWG DR1358))
 - Correctly defer dependent immediate function invocations until template instantiation.
   This fixes `GH55601 <https://github.com/llvm/llvm-project/issues/55601>`_.
+- Implemented "Conditionally Trivial Special Member Functions" (`P0848 <https://wg21.link/p0848r3>`_).
+  Note: The handling of deleted functions is not yet compliant, as Clang
+  does not implement `DR1496 <https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_defects.html#1496>`_
+  and `DR1734 <https://www.open-std.org/jtc1/sc22/wg21/docs/cwg_defects.html#1734>`_.
+- Class member variables are now in scope when parsing a ``requires`` clause. Fixes
+  `GH55216 <https://github.com/llvm/llvm-project/issues/55216>`_.
 
+- Correctly set expression evaluation context as 'immediate function context' in
+  consteval functions.
+  This fixes `GH51182 <https://github.com/llvm/llvm-project/issues/51182>`
 
 
 C++2b Feature Support
@@ -230,8 +258,15 @@ clang-extdef-mapping
 libclang
 --------
 
+- ...
+
 Static Analyzer
 ---------------
+
+- Removed the deprecated ``-analyzer-store`` and
+  ``-analyzer-opt-analyze-nested-blocks`` analyzer flags.
+  ``scanbuild`` was also updated accordingly.
+  Passing these flags will result in a hard error.
 
 .. _release-notes-ubsan:
 

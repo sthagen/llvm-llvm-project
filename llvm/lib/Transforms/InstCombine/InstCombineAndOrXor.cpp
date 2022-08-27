@@ -1744,6 +1744,72 @@ static Instruction *foldComplexAndOrPatterns(BinaryOperator &I,
   return nullptr;
 }
 
+/// Try to reassociate a pair of binops so that values with one use only are
+/// part of the same instruction. This may enable folds that are limited with
+/// multi-use restrictions and makes it more likely to match other patterns that
+/// are looking for a common operand.
+static Instruction *reassociateForUses(BinaryOperator &BO,
+                                       InstCombinerImpl::BuilderTy &Builder) {
+  Instruction::BinaryOps Opcode = BO.getOpcode();
+  Value *X, *Y, *Z;
+  if (match(&BO, m_c_BinOp(Opcode,
+                           m_OneUse(m_c_BinOp(Opcode, m_Value(X),
+                                              m_OneUse(m_Value(Y)))),
+                           m_OneUse(m_Value(Z))))) {
+    // (X op Y) op Z --> (Y op Z) op X
+    if (!isa<Constant>(X) && !isa<Constant>(Y) && !isa<Constant>(Z) &&
+        !X->hasOneUse()) {
+      Value *YZ = Builder.CreateBinOp(Opcode, Y, Z);
+      return BinaryOperator::Create(Opcode, YZ, X);
+    }
+  }
+
+  return nullptr;
+}
+
+// Match
+// (X + C2) | C
+// (X + C2) ^ C
+// (X + C2) & C
+// and convert to do the bitwise logic first:
+// (X | C) + C2
+// (X ^ C) + C2
+// (X & C) + C2
+// iff bits affected by logic op are lower than last bit affected by math op
+static Instruction *canonicalizeLogicFirst(BinaryOperator &I,
+                                           InstCombiner::BuilderTy &Builder) {
+  Type *Ty = I.getType();
+  Instruction::BinaryOps OpC = I.getOpcode();
+  Value *Op0 = I.getOperand(0);
+  Value *Op1 = I.getOperand(1);
+  Value *X;
+  const APInt *C, *C2;
+
+  if (!(match(Op0, m_OneUse(m_Add(m_Value(X), m_APInt(C2)))) &&
+        match(Op1, m_APInt(C))))
+    return nullptr;
+
+  unsigned Width = Ty->getScalarSizeInBits();
+  unsigned LastOneMath = Width - C2->countTrailingZeros();
+
+  switch (OpC) {
+  case Instruction::And:
+    if (C->countLeadingOnes() < LastOneMath)
+      return nullptr;
+    break;
+  case Instruction::Xor:
+  case Instruction::Or:
+    if (C->countLeadingZeros() < LastOneMath)
+      return nullptr;
+    break;
+  default:
+    llvm_unreachable("Unexpected BinaryOp!");
+  }
+
+  Value *NewBinOp = Builder.CreateBinOp(OpC, X, ConstantInt::get(Ty, *C));
+  return BinaryOperator::CreateAdd(NewBinOp, ConstantInt::get(Ty, *C2));
+}
+
 // FIXME: We use commutative matchers (m_c_*) for some, but not all, matches
 // here. We should standardize that construct where it is needed or choose some
 // other way to ensure that commutated variants of patterns are not missed.
@@ -2203,6 +2269,12 @@ Instruction *InstCombinerImpl::visitAnd(BinaryOperator &I) {
   Value *Start = nullptr, *Step = nullptr;
   if (matchSimpleRecurrence(&I, PN, Start, Step) && DT.dominates(Step, PN))
     return replaceInstUsesWith(I, Builder.CreateAnd(Start, Step));
+
+  if (Instruction *R = reassociateForUses(I, Builder))
+    return R;
+
+  if (Instruction *Canonicalized = canonicalizeLogicFirst(I, Builder))
+    return Canonicalized;
 
   return nullptr;
 }
@@ -3162,6 +3234,12 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
           Builder.CreateOr(C, Builder.CreateAnd(A, B)), D);
   }
 
+  if (Instruction *R = reassociateForUses(I, Builder))
+    return R;
+
+  if (Instruction *Canonicalized = canonicalizeLogicFirst(I, Builder))
+    return Canonicalized;
+
   return nullptr;
 }
 
@@ -3898,6 +3976,12 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
                                        m_ImmConstant(C1))),
                         m_Value(Y))))
     return BinaryOperator::CreateXor(Builder.CreateXor(X, Y), C1);
+
+  if (Instruction *R = reassociateForUses(I, Builder))
+    return R;
+
+  if (Instruction *Canonicalized = canonicalizeLogicFirst(I, Builder))
+    return Canonicalized;
 
   return nullptr;
 }
