@@ -815,6 +815,10 @@ bool UnwrappedLineParser::mightFitOnOneLine(
   auto Length = LastToken->TotalLength;
   if (OpeningBrace) {
     assert(OpeningBrace != Tokens.front().Tok);
+    if (auto Prev = OpeningBrace->Previous;
+        Prev && Prev->TotalLength + ColumnLimit == OpeningBrace->TotalLength) {
+      Length -= ColumnLimit;
+    }
     Length -= OpeningBrace->TokenText.size() + 1;
   }
 
@@ -2206,21 +2210,21 @@ bool UnwrappedLineParser::tryToParseLambda() {
     case tok::l_square:
       parseSquare();
       break;
+    case tok::less:
+      assert(FormatTok->Previous);
+      if (FormatTok->Previous->is(tok::r_square))
+        InTemplateParameterList = true;
+      nextToken();
+      break;
     case tok::kw_auto:
     case tok::kw_class:
     case tok::kw_template:
     case tok::kw_typename:
-      assert(FormatTok->Previous);
-      if (FormatTok->Previous->is(tok::less))
-        InTemplateParameterList = true;
-      nextToken();
-      break;
     case tok::amp:
     case tok::star:
     case tok::kw_const:
     case tok::kw_constexpr:
     case tok::comma:
-    case tok::less:
     case tok::greater:
     case tok::identifier:
     case tok::numeric_constant:
@@ -2602,7 +2606,10 @@ void UnwrappedLineParser::parseUnbracedBody(bool CheckEOF) {
 
   if (Style.InsertBraces && !Line->InPPDirective && !Line->Tokens.empty() &&
       PreprocessorDirectives.empty()) {
-    Tok = getLastNonComment(*Line);
+    assert(!Line->Tokens.empty());
+    Tok = Style.BraceWrapping.AfterControlStatement == FormatStyle::BWACS_Never
+              ? getLastNonComment(*Line)
+              : Line->Tokens.back().Tok;
     assert(Tok);
     if (Tok->BraceCount < 0) {
       assert(Tok->BraceCount == -1);
@@ -3537,7 +3544,8 @@ void UnwrappedLineParser::parseConstraintExpression() {
       switch (FormatTok->Previous->Tok.getKind()) {
       case tok::coloncolon:  // Nested identifier.
       case tok::ampamp:      // Start of a function or variable for the
-      case tok::pipepipe:    // constraint expression.
+      case tok::pipepipe:    // constraint expression. (binary)
+      case tok::exclaim:     // The same as above, but unary.
       case tok::kw_requires: // Initial identifier of a requires clause.
       case tok::equal:       // Initial identifier of a concept declaration.
         break;

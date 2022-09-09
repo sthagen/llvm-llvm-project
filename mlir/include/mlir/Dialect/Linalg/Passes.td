@@ -112,7 +112,7 @@ def LinalgBufferize : Pass<"linalg-bufferize", "func::FuncOp"> {
   ];
 }
 
-def LinalgTiling : Pass<"linalg-tile", "func::FuncOp"> {
+def LinalgTilingPass : Pass<"linalg-tile", "func::FuncOp"> {
   let summary = "Tile operations in the linalg dialect";
   let constructor = "mlir::createLinalgTilingPass()";
   let dependentDialects = [
@@ -250,18 +250,6 @@ def LinalgStrategyVectorizePass
       "Which linalg op within the func is the anchor to latch on.">,
     Option<"vectorizePadding", "vectorize-padding", "bool", "false",
       "Enable vectorization of padding ops.">,
-  ];
-}
-
-def LinalgStrategyEnablePass
-    : Pass<"linalg-strategy-enable-pass", "func::FuncOp"> {
-  let summary = "Configurable pass to enable the application of other "
-    "pattern-based linalg passes.";
-  let constructor = "mlir::createLinalgStrategyEnablePass()";
-  let dependentDialects = ["linalg::LinalgDialect"];
-  let options = [
-    Option<"anchorFuncName", "anchor-func", "std::string", /*default=*/"",
-      "Which func op is the anchor to latch on.">,
   ];
 }
 

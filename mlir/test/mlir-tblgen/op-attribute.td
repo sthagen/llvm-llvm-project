@@ -171,7 +171,6 @@ def AOp : NS_Op<"a_op", []> {
 def Test2_Dialect : Dialect {
   let name = "test2";
   let cppNamespace = "foobar2";
-  let emitAccessorPrefix = kEmitAccessorPrefix_Prefixed;
 }
 def AgetOp : Op<Test2_Dialect, "a_get_op", []> {
   let arguments = (ins
@@ -471,8 +470,8 @@ def OpWithDefaultAndSuccessor : NS_Op<"default_with_succ", []> {
 // DECL: static void build({{.*}}, bool dv_bool_attr, ::mlir::BlockRange succ)
 
 // DEF-LABEL: MixOperandsAndAttrs definitions
-// DEF-DAG: ::mlir::Value MixOperandsAndAttrs::operand()
-// DEF-DAG: ::mlir::Value MixOperandsAndAttrs::otherArg()
+// DEF-DAG: ::mlir::TypedValue<::mlir::FloatType> MixOperandsAndAttrs::operand()
+// DEF-DAG: ::mlir::TypedValue<::mlir::FloatType> MixOperandsAndAttrs::otherArg()
 // DEF-DAG: void MixOperandsAndAttrs::build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState, ::mlir::FloatAttr attr, ::mlir::Value operand, ::mlir::FloatAttr otherAttr, ::mlir::Value otherArg)
 // DEF-DAG: ::llvm::APFloat MixOperandsAndAttrs::attr()
 // DEF-DAG: ::llvm::APFloat MixOperandsAndAttrs::otherAttr()

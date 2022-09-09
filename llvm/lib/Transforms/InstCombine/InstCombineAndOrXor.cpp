@@ -1752,15 +1752,20 @@ static Instruction *reassociateForUses(BinaryOperator &BO,
                                        InstCombinerImpl::BuilderTy &Builder) {
   Instruction::BinaryOps Opcode = BO.getOpcode();
   Value *X, *Y, *Z;
-  if (match(&BO, m_c_BinOp(Opcode,
-                           m_OneUse(m_c_BinOp(Opcode, m_Value(X),
-                                              m_OneUse(m_Value(Y)))),
-                           m_OneUse(m_Value(Z))))) {
-    // (X op Y) op Z --> (Y op Z) op X
-    if (!isa<Constant>(X) && !isa<Constant>(Y) && !isa<Constant>(Z) &&
-        !X->hasOneUse()) {
-      Value *YZ = Builder.CreateBinOp(Opcode, Y, Z);
-      return BinaryOperator::Create(Opcode, YZ, X);
+  if (match(&BO,
+            m_c_BinOp(Opcode, m_OneUse(m_BinOp(Opcode, m_Value(X), m_Value(Y))),
+                      m_OneUse(m_Value(Z))))) {
+    if (!isa<Constant>(X) && !isa<Constant>(Y) && !isa<Constant>(Z)) {
+      // (X op Y) op Z --> (Y op Z) op X
+      if (!X->hasOneUse()) {
+        Value *YZ = Builder.CreateBinOp(Opcode, Y, Z);
+        return BinaryOperator::Create(Opcode, YZ, X);
+      }
+      // (X op Y) op Z --> (X op Z) op Y
+      if (!Y->hasOneUse()) {
+        Value *XZ = Builder.CreateBinOp(Opcode, X, Z);
+        return BinaryOperator::Create(Opcode, XZ, Y);
+      }
     }
   }
 
@@ -2244,18 +2249,20 @@ Instruction *InstCombinerImpl::visitAnd(BinaryOperator &I) {
       A->getType()->isIntOrIntVectorTy(1))
     return SelectInst::Create(A, Op0, Constant::getNullValue(Ty));
 
-  // (iN X s>> (N-1)) & Y --> (X s< 0) ? Y : 0
-  unsigned FullShift = Ty->getScalarSizeInBits() - 1;
-  if (match(&I, m_c_And(m_OneUse(m_AShr(m_Value(X), m_SpecificInt(FullShift))),
-                        m_Value(Y)))) {
+  // (iN X s>> (N-1)) & Y --> (X s< 0) ? Y : 0 -- with optional sext
+  if (match(&I, m_c_And(m_OneUse(m_SExtOrSelf(
+                            m_AShr(m_Value(X), m_APIntAllowUndef(C)))),
+                        m_Value(Y))) &&
+      *C == X->getType()->getScalarSizeInBits() - 1) {
     Value *IsNeg = Builder.CreateIsNeg(X, "isneg");
     return SelectInst::Create(IsNeg, Y, ConstantInt::getNullValue(Ty));
   }
   // If there's a 'not' of the shifted value, swap the select operands:
-  // ~(iN X s>> (N-1)) & Y --> (X s< 0) ? 0 : Y
-  if (match(&I, m_c_And(m_OneUse(m_Not(
-                            m_AShr(m_Value(X), m_SpecificInt(FullShift)))),
-                        m_Value(Y)))) {
+  // ~(iN X s>> (N-1)) & Y --> (X s< 0) ? 0 : Y -- with optional sext
+  if (match(&I, m_c_And(m_OneUse(m_SExtOrSelf(
+                            m_Not(m_AShr(m_Value(X), m_APIntAllowUndef(C))))),
+                        m_Value(Y))) &&
+      *C == X->getType()->getScalarSizeInBits() - 1) {
     Value *IsNeg = Builder.CreateIsNeg(X, "isneg");
     return SelectInst::Create(IsNeg, ConstantInt::getNullValue(Ty), Y);
   }
@@ -3004,6 +3011,19 @@ Instruction *InstCombinerImpl::visitOr(BinaryOperator &I) {
     if ((Op0->hasOneUse() || Op1->hasOneUse()) &&
         (match(Op0, m_Not(m_Specific(A))) || match(Op0, m_Not(m_Specific(B)))))
       return BinaryOperator::CreateNot(Builder.CreateAnd(A, B));
+
+    // Same as above, but peek through an 'and' to the common operand:
+    // ~(A & ?) | (A ^ B) --> ~((A & ?) & B)
+    // ~(B & ?) | (A ^ B) --> ~((B & ?) & A)
+    Instruction *And;
+    if ((Op0->hasOneUse() || Op1->hasOneUse()) &&
+        match(Op0, m_Not(m_CombineAnd(m_Instruction(And),
+                                      m_c_And(m_Specific(A), m_Value())))))
+      return BinaryOperator::CreateNot(Builder.CreateAnd(And, B));
+    if ((Op0->hasOneUse() || Op1->hasOneUse()) &&
+        match(Op0, m_Not(m_CombineAnd(m_Instruction(And),
+                                      m_c_And(m_Specific(B), m_Value())))))
+      return BinaryOperator::CreateNot(Builder.CreateAnd(And, A));
 
     // (~A | C) | (A ^ B) --> ~(A & B) | C
     // (~B | C) | (A ^ B) --> ~(A & B) | C
@@ -3836,6 +3856,21 @@ Instruction *InstCombinerImpl::visitXor(BinaryOperator &I) {
       if (match(Op0, m_Or(m_Value(X), m_APInt(C))) &&
           MaskedValueIsZero(X, *C, 0, &I))
         return BinaryOperator::CreateXor(X, ConstantInt::get(Ty, *C ^ *RHSC));
+
+      // When X is a power-of-two or zero and zero input is poison:
+      // ctlz(i32 X) ^ 31 --> cttz(X)
+      // cttz(i32 X) ^ 31 --> ctlz(X)
+      auto *II = dyn_cast<IntrinsicInst>(Op0);
+      if (II && II->hasOneUse() && *RHSC == Ty->getScalarSizeInBits() - 1) {
+        Intrinsic::ID IID = II->getIntrinsicID();
+        if ((IID == Intrinsic::ctlz || IID == Intrinsic::cttz) &&
+            match(II->getArgOperand(1), m_One()) &&
+            isKnownToBeAPowerOfTwo(II->getArgOperand(0), /*OrZero */ true)) {
+          IID = (IID == Intrinsic::ctlz) ? Intrinsic::cttz : Intrinsic::ctlz;
+          Function *F = Intrinsic::getDeclaration(II->getModule(), IID, Ty);
+          return CallInst::Create(F, {II->getArgOperand(0), Builder.getTrue()});
+        }
+      }
 
       // If RHSC is inverting the remaining bits of shifted X,
       // canonicalize to a 'not' before the shift to help SCEV and codegen:

@@ -115,7 +115,7 @@ static const ARM_MLxEntry ARM_MLxTable[] = {
 ARMBaseInstrInfo::ARMBaseInstrInfo(const ARMSubtarget& STI)
   : ARMGenInstrInfo(ARM::ADJCALLSTACKDOWN, ARM::ADJCALLSTACKUP),
     Subtarget(STI) {
-  for (unsigned i = 0, e = array_lengthof(ARM_MLxTable); i != e; ++i) {
+  for (unsigned i = 0, e = std::size(ARM_MLxTable); i != e; ++i) {
     if (!MLxEntryMap.insert(std::make_pair(ARM_MLxTable[i].MLxOpc, i)).second)
       llvm_unreachable("Duplicated entries?");
     MLxHazardOpcodes.insert(ARM_MLxTable[i].AddSubOpc);
@@ -6899,7 +6899,7 @@ bool ARMPipelinerLoopInfo::tooMuchRegisterPressure(SwingSchedulerDAG &SSD,
   // Learn whether the last use/def of each cross-iteration register is a use or
   // def. If it is a def, RegisterPressure will implicitly increase max pressure
   // and we do not have to add the pressure.
-  for (auto SU : ProposedSchedule)
+  for (auto *SU : ProposedSchedule)
     for (ConstMIBundleOperands OperI(*SU->getInstr()); OperI.isValid();
          ++OperI) {
       auto MO = *OperI;
@@ -6928,7 +6928,7 @@ bool ARMPipelinerLoopInfo::tooMuchRegisterPressure(SwingSchedulerDAG &SSD,
 
   bumpCrossIterationPressure(RPTracker, CrossIterationNeeds);
 
-  for (auto SU : ProposedSchedule) {
+  for (auto *SU : ProposedSchedule) {
     MachineBasicBlock::const_iterator CurInstI = SU->getInstr();
     RPTracker.setPos(std::next(CurInstI));
     RPTracker.recede();

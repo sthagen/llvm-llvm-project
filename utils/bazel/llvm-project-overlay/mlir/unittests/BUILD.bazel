@@ -6,8 +6,9 @@ load("//mlir:tblgen.bzl", "gentbl_cc_library")
 
 package(
     default_visibility = ["//visibility:public"],
-    licenses = ["notice"],
 )
+
+licenses(["notice"])
 
 cc_test(
     name = "ir_tests",
@@ -233,10 +234,6 @@ gentbl_cc_library(
         (
             ["-gen-pass-decls"],
             "TableGen/PassGenTest.h.inc",
-        ),
-        (
-            ["-gen-pass-defs"],
-            "TableGen/PassGenTest.cpp.inc",
         ),
     ],
     tblgen = "//mlir:mlir-tblgen",
