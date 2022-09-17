@@ -5901,7 +5901,7 @@ def err_loader_uninitialized_extern_decl
     : Error<"variable %0 cannot be declared both 'extern' and with the "
             "'loader_uninitialized' attribute">;
 def err_block_extern_cant_init : Error<
-  "'extern' variable cannot have an initializer">;
+  "declaration of block scope identifier with linkage cannot have an initializer">;
 def warn_extern_init : Warning<"'extern' variable has an initializer">,
   InGroup<DiagGroup<"extern-initializer">>;
 def err_variable_object_no_init : Error<
@@ -11636,7 +11636,7 @@ def warn_tcb_enforcement_violation : Warning<
 
 // RISC-V builtin required extension warning
 def err_riscv_builtin_requires_extension : Error<
-  "builtin requires at least one of the following extensions to be enabled: %0">;
+  "builtin requires%select{| at least one of the following extensions to be enabled}0: %1">;
 def err_riscv_builtin_invalid_lmul : Error<
   "LMUL argument must be in the range [0,3] or [5,7]">;
 

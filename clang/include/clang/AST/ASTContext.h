@@ -1366,6 +1366,9 @@ public:
   CanQualType getDecayedType(CanQualType T) const {
     return CanQualType::CreateUnsafe(getDecayedType((QualType) T));
   }
+  /// Return the uniqued reference to a specified decay from the original
+  /// type to the decayed type.
+  QualType getDecayedType(QualType Orig, QualType Decayed) const;
 
   /// Return the uniqued reference to the atomic type for the specified
   /// type.
@@ -1614,10 +1617,11 @@ public:
                                    QualType Wrapped);
 
   QualType getSubstTemplateTypeParmType(const TemplateTypeParmType *Replaced,
-                                        QualType Replacement) const;
-  QualType getSubstTemplateTypeParmPackType(
-                                          const TemplateTypeParmType *Replaced,
-                                            const TemplateArgument &ArgPack);
+                                        QualType Replacement,
+                                        Optional<unsigned> PackIndex) const;
+  QualType
+  getSubstTemplateTypeParmPackType(const TemplateTypeParmType *Replaced,
+                                   const TemplateArgument &ArgPack);
 
   QualType
   getTemplateTypeParmType(unsigned Depth, unsigned Index,
@@ -1633,7 +1637,7 @@ public:
                                          ArrayRef<TemplateArgument> Args) const;
 
   QualType getTemplateSpecializationType(TemplateName T,
-                                         const TemplateArgumentListInfo &Args,
+                                         ArrayRef<TemplateArgumentLoc> Args,
                                          QualType Canon = QualType()) const;
 
   TypeSourceInfo *
@@ -2536,6 +2540,9 @@ public:
   bool hasSameType(const Type *T1, const Type *T2) const {
     return getCanonicalType(T1) == getCanonicalType(T2);
   }
+
+  /// Determine whether the given expressions \p X and \p Y are equivalent.
+  bool hasSameExpr(const Expr *X, const Expr *Y) const;
 
   /// Return this type as a completely-unqualified array type,
   /// capturing the qualifiers in \p Quals.

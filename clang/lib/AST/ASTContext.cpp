@@ -3332,6 +3332,26 @@ QualType ASTContext::getAdjustedType(QualType Orig, QualType New) const {
   return QualType(AT, 0);
 }
 
+QualType ASTContext::getDecayedType(QualType Orig, QualType Decayed) const {
+  llvm::FoldingSetNodeID ID;
+  AdjustedType::Profile(ID, Orig, Decayed);
+  void *InsertPos = nullptr;
+  AdjustedType *AT = AdjustedTypes.FindNodeOrInsertPos(ID, InsertPos);
+  if (AT)
+    return QualType(AT, 0);
+
+  QualType Canonical = getCanonicalType(Decayed);
+
+  // Get the new insert position for the node we care about.
+  AT = AdjustedTypes.FindNodeOrInsertPos(ID, InsertPos);
+  assert(!AT && "Shouldn't be in the map!");
+
+  AT = new (*this, TypeAlignment) DecayedType(Orig, Decayed, Canonical);
+  Types.push_back(AT);
+  AdjustedTypes.InsertNode(AT, InsertPos);
+  return QualType(AT, 0);
+}
+
 QualType ASTContext::getDecayedType(QualType T) const {
   assert((T->isArrayType() || T->isFunctionType()) && "T does not decay");
 
@@ -3352,23 +3372,7 @@ QualType ASTContext::getDecayedType(QualType T) const {
   if (T->isFunctionType())
     Decayed = getPointerType(T);
 
-  llvm::FoldingSetNodeID ID;
-  AdjustedType::Profile(ID, T, Decayed);
-  void *InsertPos = nullptr;
-  AdjustedType *AT = AdjustedTypes.FindNodeOrInsertPos(ID, InsertPos);
-  if (AT)
-    return QualType(AT, 0);
-
-  QualType Canonical = getCanonicalType(Decayed);
-
-  // Get the new insert position for the node we care about.
-  AT = AdjustedTypes.FindNodeOrInsertPos(ID, InsertPos);
-  assert(!AT && "Shouldn't be in the map!");
-
-  AT = new (*this, TypeAlignment) DecayedType(T, Decayed, Canonical);
-  Types.push_back(AT);
-  AdjustedTypes.InsertNode(AT, InsertPos);
-  return QualType(AT, 0);
+  return getDecayedType(T, Decayed);
 }
 
 /// getBlockPointerType - Return the uniqued reference to the type for
@@ -3544,6 +3548,7 @@ QualType ASTContext::getConstantArrayType(QualType EltTy,
   // is instantiation-dependent, this won't be a canonical type either, so fill
   // in the canonical type field.
   QualType Canon;
+  // FIXME: Check below should look for qualifiers behind sugar.
   if (!EltTy.isCanonical() || EltTy.hasLocalQualifiers() || SizeExpr) {
     SplitQualType canonSplit = getCanonicalType(EltTy).split();
     Canon = getConstantArrayType(QualType(canonSplit.Ty, 0), ArySize, nullptr,
@@ -3719,6 +3724,7 @@ QualType ASTContext::getVariableArrayType(QualType EltTy,
   QualType Canon;
 
   // Be sure to pull qualifiers off the element type.
+  // FIXME: Check below should look for qualifiers behind sugar.
   if (!EltTy.isCanonical() || EltTy.hasLocalQualifiers()) {
     SplitQualType canonSplit = getCanonicalType(EltTy).split();
     Canon = getVariableArrayType(QualType(canonSplit.Ty, 0), NumElts, ASM,
@@ -3821,6 +3827,7 @@ QualType ASTContext::getIncompleteArrayType(QualType elementType,
   // qualifiers off the element type.
   QualType canon;
 
+  // FIXME: Check below should look for qualifiers behind sugar.
   if (!elementType.isCanonical() || elementType.hasLocalQualifiers()) {
     SplitQualType canonSplit = getCanonicalType(elementType).split();
     canon = getIncompleteArrayType(QualType(canonSplit.Ty, 0),
@@ -4747,19 +4754,20 @@ QualType ASTContext::getBTFTagAttributedType(const BTFTypeTagAttr *BTFAttr,
 /// Retrieve a substitution-result type.
 QualType
 ASTContext::getSubstTemplateTypeParmType(const TemplateTypeParmType *Parm,
-                                         QualType Replacement) const {
+                                         QualType Replacement,
+                                         Optional<unsigned> PackIndex) const {
   assert(Replacement.isCanonical()
          && "replacement types must always be canonical");
 
   llvm::FoldingSetNodeID ID;
-  SubstTemplateTypeParmType::Profile(ID, Parm, Replacement);
+  SubstTemplateTypeParmType::Profile(ID, Parm, Replacement, PackIndex);
   void *InsertPos = nullptr;
   SubstTemplateTypeParmType *SubstParm
     = SubstTemplateTypeParmTypes.FindNodeOrInsertPos(ID, InsertPos);
 
   if (!SubstParm) {
     SubstParm = new (*this, TypeAlignment)
-      SubstTemplateTypeParmType(Parm, Replacement);
+        SubstTemplateTypeParmType(Parm, Replacement, PackIndex);
     Types.push_back(SubstParm);
     SubstTemplateTypeParmTypes.InsertNode(SubstParm, InsertPos);
   }
@@ -4841,7 +4849,8 @@ ASTContext::getTemplateSpecializationTypeInfo(TemplateName Name,
                                               QualType Underlying) const {
   assert(!Name.getAsDependentTemplateName() &&
          "No dependent template names here!");
-  QualType TST = getTemplateSpecializationType(Name, Args, Underlying);
+  QualType TST =
+      getTemplateSpecializationType(Name, Args.arguments(), Underlying);
 
   TypeSourceInfo *DI = CreateTypeSourceInfo(TST);
   TemplateSpecializationTypeLoc TL =
@@ -4857,14 +4866,14 @@ ASTContext::getTemplateSpecializationTypeInfo(TemplateName Name,
 
 QualType
 ASTContext::getTemplateSpecializationType(TemplateName Template,
-                                          const TemplateArgumentListInfo &Args,
+                                          ArrayRef<TemplateArgumentLoc> Args,
                                           QualType Underlying) const {
   assert(!Template.getAsDependentTemplateName() &&
          "No dependent template names here!");
 
   SmallVector<TemplateArgument, 4> ArgVec;
   ArgVec.reserve(Args.size());
-  for (const TemplateArgumentLoc &Arg : Args.arguments())
+  for (const TemplateArgumentLoc &Arg : Args)
     ArgVec.push_back(Arg.getArgument());
 
   return getTemplateSpecializationType(Template, ArgVec, Underlying);
@@ -4890,8 +4899,8 @@ ASTContext::getTemplateSpecializationType(TemplateName Template,
   if (QualifiedTemplateName *QTN = Template.getAsQualifiedTemplateName())
     Template = QTN->getUnderlyingTemplate();
 
-  bool IsTypeAlias =
-      isa_and_nonnull<TypeAliasTemplateDecl>(Template.getAsTemplateDecl());
+  const auto *TD = Template.getAsTemplateDecl();
+  bool IsTypeAlias = TD && TD->isTypeAlias();
   QualType CanonType;
   if (!Underlying.isNull())
     CanonType = getCanonicalType(Underlying);
@@ -12137,6 +12146,17 @@ unsigned ASTContext::getTargetAddressSpace(LangAS AS) const {
     return (*AddrSpaceMap)[(unsigned)AS];
 }
 
+bool ASTContext::hasSameExpr(const Expr *X, const Expr *Y) const {
+  if (X == Y)
+    return true;
+  if (!X || !Y)
+    return false;
+  llvm::FoldingSetNodeID IDX, IDY;
+  X->Profile(IDX, *this, /*Canonical=*/true);
+  Y->Profile(IDY, *this, /*Canonical=*/true);
+  return IDX == IDY;
+}
+
 // The getCommon* helpers return, for given 'same' X and Y entities given as
 // inputs, another entity which is also the 'same' as the inputs, but which
 // is closer to the canonical form of the inputs, each according to a given
@@ -12145,9 +12165,8 @@ unsigned ASTContext::getTargetAddressSpace(LangAS AS) const {
 // the regular ones.
 
 static Decl *getCommonDecl(Decl *X, Decl *Y) {
-  if (X == Y)
-    return X;
-  assert(declaresSameEntity(X, Y));
+  if (!declaresSameEntity(X, Y))
+    return nullptr;
   for (const Decl *DX : X->redecls()) {
     // If we reach Y before reaching the first decl, that means X is older.
     if (DX == Y)
@@ -12182,9 +12201,17 @@ static TemplateName getCommonTemplateName(ASTContext &Ctx, TemplateName X,
   //        with more sugar. For example one could be a SubstTemplateTemplate*
   //        replacing the other.
   TemplateName CX = Ctx.getCanonicalTemplateName(X);
-  assert(CX.getAsVoidPointer() ==
-         Ctx.getCanonicalTemplateName(Y).getAsVoidPointer());
+  if (CX.getAsVoidPointer() !=
+      Ctx.getCanonicalTemplateName(Y).getAsVoidPointer())
+    return TemplateName();
   return CX;
+}
+
+static TemplateName
+getCommonTemplateNameChecked(ASTContext &Ctx, TemplateName X, TemplateName Y) {
+  TemplateName R = getCommonTemplateName(Ctx, X, Y);
+  assert(R.getAsVoidPointer() != nullptr);
+  return R;
 }
 
 static auto getCommonTypes(ASTContext &Ctx, ArrayRef<QualType> Xs,
@@ -12205,27 +12232,71 @@ static SourceLocation getCommonAttrLoc(const T *X, const T *Y) {
 static TemplateArgument getCommonTemplateArgument(ASTContext &Ctx,
                                                   const TemplateArgument &X,
                                                   const TemplateArgument &Y) {
-  assert(X.getKind() == Y.getKind());
+  if (X.getKind() != Y.getKind())
+    return TemplateArgument();
+
   switch (X.getKind()) {
   case TemplateArgument::ArgKind::Type:
+    if (!Ctx.hasSameType(X.getAsType(), Y.getAsType()))
+      return TemplateArgument();
     return TemplateArgument(
         Ctx.getCommonSugaredType(X.getAsType(), Y.getAsType()));
   case TemplateArgument::ArgKind::NullPtr:
+    if (!Ctx.hasSameType(X.getNullPtrType(), Y.getNullPtrType()))
+      return TemplateArgument();
     return TemplateArgument(
         Ctx.getCommonSugaredType(X.getNullPtrType(), Y.getNullPtrType()),
         /*Unqualified=*/true);
+  case TemplateArgument::ArgKind::Expression:
+    if (!Ctx.hasSameType(X.getAsExpr()->getType(), Y.getAsExpr()->getType()))
+      return TemplateArgument();
+    // FIXME: Try to keep the common sugar.
+    return X;
+  case TemplateArgument::ArgKind::Template: {
+    TemplateName TX = X.getAsTemplate(), TY = Y.getAsTemplate();
+    TemplateName CTN = ::getCommonTemplateName(Ctx, TX, TY);
+    if (!CTN.getAsVoidPointer())
+      return TemplateArgument();
+    return TemplateArgument(CTN);
+  }
+  case TemplateArgument::ArgKind::TemplateExpansion: {
+    TemplateName TX = X.getAsTemplateOrTemplatePattern(),
+                 TY = Y.getAsTemplateOrTemplatePattern();
+    TemplateName CTN = ::getCommonTemplateName(Ctx, TX, TY);
+    if (!CTN.getAsVoidPointer())
+      return TemplateName();
+    auto NExpX = X.getNumTemplateExpansions();
+    assert(NExpX == Y.getNumTemplateExpansions());
+    return TemplateArgument(CTN, NExpX);
+  }
   default:
     // FIXME: Handle the other argument kinds.
     return X;
   }
 }
 
+static bool getCommonTemplateArguments(ASTContext &Ctx,
+                                       SmallVectorImpl<TemplateArgument> &R,
+                                       ArrayRef<TemplateArgument> Xs,
+                                       ArrayRef<TemplateArgument> Ys) {
+  if (Xs.size() != Ys.size())
+    return true;
+  R.resize(Xs.size());
+  for (size_t I = 0; I < R.size(); ++I) {
+    R[I] = getCommonTemplateArgument(Ctx, Xs[I], Ys[I]);
+    if (R[I].isNull())
+      return true;
+  }
+  return false;
+}
+
 static auto getCommonTemplateArguments(ASTContext &Ctx,
-                                       ArrayRef<TemplateArgument> X,
-                                       ArrayRef<TemplateArgument> Y) {
-  SmallVector<TemplateArgument, 8> R(X.size());
-  for (size_t I = 0; I < R.size(); ++I)
-    R[I] = getCommonTemplateArgument(Ctx, X[I], Y[I]);
+                                       ArrayRef<TemplateArgument> Xs,
+                                       ArrayRef<TemplateArgument> Ys) {
+  SmallVector<TemplateArgument, 8> R;
+  bool Different = getCommonTemplateArguments(Ctx, R, Xs, Ys);
+  assert(!Different);
+  (void)Different;
   return R;
 }
 
@@ -12250,12 +12321,25 @@ static QualType getCommonElementType(ASTContext &Ctx, const T *X, const T *Y) {
 }
 
 template <class T>
+static QualType getCommonArrayElementType(ASTContext &Ctx, const T *X,
+                                          Qualifiers &QX, const T *Y,
+                                          Qualifiers &QY) {
+  QualType EX = X->getElementType(), EY = Y->getElementType();
+  QualType R = Ctx.getCommonSugaredType(EX, EY,
+                                        /*Unqualified=*/true);
+  Qualifiers RQ = R.getQualifiers();
+  QX += EX.getQualifiers() - RQ;
+  QY += EY.getQualifiers() - RQ;
+  return R;
+}
+
+template <class T>
 static QualType getCommonPointeeType(ASTContext &Ctx, const T *X, const T *Y) {
   return Ctx.getCommonSugaredType(X->getPointeeType(), Y->getPointeeType());
 }
 
-template <class T> static auto *getCommonSizeExpr(T *X, T *Y) {
-  assert(X->getSizeExpr() == Y->getSizeExpr());
+template <class T> static auto *getCommonSizeExpr(ASTContext &Ctx, T *X, T *Y) {
+  assert(Ctx.hasSameExpr(X->getSizeExpr(), Y->getSizeExpr()));
   return X->getSizeExpr();
 }
 
@@ -12358,7 +12442,9 @@ ASTContext::mergeExceptionSpecs(FunctionProtoType::ExceptionSpecInfo ESI1,
   llvm_unreachable("invalid ExceptionSpecificationType");
 }
 
-static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
+static QualType getCommonNonSugarTypeNode(ASTContext &Ctx, const Type *X,
+                                          Qualifiers &QX, const Type *Y,
+                                          Qualifiers &QY) {
   Type::TypeClass TC = X->getTypeClass();
   assert(TC == Y->getTypeClass());
   switch (TC) {
@@ -12380,7 +12466,6 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
     SUGAR_FREE_TYPE(ObjCInterface)
     SUGAR_FREE_TYPE(Record)
     SUGAR_FREE_TYPE(SubstTemplateTypeParmPack)
-    SUGAR_FREE_TYPE(TemplateTypeParm)
     SUGAR_FREE_TYPE(UnresolvedUsing)
 #undef SUGAR_FREE_TYPE
 #define NON_UNIQUE_TYPE(Class) UNEXPECTED_TYPE(Class, "non-unique")
@@ -12404,23 +12489,24 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
     return Ctx.getAutoType(QualType(), AX->getKeyword(),
                            AX->isInstantiationDependentType(),
                            AX->containsUnexpandedParameterPack(),
-                           getCommonDecl(AX->getTypeConstraintConcept(),
-                                         AY->getTypeConstraintConcept()),
+                           getCommonDeclChecked(AX->getTypeConstraintConcept(),
+                                                AY->getTypeConstraintConcept()),
                            As);
   }
   case Type::IncompleteArray: {
     const auto *AX = cast<IncompleteArrayType>(X),
                *AY = cast<IncompleteArrayType>(Y);
-    return Ctx.getIncompleteArrayType(getCommonElementType(Ctx, AX, AY),
-                                      getCommonSizeModifier(AX, AY),
-                                      getCommonIndexTypeCVRQualifiers(AX, AY));
+    return Ctx.getIncompleteArrayType(
+        getCommonArrayElementType(Ctx, AX, QX, AY, QY),
+        getCommonSizeModifier(AX, AY), getCommonIndexTypeCVRQualifiers(AX, AY));
   }
   case Type::DependentSizedArray: {
     const auto *AX = cast<DependentSizedArrayType>(X),
                *AY = cast<DependentSizedArrayType>(Y);
     return Ctx.getDependentSizedArrayType(
-        getCommonElementType(Ctx, AX, AY), getCommonSizeExpr(AX, AY),
-        getCommonSizeModifier(AX, AY), getCommonIndexTypeCVRQualifiers(AX, AY),
+        getCommonArrayElementType(Ctx, AX, QX, AY, QY),
+        getCommonSizeExpr(Ctx, AX, AY), getCommonSizeModifier(AX, AY),
+        getCommonIndexTypeCVRQualifiers(AX, AY),
         AX->getBracketsRange() == AY->getBracketsRange()
             ? AX->getBracketsRange()
             : SourceRange());
@@ -12429,10 +12515,12 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
     const auto *AX = cast<ConstantArrayType>(X),
                *AY = cast<ConstantArrayType>(Y);
     assert(AX->getSize() == AY->getSize());
-    return Ctx.getConstantArrayType(getCommonElementType(Ctx, AX, AY),
-                                    AX->getSize(), getCommonSizeExpr(AX, AY),
-                                    getCommonSizeModifier(AX, AY),
-                                    getCommonIndexTypeCVRQualifiers(AX, AY));
+    const Expr *SizeExpr = Ctx.hasSameExpr(AX->getSizeExpr(), AY->getSizeExpr())
+                               ? AX->getSizeExpr()
+                               : nullptr;
+    return Ctx.getConstantArrayType(
+        getCommonArrayElementType(Ctx, AX, QX, AY, QY), AX->getSize(), SizeExpr,
+        getCommonSizeModifier(AX, AY), getCommonIndexTypeCVRQualifiers(AX, AY));
   }
   case Type::Atomic: {
     const auto *AX = cast<AtomicType>(X), *AY = cast<AtomicType>(Y);
@@ -12441,7 +12529,7 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
   }
   case Type::Complex: {
     const auto *CX = cast<ComplexType>(X), *CY = cast<ComplexType>(Y);
-    return Ctx.getComplexType(getCommonElementType(Ctx, CX, CY));
+    return Ctx.getComplexType(getCommonArrayElementType(Ctx, CX, QX, CY, QY));
   }
   case Type::Pointer: {
     const auto *PX = cast<PointerType>(X), *PY = cast<PointerType>(Y);
@@ -12468,6 +12556,7 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
   case Type::LValueReference: {
     const auto *PX = cast<LValueReferenceType>(X),
                *PY = cast<LValueReferenceType>(Y);
+    // FIXME: Preserve PointeeTypeAsWritten.
     return Ctx.getLValueReferenceType(getCommonPointeeType(Ctx, PX, PY),
                                       PX->isSpelledAsLValue() ||
                                           PY->isSpelledAsLValue());
@@ -12475,11 +12564,13 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
   case Type::RValueReference: {
     const auto *PX = cast<RValueReferenceType>(X),
                *PY = cast<RValueReferenceType>(Y);
+    // FIXME: Preserve PointeeTypeAsWritten.
     return Ctx.getRValueReferenceType(getCommonPointeeType(Ctx, PX, PY));
   }
   case Type::DependentAddressSpace: {
     const auto *PX = cast<DependentAddressSpaceType>(X),
                *PY = cast<DependentAddressSpaceType>(Y);
+    assert(Ctx.hasSameExpr(PX->getAddrSpaceExpr(), PY->getAddrSpaceExpr()));
     return Ctx.getDependentAddressSpaceType(getCommonPointeeType(Ctx, PX, PY),
                                             PX->getAddrSpaceExpr(),
                                             getCommonAttrLoc(PX, PY));
@@ -12539,8 +12630,8 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
   case Type::DependentSizedMatrix: {
     const auto *MX = cast<DependentSizedMatrixType>(X),
                *MY = cast<DependentSizedMatrixType>(Y);
-    assert(MX->getRowExpr() == MY->getRowExpr());
-    assert(MX->getColumnExpr() == MY->getColumnExpr());
+    assert(Ctx.hasSameExpr(MX->getRowExpr(), MY->getRowExpr()));
+    assert(Ctx.hasSameExpr(MX->getColumnExpr(), MY->getColumnExpr()));
     return Ctx.getDependentSizedMatrixType(
         getCommonElementType(Ctx, MX, MY), MX->getRowExpr(),
         MX->getColumnExpr(), getCommonAttrLoc(MX, MY));
@@ -12562,7 +12653,7 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
     const auto *VX = cast<DependentSizedExtVectorType>(X),
                *VY = cast<DependentSizedExtVectorType>(Y);
     return Ctx.getDependentSizedExtVectorType(getCommonElementType(Ctx, VX, VY),
-                                              getCommonSizeExpr(VX, VY),
+                                              getCommonSizeExpr(Ctx, VX, VY),
                                               getCommonAttrLoc(VX, VY));
   }
   case Type::DependentVector: {
@@ -12570,7 +12661,7 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
                *VY = cast<DependentVectorType>(Y);
     assert(VX->getVectorKind() == VY->getVectorKind());
     return Ctx.getDependentVectorType(
-        getCommonElementType(Ctx, VX, VY), getCommonSizeExpr(VX, VY),
+        getCommonElementType(Ctx, VX, VY), getCommonSizeExpr(Ctx, VX, VY),
         getCommonAttrLoc(VX, VY), VX->getVectorKind());
   }
   case Type::InjectedClassName: {
@@ -12587,9 +12678,9 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
     auto As = getCommonTemplateArguments(Ctx, TX->template_arguments(),
                                          TY->template_arguments());
     return Ctx.getTemplateSpecializationType(
-        ::getCommonTemplateName(Ctx, TX->getTemplateName(),
-                                TY->getTemplateName()),
-        As, TX->getCanonicalTypeInternal());
+        ::getCommonTemplateNameChecked(Ctx, TX->getTemplateName(),
+                                       TY->getTemplateName()),
+        As, X->getCanonicalTypeInternal());
   }
   case Type::DependentName: {
     const auto *NX = cast<DependentNameType>(X),
@@ -12622,6 +12713,7 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
   case Type::PackExpansion: {
     const auto *PX = cast<PackExpansionType>(X),
                *PY = cast<PackExpansionType>(Y);
+    assert(PX->getNumExpansions() == PY->getNumExpansions());
     return Ctx.getPackExpansionType(
         Ctx.getCommonSugaredType(PX->getPattern(), PY->getPattern()),
         PX->getNumExpansions(), false);
@@ -12633,33 +12725,222 @@ static QualType getCommonType(ASTContext &Ctx, const Type *X, const Type *Y) {
                                : &ASTContext::getWritePipeType;
     return (Ctx.*MP)(getCommonElementType(Ctx, PX, PY));
   }
+  case Type::TemplateTypeParm: {
+    const auto *TX = cast<TemplateTypeParmType>(X),
+               *TY = cast<TemplateTypeParmType>(Y);
+    assert(TX->getDepth() == TY->getDepth());
+    assert(TX->getIndex() == TY->getIndex());
+    assert(TX->isParameterPack() == TY->isParameterPack());
+    return Ctx.getTemplateTypeParmType(
+        TX->getDepth(), TX->getIndex(), TX->isParameterPack(),
+        getCommonDecl(TX->getDecl(), TY->getDecl()));
+  }
   }
   llvm_unreachable("Unknown Type Class");
 }
 
-static auto unwrapSugar(SplitQualType &T) {
+static QualType getCommonSugarTypeNode(ASTContext &Ctx, const Type *X,
+                                       const Type *Y,
+                                       SplitQualType Underlying) {
+  Type::TypeClass TC = X->getTypeClass();
+  if (TC != Y->getTypeClass())
+    return QualType();
+  switch (TC) {
+#define UNEXPECTED_TYPE(Class, Kind)                                           \
+  case Type::Class:                                                            \
+    llvm_unreachable("Unexpected " Kind ": " #Class);
+#define TYPE(Class, Base)
+#define DEPENDENT_TYPE(Class, Base) UNEXPECTED_TYPE(Class, "dependent")
+#include "clang/AST/TypeNodes.inc"
+
+#define CANONICAL_TYPE(Class) UNEXPECTED_TYPE(Class, "canonical")
+    CANONICAL_TYPE(Atomic)
+    CANONICAL_TYPE(BitInt)
+    CANONICAL_TYPE(BlockPointer)
+    CANONICAL_TYPE(Builtin)
+    CANONICAL_TYPE(Complex)
+    CANONICAL_TYPE(ConstantArray)
+    CANONICAL_TYPE(ConstantMatrix)
+    CANONICAL_TYPE(Enum)
+    CANONICAL_TYPE(ExtVector)
+    CANONICAL_TYPE(FunctionNoProto)
+    CANONICAL_TYPE(FunctionProto)
+    CANONICAL_TYPE(IncompleteArray)
+    CANONICAL_TYPE(LValueReference)
+    CANONICAL_TYPE(MemberPointer)
+    CANONICAL_TYPE(ObjCInterface)
+    CANONICAL_TYPE(ObjCObject)
+    CANONICAL_TYPE(ObjCObjectPointer)
+    CANONICAL_TYPE(Pipe)
+    CANONICAL_TYPE(Pointer)
+    CANONICAL_TYPE(Record)
+    CANONICAL_TYPE(RValueReference)
+    CANONICAL_TYPE(VariableArray)
+    CANONICAL_TYPE(Vector)
+#undef CANONICAL_TYPE
+
+#undef UNEXPECTED_TYPE
+
+  case Type::Adjusted: {
+    const auto *AX = cast<AdjustedType>(X), *AY = cast<AdjustedType>(Y);
+    QualType OX = AX->getOriginalType(), OY = AY->getOriginalType();
+    if (!Ctx.hasSameType(OX, OY))
+      return QualType();
+    // FIXME: It's inefficient to have to unify the original types.
+    return Ctx.getAdjustedType(Ctx.getCommonSugaredType(OX, OY),
+                               Ctx.getQualifiedType(Underlying));
+  }
+  case Type::Decayed: {
+    const auto *DX = cast<DecayedType>(X), *DY = cast<DecayedType>(Y);
+    QualType OX = DX->getOriginalType(), OY = DY->getOriginalType();
+    if (!Ctx.hasSameType(OX, OY))
+      return QualType();
+    // FIXME: It's inefficient to have to unify the original types.
+    return Ctx.getDecayedType(Ctx.getCommonSugaredType(OX, OY),
+                              Ctx.getQualifiedType(Underlying));
+  }
+  case Type::Attributed: {
+    const auto *AX = cast<AttributedType>(X), *AY = cast<AttributedType>(Y);
+    AttributedType::Kind Kind = AX->getAttrKind();
+    if (Kind != AY->getAttrKind())
+      return QualType();
+    QualType MX = AX->getModifiedType(), MY = AY->getModifiedType();
+    if (!Ctx.hasSameType(MX, MY))
+      return QualType();
+    // FIXME: It's inefficient to have to unify the modified types.
+    return Ctx.getAttributedType(Kind, Ctx.getCommonSugaredType(MX, MY),
+                                 Ctx.getQualifiedType(Underlying));
+  }
+  case Type::BTFTagAttributed: {
+    const auto *BX = cast<BTFTagAttributedType>(X);
+    const BTFTypeTagAttr *AX = BX->getAttr();
+    // The attribute is not uniqued, so just compare the tag.
+    if (AX->getBTFTypeTag() !=
+        cast<BTFTagAttributedType>(Y)->getAttr()->getBTFTypeTag())
+      return QualType();
+    return Ctx.getBTFTagAttributedType(AX, Ctx.getQualifiedType(Underlying));
+  }
+  case Type::Auto: {
+    const auto *AX = cast<AutoType>(X), *AY = cast<AutoType>(Y);
+
+    AutoTypeKeyword KW = AX->getKeyword();
+    if (KW != AY->getKeyword())
+      return QualType();
+
+    ConceptDecl *CD = ::getCommonDecl(AX->getTypeConstraintConcept(),
+                                      AY->getTypeConstraintConcept());
+    SmallVector<TemplateArgument, 8> As;
+    if (CD &&
+        getCommonTemplateArguments(Ctx, As, AX->getTypeConstraintArguments(),
+                                   AY->getTypeConstraintArguments()))
+      CD = nullptr; // The arguments differ, so make it unconstrained.
+
+    // Both auto types can't be dependent, otherwise they wouldn't have been
+    // sugar. This implies they can't contain unexpanded packs either.
+    return Ctx.getAutoType(Ctx.getQualifiedType(Underlying), AX->getKeyword(),
+                           /*IsDependent=*/false, /*IsPack=*/false, CD, As);
+  }
+  case Type::Decltype:
+    return QualType();
+  case Type::DeducedTemplateSpecialization:
+    // FIXME: Try to merge these.
+    return QualType();
+
+  case Type::Elaborated: {
+    const auto *EX = cast<ElaboratedType>(X), *EY = cast<ElaboratedType>(Y);
+    return Ctx.getElaboratedType(
+        ::getCommonTypeKeyword(EX, EY), ::getCommonNNS(Ctx, EX, EY),
+        Ctx.getQualifiedType(Underlying),
+        ::getCommonDecl(EX->getOwnedTagDecl(), EY->getOwnedTagDecl()));
+  }
+  case Type::MacroQualified: {
+    const auto *MX = cast<MacroQualifiedType>(X),
+               *MY = cast<MacroQualifiedType>(Y);
+    const IdentifierInfo *IX = MX->getMacroIdentifier();
+    if (IX != MY->getMacroIdentifier())
+      return QualType();
+    return Ctx.getMacroQualifiedType(Ctx.getQualifiedType(Underlying), IX);
+  }
+  case Type::SubstTemplateTypeParm: {
+    const auto *SX = cast<SubstTemplateTypeParmType>(X),
+               *SY = cast<SubstTemplateTypeParmType>(Y);
+    const TemplateTypeParmType *PX = SX->getReplacedParameter();
+    if (PX != SY->getReplacedParameter())
+      return QualType();
+    auto PackIndex = SX->getPackIndex();
+    if (PackIndex != SY->getPackIndex())
+      return QualType();
+    return Ctx.getSubstTemplateTypeParmType(
+        PX, Ctx.getQualifiedType(Underlying), PackIndex);
+  }
+  case Type::ObjCTypeParam:
+    // FIXME: Try to merge these.
+    return QualType();
+  case Type::Paren:
+    return Ctx.getParenType(Ctx.getQualifiedType(Underlying));
+
+  case Type::TemplateSpecialization: {
+    const auto *TX = cast<TemplateSpecializationType>(X),
+               *TY = cast<TemplateSpecializationType>(Y);
+    TemplateName CTN = ::getCommonTemplateName(Ctx, TX->getTemplateName(),
+                                               TY->getTemplateName());
+    if (!CTN.getAsVoidPointer())
+      return QualType();
+    SmallVector<TemplateArgument, 8> Args;
+    if (getCommonTemplateArguments(Ctx, Args, TX->template_arguments(),
+                                   TY->template_arguments()))
+      return QualType();
+    return Ctx.getTemplateSpecializationType(CTN, Args,
+                                             Ctx.getQualifiedType(Underlying));
+  }
+  case Type::Typedef: {
+    const auto *TX = cast<TypedefType>(X), *TY = cast<TypedefType>(Y);
+    const TypedefNameDecl *CD = ::getCommonDecl(TX->getDecl(), TY->getDecl());
+    if (!CD)
+      return QualType();
+    return Ctx.getTypedefType(CD, Ctx.getQualifiedType(Underlying));
+  }
+  case Type::TypeOf:
+    return Ctx.getTypeOfType(Ctx.getQualifiedType(Underlying));
+  case Type::TypeOfExpr:
+    return QualType();
+
+  case Type::UnaryTransform: {
+    const auto *UX = cast<UnaryTransformType>(X),
+               *UY = cast<UnaryTransformType>(Y);
+    UnaryTransformType::UTTKind KX = UX->getUTTKind();
+    if (KX != UY->getUTTKind())
+      return QualType();
+    QualType BX = UX->getBaseType(), BY = UY->getBaseType();
+    if (!Ctx.hasSameType(BX, BY))
+      return QualType();
+    // FIXME: It's inefficient to have to unify the base types.
+    return Ctx.getUnaryTransformType(Ctx.getCommonSugaredType(BX, BY),
+                                     Ctx.getQualifiedType(Underlying), KX);
+  }
+  case Type::Using: {
+    const auto *UX = cast<UsingType>(X), *UY = cast<UsingType>(Y);
+    const UsingShadowDecl *CD =
+        ::getCommonDecl(UX->getFoundDecl(), UY->getFoundDecl());
+    if (!CD)
+      return QualType();
+    return Ctx.getUsingType(CD, Ctx.getQualifiedType(Underlying));
+  }
+  }
+  llvm_unreachable("Unhandled Type Class");
+}
+
+static auto unwrapSugar(SplitQualType &T, Qualifiers &QTotal) {
   SmallVector<SplitQualType, 8> R;
   while (true) {
+    QTotal += T.Quals;
     QualType NT = T.Ty->getLocallyUnqualifiedSingleStepDesugaredType();
     if (NT == QualType(T.Ty, 0))
       break;
-    SplitQualType SplitNT = NT.split();
-    SplitNT.Quals += T.Quals;
     R.push_back(T);
-    T = SplitNT;
+    T = NT.split();
   }
   return R;
-}
-
-static bool removeDifferentTopLevelSugar(SplitQualType &SX, SplitQualType &SY) {
-  auto Xs = ::unwrapSugar(SX), Ys = ::unwrapSugar(SY);
-  if (SX.Ty != SY.Ty)
-    return true;
-  while (!Xs.empty() && !Ys.empty() && Xs.back().Ty == Ys.back().Ty) {
-    SX = Xs.pop_back_val();
-    SY = Ys.pop_back_val();
-  }
-  return false;
 }
 
 QualType ASTContext::getCommonSugaredType(QualType X, QualType Y,
@@ -12675,15 +12956,52 @@ QualType ASTContext::getCommonSugaredType(QualType X, QualType Y,
   }
 
   SplitQualType SX = X.split(), SY = Y.split();
-  if (::removeDifferentTopLevelSugar(SX, SY))
-    SX.Ty = ::getCommonType(*this, SX.Ty, SY.Ty).getTypePtr();
-
+  Qualifiers QX, QY;
+  // Desugar SX and SY, setting the sugar and qualifiers aside into Xs and Ys,
+  // until we reach their underlying "canonical nodes". Note these are not
+  // necessarily canonical types, as they may still have sugared properties.
+  // QX and QY will store the sum of all qualifiers in Xs and Ys respectively.
+  auto Xs = ::unwrapSugar(SX, QX), Ys = ::unwrapSugar(SY, QY);
+  if (SX.Ty != SY.Ty) {
+    // The canonical nodes differ. Build a common canonical node out of the two,
+    // unifying their sugar. This may recurse back here.
+    SX.Ty =
+        ::getCommonNonSugarTypeNode(*this, SX.Ty, QX, SY.Ty, QY).getTypePtr();
+  } else {
+    // The canonical nodes were identical: We may have desugared too much.
+    // Add any common sugar back in.
+    while (!Xs.empty() && !Ys.empty() && Xs.back().Ty == Ys.back().Ty) {
+      QX -= SX.Quals;
+      QY -= SY.Quals;
+      SX = Xs.pop_back_val();
+      SY = Ys.pop_back_val();
+    }
+  }
   if (Unqualified)
-    SX.Quals = Qualifiers::removeCommonQualifiers(SX.Quals, SY.Quals);
+    QX = Qualifiers::removeCommonQualifiers(QX, QY);
   else
-    assert(SX.Quals == SY.Quals);
+    assert(QX == QY);
 
-  QualType R = getQualifiedType(SX);
+  // Even though the remaining sugar nodes in Xs and Ys differ, some may be
+  // related. Walk up these nodes, unifying them and adding the result.
+  while (!Xs.empty() && !Ys.empty()) {
+    auto Underlying = SplitQualType(
+        SX.Ty, Qualifiers::removeCommonQualifiers(SX.Quals, SY.Quals));
+    SX = Xs.pop_back_val();
+    SY = Ys.pop_back_val();
+    SX.Ty = ::getCommonSugarTypeNode(*this, SX.Ty, SY.Ty, Underlying)
+                .getTypePtrOrNull();
+    // Stop at the first pair which is unrelated.
+    if (!SX.Ty) {
+      SX.Ty = Underlying.Ty;
+      break;
+    }
+    QX -= Underlying.Quals;
+  };
+
+  // Add back the missing accumulated qualifiers, which were stripped off
+  // with the sugar nodes we could not unify.
+  QualType R = getQualifiedType(SX.Ty, QX);
   assert(Unqualified ? hasSameUnqualifiedType(R, X) : hasSameType(R, X));
   return R;
 }

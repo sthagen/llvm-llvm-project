@@ -157,7 +157,7 @@ auto t7(fp3 a, fp4 b) {
     return true ? a : b;
   if (false)
     return a;
-  return N(); // expected-error {{but deduced as 'SARS (*)() throw(Man, Vibrio)' (aka 'void (*)() throw(Man, Vibrio)')}}
+  return N(); // expected-error {{but deduced as 'Virus (*)() throw(Man, Vibrio)' (aka 'void (*)() throw(Man, Vibrio)')}}
 }
 #endif
 
@@ -194,6 +194,11 @@ TEST_AUTO(t16, vector_man, vector_dog) // expected-error {{but deduced as '__att
 using ext_vector_man = Man __attribute__((ext_vector_type(4)));
 using ext_vector_dog = Dog __attribute__((ext_vector_type(4)));
 TEST_AUTO(t17, ext_vector_man, ext_vector_dog) // expected-error {{but deduced as 'Animal __attribute__((ext_vector_type(4)))' (vector of 4 'Animal' values)}}
+
+using TwoDogs = Dog[2];
+using ConstTwoDogsPtr = const TwoDogs*;
+using ConstTwoMenPtr = const Man(*)[2];
+TEST_AUTO(t18, ConstTwoDogsPtr, ConstTwoMenPtr); // expected-error {{but deduced as 'const Animal (*)[2]' (aka 'const int (*)[2]')}}
 
 } // namespace misc
 

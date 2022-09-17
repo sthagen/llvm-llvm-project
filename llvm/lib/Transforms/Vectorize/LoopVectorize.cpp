@@ -498,7 +498,8 @@ public:
   /// and \p MaxLane, times each part between \p MinPart and \p MaxPart,
   /// inclusive. Uses the VPValue operands from \p RepRecipe instead of \p
   /// Instr's operands.
-  void scalarizeInstruction(Instruction *Instr, VPReplicateRecipe *RepRecipe,
+  void scalarizeInstruction(const Instruction *Instr,
+                            VPReplicateRecipe *RepRecipe,
                             const VPIteration &Instance, bool IfPredicateInstr,
                             VPTransformState &State);
 
@@ -2750,7 +2751,7 @@ void InnerLoopVectorizer::vectorizeInterleaveGroup(
   }
 }
 
-void InnerLoopVectorizer::scalarizeInstruction(Instruction *Instr,
+void InnerLoopVectorizer::scalarizeInstruction(const Instruction *Instr,
                                                VPReplicateRecipe *RepRecipe,
                                                const VPIteration &Instance,
                                                bool IfPredicateInstr,
@@ -9464,7 +9465,6 @@ void VPWidenPointerInductionRecipe::execute(VPTransformState &State) {
   NewPointerPhi->addIncoming(ScalarStartValue, VectorPH);
 
   // A pointer induction, performed by using a gep
-  const DataLayout &DL = NewPointerPhi->getModule()->getDataLayout();
   Instruction *InductionLoc = &*State.Builder.GetInsertPoint();
 
   Value *ScalarStepValue = State.get(getOperand(1), VPIteration(0, 0));
@@ -9648,7 +9648,7 @@ void VPReplicateRecipe::execute(VPTransformState &State) {
         all_of(operands(), [](VPValue *Op) { return !Op->getDef(); })) {
       State.ILV->scalarizeInstruction(UI, this, VPIteration(0, 0), IsPredicated,
                                       State);
-      if (!UI->getType()->isVoidTy()) {
+      if (user_begin() != user_end()) {
         for (unsigned Part = 1; Part < State.UF; ++Part)
           State.set(this, State.get(this, VPIteration(0, 0)),
                     VPIteration(Part, 0));
