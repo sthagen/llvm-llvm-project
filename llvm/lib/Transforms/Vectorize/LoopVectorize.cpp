@@ -142,6 +142,7 @@
 #include "llvm/Transforms/Vectorize/LoopVectorizationLegality.h"
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -476,11 +477,6 @@ public:
   /// epilogue vectorization, this function is overriden to handle the more
   /// complex control flow around the loops.
   virtual std::pair<BasicBlock *, Value *> createVectorizedLoopSkeleton();
-
-  /// Widen a single call instruction within the innermost loop.
-  void widenCallInstruction(CallInst &CI, VPValue *Def, VPUser &ArgOperands,
-                            VPTransformState &State,
-                            Intrinsic::ID VectorIntrinsicID);
 
   /// Fix the vectorized code, taking care of header phi's, live-outs, and more.
   void fixVectorizedLoop(VPTransformState &State, VPlan &Plan);
@@ -1478,16 +1474,12 @@ public:
 
   /// Returns true if \p I is a memory instruction with consecutive memory
   /// access that can be widened.
-  bool
-  memoryInstructionCanBeWidened(Instruction *I,
-                                ElementCount VF = ElementCount::getFixed(1));
+  bool memoryInstructionCanBeWidened(Instruction *I, ElementCount VF);
 
   /// Returns true if \p I is a memory instruction in an interleaved-group
   /// of memory accesses that can be vectorized with wide vector loads/stores
   /// and shuffles.
-  bool
-  interleavedAccessCanBeWidened(Instruction *I,
-                                ElementCount VF = ElementCount::getFixed(1));
+  bool interleavedAccessCanBeWidened(Instruction *I, ElementCount VF);
 
   /// Check if \p Instr belongs to any interleaved access group.
   bool isAccessInterleaved(Instruction *Instr) {
@@ -6828,6 +6820,13 @@ void LoopVectorizationCostModel::setCostBasedWideningDecision(ElementCount VF) {
             // Scalarization of fixed length vectors "just works".
             return true;
 
+          // We have dedicated lowering for unpredicated uniform loads and
+          // stores.  Note that even with tail folding we know that at least
+          // one lane is active (i.e. generalized predication is not possible
+          // here), and the logic below depends on this fact.
+          if (!foldTailByMasking())
+            return true;
+
           // For scalable vectors, a uniform memop load is always
           // uniform-by-parts  and we know how to scalarize that.
           if (isa<LoadInst>(I))
@@ -6845,11 +6844,10 @@ void LoopVectorizationCostModel::setCostBasedWideningDecision(ElementCount VF) {
 
         // Load: Scalar load + broadcast
         // Store: Scalar store + isLoopInvariantStoreValue ? 0 : extract
-        // TODO: Avoid replicating loads and stores instead of relying on
-        // instcombine to remove them.
+        // FIXME: This cost is a significant under-estimate for tail folded
+        // memory ops.
         const InstructionCost ScalarizationCost = isLegalToScalarize() ?
           getUniformMemOpCost(&I, VF) : InstructionCost::getInvalid();
-
 
         // Choose better solution for the current VF,  Note that Invalid
         // costs compare as maximumal large.  If both are invalid, we get
@@ -8202,7 +8200,13 @@ VPRecipeBase *VPRecipeBuilder::tryToOptimizeInductionPHI(
     VPValue *Step = vputils::getOrCreateVPValueForSCEVExpr(Plan, II->getStep(),
                                                            *PSE.getSE());
     assert(isa<SCEVConstant>(II->getStep()));
-    return new VPWidenPointerInductionRecipe(Phi, Operands[0], Step, *II);
+    return new VPWidenPointerInductionRecipe(
+        Phi, Operands[0], Step, *II,
+        LoopVectorizationPlanner::getDecisionAndClampRange(
+            [&](ElementCount VF) {
+              return CM.isScalarAfterVectorization(Phi, VF);
+            },
+            Range));
   }
   return nullptr;
 }
@@ -9664,6 +9668,15 @@ void VPReplicateRecipe::execute(VPTransformState &State) {
     return;
   }
 
+  // A store of a loop varying value to a loop invariant address only
+  // needs only the last copy of the store.
+  if (isa<StoreInst>(UI) && !getOperand(1)->getDef()) {
+    auto Lane = VPLane::getLastLaneForVF(State.VF);
+    State.ILV->scalarizeInstruction(UI, this, VPIteration(State.UF - 1, Lane), IsPredicated,
+                                    State);
+    return;
+  }
+
   // Generate scalar instances for all VF lanes of all UF parts.
   assert(!State.VF.isScalable() && "Can't scalarize a scalable vector");
   const unsigned EndLane = State.VF.getKnownMinValue();
@@ -10234,10 +10247,8 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     }
   }
 
-  // Check the function attributes to see if implicit floats are allowed.
-  // FIXME: This check doesn't seem possibly correct -- what if the loop is
-  // an integer loop and the vector instructions selected are purely integer
-  // vector instructions?
+  // Check the function attributes to see if implicit floats or vectors are
+  // allowed.
   if (F->hasFnAttribute(Attribute::NoImplicitFloat)) {
     reportVectorizationFailure(
         "Can't vectorize when the NoImplicitFloat attribute is used",

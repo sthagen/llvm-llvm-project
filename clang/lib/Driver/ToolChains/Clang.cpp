@@ -2194,6 +2194,10 @@ void Clang::AddRISCVTargetArgs(const ArgList &Args,
 
   SetRISCVSmallDataLimit(getToolChain(), Args, CmdArgs);
 
+  if (!Args.hasFlag(options::OPT_mimplicit_float,
+                    options::OPT_mno_implicit_float, true))
+    CmdArgs.push_back("-no-implicit-float");
+
   if (const Arg *A = Args.getLastArg(options::OPT_mtune_EQ)) {
     CmdArgs.push_back("-tune-cpu");
     CmdArgs.push_back(A->getValue());
@@ -3529,12 +3533,14 @@ static void RenderHLSLOptions(const ArgList &Args, ArgStringList &CmdArgs,
                                          options::OPT_disable_llvm_passes,
                                          options::OPT_fnative_half_type,
                                          options::OPT_hlsl_entrypoint};
-
+  if (!types::isHLSL(InputType))
+    return;
   for (const auto &Arg : ForwardedArguments)
     if (const auto *A = Args.getLastArg(Arg))
       A->renderAsInput(Args, CmdArgs);
   // Add the default headers if dxc_no_stdinc is not set.
-  if (!Args.hasArg(options::OPT_dxc_no_stdinc))
+  if (!Args.hasArg(options::OPT_dxc_no_stdinc) &&
+      !Args.hasArg(options::OPT_nostdinc))
     CmdArgs.push_back("-finclude-default-header");
 }
 
@@ -4383,6 +4389,11 @@ static void renderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
+  if (const Arg *A = Args.getLastArg(options::OPT_gsrc_hash_EQ)) {
+    StringRef v = A->getValue();
+    CmdArgs.push_back(Args.MakeArgString("-gsrc-hash=" + v));
+  }
+
   if (Args.hasFlag(options::OPT_fdebug_ranges_base_address,
                    options::OPT_fno_debug_ranges_base_address, false)) {
     CmdArgs.push_back("-fdebug-ranges-base-address");
@@ -4493,7 +4504,7 @@ static void ProcessVSRuntimeLibrary(const ArgList &Args,
     llvm_unreachable("Unexpected option ID.");
   }
 
-  if (Args.hasArg(options::OPT__SLASH_Zl)) {
+  if (Args.hasArg(options::OPT_fms_omit_default_lib)) {
     CmdArgs.push_back("-D_VC_NODEFAULTLIB");
   } else {
     CmdArgs.push_back(FlagForCRT.data());
@@ -5461,17 +5472,27 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -fasynchronous-unwind-tables and -fnon-call-exceptions interact in more
   // complicated ways.
   auto SanitizeArgs = TC.getSanitizerArgs(Args);
-  bool AsyncUnwindTables = Args.hasFlag(
-      options::OPT_fasynchronous_unwind_tables,
-      options::OPT_fno_asynchronous_unwind_tables,
-      (TC.IsUnwindTablesDefault(Args) || SanitizeArgs.needsUnwindTables()) &&
-          !Freestanding);
-  bool UnwindTables = Args.hasFlag(options::OPT_funwind_tables,
-                                   options::OPT_fno_unwind_tables, false);
-  if (AsyncUnwindTables)
-    CmdArgs.push_back("-funwind-tables=2");
-  else if (UnwindTables)
+  auto UnwindTables = TC.getDefaultUnwindTableLevel(Args);
+
+  const bool HasSyncUnwindTables = Args.hasFlag(
+      options::OPT_funwind_tables, options::OPT_fno_unwind_tables, false);
+  if (Args.hasFlag(options::OPT_fasynchronous_unwind_tables,
+                   options::OPT_fno_asynchronous_unwind_tables,
+                   SanitizeArgs.needsUnwindTables()) &&
+      !Freestanding)
+    UnwindTables = ToolChain::UnwindTableLevel::Asynchronous;
+  else if (HasSyncUnwindTables)
+    UnwindTables = ToolChain::UnwindTableLevel::Synchronous;
+  else if (Args.hasFlag(options::OPT_fno_unwind_tables,
+                   options::OPT_fno_asynchronous_unwind_tables,
+                   options::OPT_funwind_tables, false) || Freestanding)
+    UnwindTables = ToolChain::UnwindTableLevel::None;
+
+
+  if (UnwindTables == ToolChain::UnwindTableLevel::Synchronous)
     CmdArgs.push_back("-funwind-tables=1");
+  else if (UnwindTables == ToolChain::UnwindTableLevel::Asynchronous)
+    CmdArgs.push_back("-funwind-tables=2");
 
   // Prepare `-aux-target-cpu` and `-aux-target-feature` unless
   // `--gpu-use-aux-triple-only` is specified.
@@ -6380,8 +6401,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   RenderOpenCLOptions(Args, CmdArgs, InputType);
 
   // Forward hlsl options to -cc1
-  if (C.getDriver().IsDXCMode())
-    RenderHLSLOptions(Args, CmdArgs, InputType);
+  RenderHLSLOptions(Args, CmdArgs, InputType);
 
   if (IsHIP) {
     if (Args.hasFlag(options::OPT_fhip_new_launch_api,
@@ -6484,6 +6504,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       types::isCXX(InputType)) {
     CmdArgs.push_back("-fcoroutines-ts");
   }
+
+  if (Args.hasFlag(options::OPT_fcoro_aligned_allocation,
+                   options::OPT_fno_coro_aligned_allocation, false) &&
+      types::isCXX(InputType))
+    CmdArgs.push_back("-fcoro-aligned-allocation");
 
   Args.AddLastArg(CmdArgs, options::OPT_fdouble_square_bracket_attributes,
                   options::OPT_fno_double_square_bracket_attributes);
@@ -7293,7 +7318,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-faddrsig");
 
   if ((Triple.isOSBinFormatELF() || Triple.isOSBinFormatMachO()) &&
-      (EH || AsyncUnwindTables || UnwindTables ||
+      (EH || UnwindTables != ToolChain::UnwindTableLevel::None ||
        DebugInfoKind != codegenoptions::NoDebugInfo))
     CmdArgs.push_back("-D__GCC_HAVE_DWARF2_CFI_ASM=1");
 

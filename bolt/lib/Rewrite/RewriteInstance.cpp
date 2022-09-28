@@ -1429,10 +1429,17 @@ void RewriteInstance::adjustFunctionBoundaries() {
         Function.hasRestoredNameRegex(".*\\.cold(\\.[0-9]+)?");
     if (FragName) {
       static bool PrintedWarning = false;
-      if (BC->HasRelocations && !PrintedWarning) {
-        errs() << "BOLT-WARNING: split function detected on input : "
-               << *FragName << ". The support is limited in relocation mode.\n";
+      if (!PrintedWarning) {
         PrintedWarning = true;
+        errs() << "BOLT-WARNING: split function detected on input : "
+               << *FragName;
+        if (BC->HasRelocations)
+          errs() << ". The support is limited in relocation mode";
+        if (opts::Lite) {
+          opts::Lite = false;
+          errs() << "\nBOLT-WARNING: disabling lite mode (-lite) when split "
+                 << "functions are present\n";
+        }
       }
       Function.IsFragment = true;
     }
@@ -2836,6 +2843,11 @@ void RewriteInstance::processProfileData() {
 
   if (!opts::SaveProfile.empty()) {
     YAMLProfileWriter PW(opts::SaveProfile);
+    PW.writeProfile(*this);
+  }
+  if (opts::AggregateOnly &&
+      opts::ProfileFormat == opts::ProfileFormatKind::PF_YAML) {
+    YAMLProfileWriter PW(opts::OutputFilename);
     PW.writeProfile(*this);
   }
 
@@ -5321,6 +5333,7 @@ void RewriteInstance::rewriteFile() {
       assert(llvm::all_of(Function->getLayout().getSplitFragments(),
                           HasNoAddress) &&
              "Some split fragments have an address while others do not");
+      (void)HasNoAddress;
       continue;
     }
 

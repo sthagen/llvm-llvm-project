@@ -1899,6 +1899,8 @@ const char* HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case HexagonISD::VASL:          return "HexagonISD::VASL";
   case HexagonISD::VASR:          return "HexagonISD::VASR";
   case HexagonISD::VLSR:          return "HexagonISD::VLSR";
+  case HexagonISD::SSAT:          return "HexagonISD::SSAT";
+  case HexagonISD::USAT:          return "HexagonISD::USAT";
   case HexagonISD::VEXTRACTW:     return "HexagonISD::VEXTRACTW";
   case HexagonISD::VINSERTW0:     return "HexagonISD::VINSERTW0";
   case HexagonISD::VROR:          return "HexagonISD::VROR";
@@ -1912,12 +1914,11 @@ const char* HexagonTargetLowering::getTargetNodeName(unsigned Opcode) const {
   case HexagonISD::QCAT:          return "HexagonISD::QCAT";
   case HexagonISD::QTRUE:         return "HexagonISD::QTRUE";
   case HexagonISD::QFALSE:        return "HexagonISD::QFALSE";
+  case HexagonISD::TL_EXTEND:     return "HexagonISD::TL_EXTEND";
+  case HexagonISD::TL_TRUNCATE:   return "HexagonISD::TL_TRUNCATE";
   case HexagonISD::TYPECAST:      return "HexagonISD::TYPECAST";
   case HexagonISD::VALIGN:        return "HexagonISD::VALIGN";
   case HexagonISD::VALIGNADDR:    return "HexagonISD::VALIGNADDR";
-  case HexagonISD::VPACKL:        return "HexagonISD::VPACKL";
-  case HexagonISD::VUNPACK:       return "HexagonISD::VUNPACK";
-  case HexagonISD::VUNPACKU:      return "HexagonISD::VUNPACKU";
   case HexagonISD::ISEL:          return "HexagonISD::ISEL";
   case HexagonISD::OP_END:        break;
   }
@@ -2353,12 +2354,6 @@ HexagonTargetLowering::LowerVECTOR_SHIFT(SDValue Op, SelectionDAG &DAG) const {
   if (SDValue S = getVectorShiftByInt(Op, DAG))
     Res = S;
 
-  MVT ResTy = ty(Res);
-  if (ResTy.getVectorElementType() != MVT::i8)
-    return Res;
-
-  // For shifts of i8, extend the inputs to i16, then truncate back to i8.
-  assert(ResTy.getVectorElementType() == MVT::i8);
   unsigned Opc = Res.getOpcode();
   switch (Opc) {
   case HexagonISD::VASR:
@@ -2370,6 +2365,12 @@ HexagonTargetLowering::LowerVECTOR_SHIFT(SDValue Op, SelectionDAG &DAG) const {
     return SDValue();
   }
 
+  MVT ResTy = ty(Res);
+  if (ResTy.getVectorElementType() != MVT::i8)
+    return Res;
+
+  // For shifts of i8, extend the inputs to i16, then truncate back to i8.
+  assert(ResTy.getVectorElementType() == MVT::i8);
   SDValue Val = Res.getOperand(0), Amt = Res.getOperand(1);
 
   auto ShiftPartI8 = [&dl, &DAG, this](unsigned Opc, SDValue V, SDValue A) {
@@ -3290,13 +3291,25 @@ HexagonTargetLowering::LowerOperationWrapper(SDNode *N,
       return;
   }
 
-  // We are only custom-lowering stores to verify the alignment of the
-  // address if it is a compile-time constant. Since a store can be modified
-  // during type-legalization (the value being stored may need legalization),
-  // return empty Results here to indicate that we don't really make any
-  // changes in the custom lowering.
-  if (N->getOpcode() != ISD::STORE)
-    return TargetLowering::LowerOperationWrapper(N, Results, DAG);
+  SDValue Op(N, 0);
+  unsigned Opc = N->getOpcode();
+
+  switch (Opc) {
+    case HexagonISD::SSAT:
+    case HexagonISD::USAT:
+      Results.push_back(opJoin(SplitVectorOp(Op, DAG), SDLoc(Op), DAG));
+      break;
+    case ISD::STORE:
+      // We are only custom-lowering stores to verify the alignment of the
+      // address if it is a compile-time constant. Since a store can be
+      // modified during type-legalization (the value being stored may need
+      // legalization), return empty Results here to indicate that we don't
+      // really make any changes in the custom lowering.
+      return;
+    default:
+      TargetLowering::LowerOperationWrapper(N, Results, DAG);
+      break;
+  }
 }
 
 void

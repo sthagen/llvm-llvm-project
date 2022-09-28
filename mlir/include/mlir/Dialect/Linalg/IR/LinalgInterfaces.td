@@ -206,7 +206,8 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
       /*args=*/(ins "SmallVectorImpl<unsigned> &":$res),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        return getDimsOfType($_op, getParallelIteratorTypeName(), res);
+        return findPositionsOfType($_op.iterator_types(),
+                                   getParallelIteratorTypeName(), res);
       }]
     >,
     InterfaceMethod<
@@ -231,7 +232,8 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
       /*args=*/(ins "SmallVectorImpl<unsigned> &":$res),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        return getDimsOfType($_op, getReductionIteratorTypeName(), res);
+        return findPositionsOfType($_op.iterator_types(),
+                                   getReductionIteratorTypeName(), res);
       }]
     >,
     InterfaceMethod<
@@ -256,7 +258,8 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
       /*args=*/(ins "SmallVectorImpl<unsigned> &":$res),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        return getDimsOfType($_op.getOperation(), getWindowIteratorTypeName(), res);
+        return findPositionsOfType($_op.iterator_types(),
+                                   getWindowIteratorTypeName(), res);
       }]
     >,
     InterfaceMethod<
@@ -490,6 +493,19 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Return iterator types in the current operation.
+      }],
+      /*retTy=*/"SmallVector<StringRef>",
+      /*methodName=*/"getIteratorTypesArray",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        auto range = $_op.iterator_types().template getAsValueRange<StringAttr>();
+        return {range.begin(), range.end()};
+      }]
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Return true if the indexing map is depending on the current op instance.
         This means that the indexing map is dynamically synthesized by using the
         op instance's concrete attributes, instead of being static for all
@@ -566,6 +582,21 @@ def LinalgStructuredInterface : OpInterface<"LinalgOp"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/""
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Return op operands that have a corresponding argument in the basic block.
+        By default, the block should have an argument for each operand, but there
+        are expection. For example, in `map` output operand isn't used in
+        the block.
+      }],
+      /*retTy=*/"OpOperandVector",
+      /*methodName=*/"getOpOperandsMatchingBBargs",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return $_op.getInputAndOutputOperands();
+      }]
     >,
     //===------------------------------------------------------------------===//
     // Linalg generalization hooks.
