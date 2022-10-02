@@ -35,26 +35,6 @@ namespace {
 // Helper methods.
 //===----------------------------------------------------------------------===//
 
-/// Reorders stored dimension to original dimension.
-static unsigned toOrig(const SparseTensorEncodingAttr &enc, unsigned i) {
-  auto order = enc.getDimOrdering();
-  if (order) {
-    assert(order.isPermutation());
-    return order.getDimPosition(i);
-  }
-  return i;
-}
-
-/// Reorders original dimension to stored dimension.
-static unsigned toStored(const SparseTensorEncodingAttr &enc, unsigned i) {
-  auto order = enc.getDimOrdering();
-  if (order) {
-    assert(order.isPermutation());
-    return order.getPermutedPosition(i);
-  }
-  return i;
-}
-
 /// Flatten a list of operands that may contain sparse tensors.
 static void flattenOperands(ValueRange operands,
                             SmallVectorImpl<Value> &flattened) {
@@ -79,7 +59,7 @@ static void flattenOperands(ValueRange operands,
 /// Gets the dimension size for the given sparse tensor at the given dim.
 /// Returns None if no sparse encoding is attached to the tensor type.
 static Optional<Value> sizeFromTensorAtDim(OpBuilder &rewriter, Location loc,
-                                           ShapedType tensorTp,
+                                           RankedTensorType tensorTp,
                                            Value adaptedValue, unsigned dim) {
   auto enc = getSparseTensorEncoding(tensorTp);
   if (!enc)
@@ -95,9 +75,8 @@ static Optional<Value> sizeFromTensorAtDim(OpBuilder &rewriter, Location loc,
   // accounting for the reordering applied to the sparse storage.
   auto tuple =
       llvm::cast<UnrealizedConversionCastOp>(adaptedValue.getDefiningOp());
-  return rewriter
-      .create<memref::LoadOp>(loc, tuple.getInputs().front(),
-                              constantIndex(rewriter, loc, toStored(enc, dim)))
+  Value idx = constantIndex(rewriter, loc, toStoredDim(tensorTp, dim));
+  return rewriter.create<memref::LoadOp>(loc, tuple.getInputs().front(), idx)
       .getResult();
 }
 
@@ -243,7 +222,7 @@ static void createAllocFields(OpBuilder &builder, Location loc, Type type,
   // Per-dimension storage.
   for (unsigned r = 0; r < rank; r++) {
     // Get the original dimension (ro) for the current stored dimension.
-    unsigned ro = toOrig(enc, r);
+    unsigned ro = toOrigDim(rType, r);
     builder.create<memref::StoreOp>(loc, sizes[ro], dimSizes,
                                     constantIndex(builder, loc, r));
     linear = builder.create<arith::MulIOp>(loc, linear, sizes[ro]);
@@ -490,10 +469,7 @@ public:
     // Determine the size for access expansion (always the innermost stored
     // dimension size, translated back to original dimension). Note that we
     // recursively rewrite the new DimOp on the **original** tensor.
-    auto enc = getSparseTensorEncoding(srcType);
-    unsigned innerDim = srcType.getRank() - 1;
-    if (AffineMap p = enc.getDimOrdering())
-      innerDim = p.getDimPosition(innerDim);
+    unsigned innerDim = toOrigDim(srcType, srcType.getRank() - 1);
     auto sz = sizeFromTensorAtDim(rewriter, loc, srcType, adaptor.getTensor(),
                                   innerDim);
     assert(sz); // This for sure is a sparse tensor
@@ -588,61 +564,6 @@ public:
   }
 };
 
-/// Sparse codegen rule for the push_back operator.
-class SparsePushBackConverter : public OpConversionPattern<PushBackOp> {
-public:
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(PushBackOp op, OpAdaptor adaptor,
-                  ConversionPatternRewriter &rewriter) const override {
-    // Lower push_back(buffer, value) to:
-    // if (size(buffer) >= capacity(buffer))
-    //    new_capacity = capacity(buffer)*2
-    //    new_buffer = realloc(buffer, new_capacity)
-    // buffer = new_buffer
-    // store(buffer, value)
-    // size(buffer)++
-    Location loc = op->getLoc();
-    Value c0 = constantIndex(rewriter, loc, 0);
-    Value buffer = adaptor.getInBuffer();
-    Value capacity = rewriter.create<memref::DimOp>(loc, buffer, c0);
-    Value idx = constantIndex(rewriter, loc, op.getIdx().getZExtValue());
-    Value bufferSizes = adaptor.getBufferSizes();
-    Value size = rewriter.create<memref::LoadOp>(loc, bufferSizes, idx);
-    Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge,
-                                                size, capacity);
-    Value value = adaptor.getValue();
-    auto bufferType =
-        MemRefType::get({ShapedType::kDynamicSize}, value.getType());
-    scf::IfOp ifOp = rewriter.create<scf::IfOp>(loc, bufferType, cond,
-                                                /*else=*/true);
-    // True branch.
-    rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
-    Value c2 = constantIndex(rewriter, loc, 2);
-    capacity = rewriter.create<arith::MulIOp>(loc, capacity, c2);
-    Value newBuffer =
-        rewriter.create<memref::ReallocOp>(loc, bufferType, buffer, capacity);
-    rewriter.create<scf::YieldOp>(loc, newBuffer);
-
-    // False branch.
-    rewriter.setInsertionPointToStart(&ifOp.getElseRegion().front());
-    rewriter.create<scf::YieldOp>(loc, buffer);
-
-    // Add the value to the end of the buffer.
-    rewriter.setInsertionPointAfter(ifOp);
-    buffer = ifOp.getResult(0);
-    rewriter.create<memref::StoreOp>(loc, value, buffer, size);
-
-    // Increment the size of the buffer by 1.
-    Value c1 = constantIndex(rewriter, loc, 1);
-    size = rewriter.create<arith::AddIOp>(loc, size, c1);
-    rewriter.create<memref::StoreOp>(loc, size, bufferSizes, idx);
-
-    rewriter.replaceOp(op, buffer);
-    return success();
-  }
-};
-
 /// Base class for getter-like operations, e.g., to_indices, to_pointers.
 template <typename SourceOp, typename Base>
 class SparseGetterOpConverter : public OpConversionPattern<SourceOp> {
@@ -727,7 +648,6 @@ void mlir::populateSparseTensorCodegenPatterns(TypeConverter &typeConverter,
                SparseCastConverter, SparseTensorAllocConverter,
                SparseTensorDeallocConverter, SparseTensorLoadConverter,
                SparseExpandConverter, SparseCompressConverter,
-               SparsePushBackConverter, SparseToPointersConverter,
-               SparseToIndicesConverter, SparseToValuesConverter>(
-      typeConverter, patterns.getContext());
+               SparseToPointersConverter, SparseToIndicesConverter,
+               SparseToValuesConverter>(typeConverter, patterns.getContext());
 }
