@@ -566,8 +566,16 @@ static LogicalResult vectorizeStaticLinalgOpPrecondition(linalg::LinalgOp op) {
       return failure();
     }
   }
-  if (isElementwise(op))
+  if (isElementwise(op)) {
+    // Some operations in the body cannot be vectorized.
+    for (Operation &payloadOp : *op.getBlock()) {
+      if (isa<tensor::ExtractOp>(payloadOp)) {
+        LDBG("precondition failed: `tensor.extract` not vectorizable");
+        return failure();
+      }
+    }
     return success();
+  }
   // TODO: isaConvolutionOpInterface that can also infer from generic features.
   // But we will still need stride/dilation attributes that will be annoying to
   // reverse-engineer...
@@ -587,7 +595,7 @@ static LogicalResult vectorizeStaticLinalgOpPrecondition(linalg::LinalgOp op) {
   return success();
 }
 
-static LogicalResult vectorizeLinalgOpPrecondition(LinalgOp linalgOp) {
+LogicalResult mlir::linalg::vectorizeLinalgOpPrecondition(LinalgOp linalgOp) {
   // All types must be static shape to go to vector.
   if (linalgOp.hasDynamicShape()) {
     LDBG("precondition failed: dynamic shape");
@@ -680,7 +688,7 @@ static SmallVector<Value> ofrToIndexValues(OpBuilder &builder, Location loc,
   return result;
 }
 
-/// Rewrite a tensor::PadOp into a sequence of InitTensorOp, FillOp and
+/// Rewrite a tensor::PadOp into a sequence of EmptyOp, FillOp and
 /// InsertSliceOp. For now, only constant padding values are supported.
 /// If there is enough static type information, TransferReadOps and
 /// TransferWriteOps may be generated instead of InsertSliceOps.
@@ -1334,9 +1342,9 @@ struct Conv1DGenerator : public StructuredGenerator<LinalgOp> {
     // Determine whether `linalgOp` can be generated with this generator
     if (linalgOp.getNumInputs() != 2 || linalgOp.getNumOutputs() != 1)
       return;
-    lhsShaped = linalgOp.inputs()[0];
-    rhsShaped = linalgOp.inputs()[1];
-    resShaped = linalgOp.outputs()[0];
+    lhsShaped = linalgOp.getInputs()[0];
+    rhsShaped = linalgOp.getInputs()[1];
+    resShaped = linalgOp.getOutputs()[0];
     lhsShapedType = lhsShaped.getType().dyn_cast<ShapedType>();
     rhsShapedType = rhsShaped.getType().dyn_cast<ShapedType>();
     resShapedType = resShaped.getType().dyn_cast<ShapedType>();

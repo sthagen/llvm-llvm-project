@@ -137,6 +137,7 @@ add_gen_header(
     .llvm-libc-types.struct_sigaction
     .llvm-libc-types.__sighandler_t
     .llvm-libc-types.sigset_t
+    .llvm-libc-types.pid_t
 )
 
 add_gen_header(
@@ -157,6 +158,7 @@ add_gen_header(
   GEN_HDR stdlib.h
   DEPENDS
     .llvm_libc_common_h
+    .llvm-libc-macros.stdlib_macros
     .llvm-libc-types.__bsearchcompare_t
     .llvm-libc-types.__qsortcompare_t
     .llvm-libc-types.div_t
@@ -174,6 +176,9 @@ add_gen_header(
     .llvm_libc_common_h
     .llvm-libc-macros.file_seek_macros
     .llvm-libc-macros.unistd_macros
+    .llvm-libc-types.__exec_argv_t
+    .llvm-libc-types.__exec_envp_t
+    .llvm-libc-types.off_t
     .llvm-libc-types.pid_t
     .llvm-libc-types.size_t
     .llvm-libc-types.ssize_t
@@ -204,6 +209,7 @@ add_gen_header(
   DEPENDS
     .llvm_libc_common_h
     .llvm-libc-types.cpu_set_t
+    .llvm-libc-macros.sched_macros
 )
 
 # TODO: Not all platforms will have a include/sys directory. Add the sys
@@ -271,6 +277,17 @@ add_gen_header(
   DEPENDS
     .llvm_libc_common_h
     .llvm-libc-types.struct_utsname
+)
+
+add_gen_header(
+  sys_wait
+  DEF_FILE sys/wait.h.def
+  GEN_HDR sys/wait.h
+  DEPENDS
+    .llvm_libc_common_h
+    .llvm-libc-macros.sys_wait_macros
+    .llvm-libc-types.pid_t
+    .llvm-libc-types.struct_rusage
 )
 
 if(NOT LLVM_LIBC_FULL_BUILD)

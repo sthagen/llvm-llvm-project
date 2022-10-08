@@ -45,6 +45,9 @@ def ConstStructDirentPtrPtr : ConstType<StructDirentPtrPtr>;
 def StructTimeSpec : NamedType<"struct timespec">;
 def StructTimeSpecPtr : PtrType<StructTimeSpec>;
 
+def ExecArgvT : NamedType<"__exec_argv_t">;
+def ExecEnvpT : NamedType<"__exec_envp_t">;
+
 def POSIX : StandardSpec<"POSIX"> {
   PtrType CharPtr = PtrType<CharType>;
   RestrictedPtrType RestrictedCharPtr = RestrictedPtrType<CharType>;
@@ -255,9 +258,16 @@ def POSIX : StandardSpec<"POSIX"> {
         SigSetType,
         StructSigaction,
         UnionSigVal,
+        PidT,
       ],
       [], // Enumerations
       [
+        FunctionSpec<
+          "kill",
+          RetValSpec<IntType>,
+          [ArgSpec<PidT>,
+            ArgSpec<IntType>]
+        >,
         FunctionSpec<
           "sigaction",
           RetValSpec<IntType>,
@@ -299,6 +309,8 @@ def POSIX : StandardSpec<"POSIX"> {
     "unistd.h",
     [], // Macros
     [
+      ExecArgvT,
+      ExecEnvpT,
       OffTType,
       SSizeTType,
       SizeTType,
@@ -341,6 +353,21 @@ def POSIX : StandardSpec<"POSIX"> {
           "close",
           RetValSpec<IntType>,
           [ArgSpec<IntType>]
+        >,
+        FunctionSpec<
+          "execv",
+          RetValSpec<IntType>,
+          [ArgSpec<ConstCharPtr>, ArgSpec<ExecArgvT>]
+        >,
+        FunctionSpec<
+          "execve",
+          RetValSpec<IntType>,
+          [ArgSpec<ConstCharPtr>, ArgSpec<ExecArgvT>, ArgSpec<ExecEnvpT>]
+        >,
+        FunctionSpec<
+          "fork",
+          RetValSpec<PidT>,
+          [ArgSpec<VoidType>]
         >,
         FunctionSpec<
           "fsync",
@@ -507,6 +534,9 @@ def POSIX : StandardSpec<"POSIX"> {
           RetValSpec<SSizeTType>,
           [ArgSpec<IntType>, ArgSpec<ConstVoidPtr>, ArgSpec<SizeTType>]
         >,
+    ],
+    [
+        ObjectSpec<"environ", "char **">,
     ]
   >;
 
@@ -573,6 +603,11 @@ def POSIX : StandardSpec<"POSIX"> {
             [ArgSpec<RestrictedCharPtr>,
              ArgSpec<ConstRestrictedCharPtr>,
              ArgSpec<CharRestrictedDoublePtr>]
+        >,
+        FunctionSpec<
+            "strsignal",
+            RetValSpec<CharPtr>,
+            [ArgSpec<IntType>]
         >,
     ]
   >;
@@ -963,6 +998,25 @@ def POSIX : StandardSpec<"POSIX"> {
       ]
   >;
 
+  HeaderSpec SysWait = HeaderSpec<
+    "sys/wait.h",
+    [], // Macros
+    [PidT, StructRUsage],
+    [], // Enumerations
+    [
+      FunctionSpec<
+        "wait",
+        RetValSpec<PidT>,
+        [ArgSpec<IntPtr>]
+      >,
+      FunctionSpec<
+        "waitpid",
+        RetValSpec<PidT>,
+        [ArgSpec<PidT>, ArgSpec<IntPtr>, ArgSpec<IntType>]
+      >
+    ]
+  >;
+
   let Headers = [
     CType,
     Dirent,
@@ -976,6 +1030,7 @@ def POSIX : StandardSpec<"POSIX"> {
     SysResource,
     SysStat,
     SysUtsName,
+    SysWait,
     Time,
     UniStd,
     String

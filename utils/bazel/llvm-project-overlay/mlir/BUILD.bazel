@@ -566,6 +566,26 @@ mlir_c_api_cc_library(
 )
 
 mlir_c_api_cc_library(
+    name = "CAPIMLProgram",
+    srcs = [
+        "lib/CAPI/Dialect/MLProgram.cpp",
+    ],
+    hdrs = [
+        "include/mlir-c/Dialect/MLProgram.h",
+    ],
+    header_deps = [
+        ":CAPIIRHeaders",
+    ],
+    includes = ["include"],
+    deps = [
+        ":CAPIIR",
+        ":MLProgramDialect",
+        ":MLProgramOpsIncGen",
+        ":MLProgramTypesIncGen",
+    ],
+)
+
+mlir_c_api_cc_library(
     name = "CAPIConversion",
     srcs = ["lib/CAPI/Conversion/Passes.cpp"],
     hdrs = ["include/mlir-c/Conversion.h"],
@@ -974,6 +994,13 @@ td_library(
 td_library(
     name = "LoopLikeInterfaceTdFiles",
     srcs = ["include/mlir/Interfaces/LoopLikeInterface.td"],
+    includes = ["include"],
+    deps = [":OpBaseTdFiles"],
+)
+
+td_library(
+    name = "ShapedOpInterfacesTdFiles",
+    srcs = ["include/mlir/Interfaces/ShapedOpInterfaces.td"],
     includes = ["include"],
     deps = [":OpBaseTdFiles"],
 )
@@ -2372,8 +2399,8 @@ cc_library(
         ":IR",
         ":LoopLikeInterface",
         ":MemRefDialect",
+        ":ShapedOpInterfaces",
         ":SideEffectInterfaces",
-        ":TensorDialect",
         "//llvm:Support",
     ],
 )
@@ -2791,6 +2818,18 @@ cc_library(
 )
 
 cc_library(
+    name = "ShapedOpInterfaces",
+    srcs = ["lib/Interfaces/ShapedOpInterfaces.cpp"],
+    hdrs = ["include/mlir/Interfaces/ShapedOpInterfaces.h"],
+    includes = ["include"],
+    deps = [
+        ":IR",
+        ":ShapedOpInterfacesIncGen",
+        "//llvm:Support",
+    ],
+)
+
+cc_library(
     name = "ParallelCombiningOpInterface",
     srcs = ["lib/Interfaces/ParallelCombiningOpInterface.cpp"],
     hdrs = ["include/mlir/Interfaces/ParallelCombiningOpInterface.h"],
@@ -2987,6 +3026,7 @@ cc_library(
         "lib/Dialect/Shape/Transforms/*.h",
     ]),
     hdrs = [
+        "include/mlir/Dialect/Shape/Analysis/ShapeMappingAnalysis.h",
         "include/mlir/Dialect/Shape/Transforms/BufferizableOpInterfaceImpl.h",
         "include/mlir/Dialect/Shape/Transforms/Passes.h",
     ],
@@ -3001,7 +3041,9 @@ cc_library(
         ":Pass",
         ":ShapeDialect",
         ":ShapeTransformsPassIncGen",
+        ":TensorDialect",
         ":Transforms",
+        "//llvm:Support",
     ],
 )
 
@@ -3740,6 +3782,65 @@ cc_library(
 )
 
 td_library(
+    name = "GPUTransformOpsTdFiles",
+    srcs = [
+        "include/mlir/Dialect/GPU/TransformOps/GPUTransformOps.td",
+    ],
+    includes = ["include"],
+    deps = [
+        ":PDLDialectTdFiles",
+        ":TransformDialectTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "GPUTransformOpsIncGen",
+    strip_include_prefix = "include",
+    tbl_outs = [
+        (
+            ["-gen-op-decls"],
+            "include/mlir/Dialect/GPU/TransformOps/GPUTransformOps.h.inc",
+        ),
+        (
+            ["-gen-op-defs"],
+            "include/mlir/Dialect/GPU/TransformOps/GPUTransformOps.cpp.inc",
+        ),
+    ],
+    tblgen = ":mlir-tblgen",
+    td_file = "include/mlir/Dialect/GPU/TransformOps/GPUTransformOps.td",
+    deps = [
+        ":GPUTransformOpsTdFiles",
+    ],
+)
+
+cc_library(
+    name = "GPUTransformOps",
+    srcs = [
+        "lib/Dialect/GPU/TransformOps/GPUTransformOps.cpp",
+    ],
+    hdrs = [
+        "include/mlir/Dialect/GPU/TransformOps/GPUTransformOps.h",
+    ],
+    includes = ["include"],
+    deps = [
+        ":ArithDialect",
+        ":AsmParser",
+        ":ControlFlowDialect",
+        ":GPUDialect",
+        ":GPUTransformOpsIncGen",
+        ":GPUTransforms",
+        ":IR",
+        ":PDLDialect",
+        ":Parser",
+        ":SCFDialect",
+        ":SideEffectInterfaces",
+        ":TransformDialect",
+        ":TransformUtils",
+        "//llvm:Support",
+    ],
+)
+
+td_library(
     name = "LLVMOpsTdFiles",
     srcs = [
         "include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td",
@@ -4163,8 +4264,12 @@ gentbl_cc_library(
             "include/mlir/Dialect/LLVMIR/LLVMIntrinsicConversions.inc",
         ),
         (
-            ["-gen-llvmintrinsic-to-llvmirop-pairs"],
-            "include/mlir/Dialect/LLVMIR/LLVMIntrinsicToLLVMIROpPairs.inc",
+            ["-gen-intr-from-llvmir-conversions"],
+            "include/mlir/Dialect/LLVMIR/LLVMIntrinsicFromLLVMIRConversions.inc",
+        ),
+        (
+            ["-gen-convertible-llvmir-intrinsics"],
+            "include/mlir/Dialect/LLVMIR/LLVMConvertibleLLVMIRIntrinsics.inc",
         ),
     ],
     tblgen = ":mlir-tblgen",
@@ -4963,6 +5068,7 @@ td_library(
         ":InferTypeOpInterfaceTdFiles",
         ":OpBaseTdFiles",
         ":ParallelCombiningOpInterfaceTdFiles",
+        ":ShapedOpInterfacesTdFiles",
         ":SideEffectInterfacesTdFiles",
         ":TilingInterfaceTdFiles",
         ":ViewLikeInterfaceTdFiles",
@@ -5011,6 +5117,7 @@ cc_library(
     hdrs = ["include/mlir/Dialect/Tensor/IR/Tensor.h"],
     includes = ["include"],
     deps = [
+        ":AffineDialect",
         ":ArithDialect",
         ":ArithUtils",
         ":CastOpInterfaces",
@@ -5020,6 +5127,7 @@ cc_library(
         ":IR",
         ":InferTypeOpInterface",
         ":ParallelCombiningOpInterface",
+        ":ShapedOpInterfaces",
         ":SideEffectInterfaces",
         ":TensorOpsIncGen",
         ":TilingInterface",
@@ -5286,6 +5394,24 @@ gentbl_cc_library(
     tblgen = ":mlir-tblgen",
     td_file = "include/mlir/Interfaces/LoopLikeInterface.td",
     deps = [":LoopLikeInterfaceTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ShapedOpInterfacesIncGen",
+    strip_include_prefix = "include",
+    tbl_outs = [
+        (
+            ["-gen-op-interface-decls"],
+            "include/mlir/Interfaces/ShapedOpInterfaces.h.inc",
+        ),
+        (
+            ["-gen-op-interface-defs"],
+            "include/mlir/Interfaces/ShapedOpInterfaces.cpp.inc",
+        ),
+    ],
+    tblgen = ":mlir-tblgen",
+    td_file = "include/mlir/Interfaces/ShapedOpInterfaces.td",
+    deps = [":ShapedOpInterfacesTdFiles"],
 )
 
 gentbl_cc_library(
@@ -6358,6 +6484,7 @@ cc_library(
         ":GPUToROCDLTransforms",
         ":GPUToSPIRV",
         ":GPUToVulkanTransforms",
+        ":GPUTransformOps",
         ":GPUTransforms",
         ":IR",
         ":LLVMDialect",
@@ -6498,7 +6625,10 @@ cc_binary(
 cc_library(
     name = "MlirJitRunner",
     srcs = ["lib/ExecutionEngine/JitRunner.cpp"],
-    hdrs = ["include/mlir/ExecutionEngine/JitRunner.h"],
+    hdrs = [
+        "include/mlir/ExecutionEngine/JitRunner.h",
+        "include/mlir/Tools/ParseUtilties.h",
+    ],
     includes = ["include"],
     deps = [
         ":AllPassesAndDialects",
@@ -7933,6 +8063,8 @@ cc_library(
     srcs = glob([
         "lib/Conversion/VectorToGPU/*.cpp",
         "lib/Conversion/VectorToGPU/*.h",
+        "lib/Dialect/NVGPU/Utils/*.cpp",
+        "include/mlir/Dialect/NVGPU/Utils/*.h",
     ]),
     hdrs = glob([
         "include/mlir/Conversion/VectorToGPU/*.h",
@@ -8870,6 +9002,7 @@ td_library(
         ":ControlFlowInterfacesTdFiles",
         ":CopyOpInterfaceTdFiles",
         ":OpBaseTdFiles",
+        ":ShapedOpInterfacesTdFiles",
         ":SideEffectInterfacesTdFiles",
         ":ViewLikeInterfaceTdFiles",
     ],
@@ -8914,7 +9047,9 @@ gentbl_cc_library(
     ],
     tblgen = ":mlir-tblgen",
     td_file = "include/mlir/Dialect/MemRef/IR/MemRefOps.td",
-    deps = [":MemRefOpsTdFiles"],
+    deps = [
+        ":MemRefOpsTdFiles",
+    ],
 )
 
 cc_library(
@@ -8941,6 +9076,7 @@ cc_library(
         ":InferTypeOpInterface",
         ":MemRefBaseIncGen",
         ":MemRefOpsIncGen",
+        ":ShapedOpInterfaces",
         ":ViewLikeInterface",
         "//llvm:Support",
     ],
@@ -9494,7 +9630,10 @@ cc_library(
 cc_library(
     name = "MlirReduceLib",
     srcs = ["lib/Tools/mlir-reduce/MlirReduceMain.cpp"],
-    hdrs = ["include/mlir/Tools/mlir-reduce/MlirReduceMain.h"],
+    hdrs = [
+        "include/mlir/Tools/ParseUtilties.h",
+        "include/mlir/Tools/mlir-reduce/MlirReduceMain.h",
+    ],
     includes = ["include"],
     deps = [
         ":IR",

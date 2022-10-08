@@ -564,6 +564,10 @@ def fir_VoidType : FIR_Type<"Void", "void"> {
   let genStorageClass = 0;
 }
 
+// Whether a type is a BaseBoxType
+def IsBaseBoxTypePred
+        : CPred<"$_self.isa<::fir::BaseBoxType>()">;
+
 // Generalized FIR and standard dialect types representing intrinsic types
 def AnyIntegerLike : TypeConstraint<Or<[SignlessIntegerLike.predicate,
     AnySignedInteger.predicate, fir_IntegerType.predicate]>, "any integer">;
@@ -596,14 +600,18 @@ def RefOrLLVMPtr : TypeConstraint<Or<[fir_ReferenceType.predicate,
     fir_LLVMPointerType.predicate]>, "fir.ref or fir.llvm_ptr">;
 
 def AnyBoxLike : TypeConstraint<Or<[fir_BoxType.predicate,
-    fir_BoxCharType.predicate, fir_BoxProcType.predicate]>, "any box">;
+    fir_BoxCharType.predicate, fir_BoxProcType.predicate,
+    fir_ClassType.predicate]>, "any box">;
+
+def BoxOrClassType : TypeConstraint<Or<[fir_BoxType.predicate,
+    fir_ClassType.predicate]>, "box or class">;
 
 def AnyRefOrBoxLike : TypeConstraint<Or<[AnyReferenceLike.predicate,
     AnyBoxLike.predicate, FunctionType.predicate]>,
     "any reference or box like">;
 def AnyRefOrBox : TypeConstraint<Or<[fir_ReferenceType.predicate,
-    fir_HeapType.predicate, fir_PointerType.predicate, fir_BoxType.predicate]>,
-    "any reference or box">;
+    fir_HeapType.predicate, fir_PointerType.predicate,
+    IsBaseBoxTypePred]>, "any reference or box">;
 
 def AnyShapeLike : TypeConstraint<Or<[fir_ShapeType.predicate,
     fir_ShapeShiftType.predicate]>, "any legal shape type">;
