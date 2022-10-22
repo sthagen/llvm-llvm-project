@@ -1,0 +1,15 @@
+import("//llvm/utils/unittest/unittest.gni")
+
+unittest("DebugInfoLogicalViewTests") {
+  deps = [
+    "//llvm/lib/DebugInfo/LogicalView",
+    "//llvm/lib/Testing/Support",
+  ]
+  sources = [
+    "CommandLineOptionsTest.cpp",
+    "LocationRangesTest.cpp",
+    "LogicalElementsTest.cpp",
+    "SelectElementsTest.cpp",
+    "StringPoolTest.cpp",
+  ]
+}

@@ -136,6 +136,7 @@ add_gen_header(
     .llvm-libc-macros.signal_macros
     .llvm-libc-types.struct_sigaction
     .llvm-libc-types.__sighandler_t
+    .llvm-libc-types.stack_t
     .llvm-libc-types.sigset_t
     .llvm-libc-types.pid_t
 )
@@ -301,6 +302,22 @@ add_gen_header(
 )
 
 add_gen_header(
+  sys_select
+  DEF_FILE sys/select.h.def
+  GEN_HDR sys/select.h
+  DEPENDS
+    .llvm_libc_common_h
+    .llvm-libc-macros.sys_select_macros
+    .llvm-libc-types.fd_set
+    .llvm-libc-types.sigset_t
+    .llvm-libc-types.struct_timespec
+    .llvm-libc-types.struct_timeval
+    .llvm-libc-types.suseconds_t
+    .llvm-libc-types.time_t
+    .llvm-libc-types.ssize_t
+)
+
+add_gen_header(
   sys_sendfile
   DEF_FILE sys/sendfile.h.def
   GEN_HDR sys/sendfile.h
@@ -348,6 +365,19 @@ add_gen_header(
     .llvm-libc-macros.sys_wait_macros
     .llvm-libc-types.pid_t
     .llvm-libc-types.struct_rusage
+)
+
+add_gen_header(
+  termios
+  DEF_FILE termios.h.def
+  GEN_HDR termios.h
+  DEPENDS
+    .llvm_libc_common_h
+    .llvm-libc-macros.termios_macros
+    .llvm-libc-types.cc_t
+    .llvm-libc-types.speed_t
+    .llvm-libc-types.struct_termios
+    .llvm-libc-types.tcflag_t
 )
 
 if(NOT LLVM_LIBC_FULL_BUILD)

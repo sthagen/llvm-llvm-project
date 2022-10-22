@@ -491,6 +491,7 @@ def StdC : StandardSpec<"stdc"> {
   HeaderSpec StdIO = HeaderSpec<
       "stdio.h",
       [
+          Macro<"stdin">,
           Macro<"stderr">,
           Macro<"stdout">,
           Macro<"_IOFBF">,
@@ -525,6 +526,11 @@ def StdC : StandardSpec<"stdc"> {
               [ArgSpec<FILEPtr>]
           >,
           FunctionSpec<
+              "fgetc",
+              RetValSpec<IntType>,
+              [ArgSpec<FILEPtr>]
+          >,
+          FunctionSpec<
               "fflush",
               RetValSpec<IntType>,
               [ArgSpec<FILEPtr>]
@@ -534,6 +540,23 @@ def StdC : StandardSpec<"stdc"> {
               RetValSpec<FILEPtr>,
               [ArgSpec<ConstCharPtr>,
                ArgSpec<ConstCharPtr>]
+          >,
+          FunctionSpec<
+              "fputc",
+              RetValSpec<IntType>,
+              [ArgSpec<IntType>,
+               ArgSpec<FILEPtr>]
+          >,
+          FunctionSpec<
+              "putc",
+              RetValSpec<IntType>,
+              [ArgSpec<IntType>,
+               ArgSpec<FILEPtr>]
+          >,
+          FunctionSpec<
+              "putchar",
+              RetValSpec<IntType>,
+              [ArgSpec<IntType>]
           >,
           FunctionSpec<
               "fputs",
@@ -604,6 +627,10 @@ def StdC : StandardSpec<"stdc"> {
           >,
       ],
       [
+          ObjectSpec<
+              "stdin",
+              "FILE *"
+          >,
           ObjectSpec<
               "stdout",
               "FILE *"

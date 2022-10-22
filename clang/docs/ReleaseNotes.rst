@@ -248,6 +248,13 @@ Bug Fixes
   not satisfied in the event of an instantiation failures in a requires expression's
   parameter list. We previously handled this correctly in a constraint evaluation
   context, but not in a requires clause evaluated as a boolean.
+- Address the thread identification problems in coroutines.
+  `Issue 47177 <https://github.com/llvm/llvm-project/issues/47177>`_
+  `Issue 47179 <https://github.com/llvm/llvm-project/issues/47179>`_
+- Fix a crash upon stray coloncolon token in C2x mode.
+- Reject non-type template arguments formed by casting a non-zero integer
+  to a pointer in pre-C++17 modes, instead of treating them as null
+  pointers.
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -314,6 +321,10 @@ Improvements to Clang's diagnostics
   on the previous undocumented behavior. As a side effect of this change,
   constructor calls outside of initializer expressions are no longer ignored,
   which can result in new warnings (or make existing warnings disappear).
+- The wording of diagnostics regarding arithmetic on fixed-sized arrays and
+  pointers is improved to include the type of the array and whether it's cast
+  to another type. This should improve comprehension for why an index is
+  out-of-bounds.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -349,6 +360,11 @@ Non-comprehensive list of changes in this release
   timestamp to be used in replacement of the current date and time in
   the ``__DATE__``, ``__TIME__``, and ``__TIMESTAMP__`` macros. See
   `<https://reproducible-builds.org/docs/source-date-epoch/>`_.
+- Clang now supports ``__has_constexpr_builtin`` function-like macro that
+  evaluates to 1 if the builtin is supported and can be constant evaluated.
+  It can be used to writing conditionally constexpr code that uses builtins.
+- The time profiler (using ``-ftime-trace`` option) now traces various constant
+  evaluation events.
 
 New Compiler Flags
 ------------------
@@ -530,6 +546,9 @@ C++20 Feature Support
   which removes the requirement for the ``typename`` keyword in certain contexts.
 - Implemented The Equality Operator You Are Looking For (`P2468 <http://wg21.link/p2468r2>`_).
 
+- Implemented `P2113R0: Proposed resolution for 2019 comment CA 112 <https://wg21.link/P2113R0>`_
+  ([temp.func.order]p6.2.1 is not implemented, matching GCC).
+
 C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -576,6 +595,9 @@ X86 Support in Clang
 --------------------
 - Support ``-mindirect-branch-cs-prefix`` for call and jmp to indirect thunk.
 - Fix 32-bit ``__fastcall`` and ``__vectorcall`` ABI mismatch with MSVC.
+- Add ISA of ``AMX-FP16`` which support ``_tile_dpfp16ps``.
+- Switch ``AVX512-BF16`` intrinsics types from ``short`` to ``__bf16``.
+- Add support for ``PREFETCHI`` instructions.
 
 DWARF Support in Clang
 ----------------------
@@ -613,7 +635,10 @@ AST Matchers
 
 clang-format
 ------------
-- Add `RemoveSemicolon` option for removing `;` after a non-empty function definition.
+- Add ``RemoveSemicolon`` option for removing ``;`` after a non-empty function definition.
+- Add ``RequiresExpressionIndentation`` option for configuring the alignment of requires-expressions.
+  The default value of this option is ``OuterScope``, which differs in behavior from clang-format 15.
+  To match the default behavior of clang-format 15, use the ``Keyword`` value.
 
 clang-extdef-mapping
 --------------------

@@ -916,11 +916,11 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
   SourceLocation EndLoc;
   SmallVector<ParmVarDecl *, 8> Params;
 
-  assert(ParamInfo.getDeclSpec().getStorageClassSpec() ==
-             DeclSpec::SCS_unspecified ||
-         ParamInfo.getDeclSpec().getStorageClassSpec() ==
-                 DeclSpec::SCS_static &&
-             "Unexpected storage specifier");
+  assert(
+      (ParamInfo.getDeclSpec().getStorageClassSpec() ==
+           DeclSpec::SCS_unspecified ||
+       ParamInfo.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static) &&
+      "Unexpected storage specifier");
   bool IsLambdaStatic =
       ParamInfo.getDeclSpec().getStorageClassSpec() == DeclSpec::SCS_static;
 
@@ -970,6 +970,18 @@ void Sema::ActOnStartOfLambdaDefinition(LambdaIntroducer &Intro,
     EndLoc = ParamInfo.getSourceRange().getEnd();
 
     ExplicitResultType = FTI.hasTrailingReturnType();
+
+    if (ExplicitResultType && getLangOpts().HLSL) {
+      QualType RetTy = FTI.getTrailingReturnType().get();
+      if (!RetTy.isNull()) {
+        // HLSL does not support specifying an address space on a lambda return
+        // type.
+        LangAS AddressSpace = RetTy.getAddressSpace();
+        if (AddressSpace != LangAS::Default)
+          Diag(FTI.getTrailingReturnTypeLoc(),
+               diag::err_return_value_with_address_space);
+      }
+    }
 
     if (FTIHasNonVoidParameters(FTI)) {
       Params.reserve(FTI.NumParams);

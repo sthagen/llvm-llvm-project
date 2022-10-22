@@ -2745,8 +2745,8 @@ public:
       if (std::optional<unsigned> passArg = caller.getPassArgIndex()) {
         // PASS, PASS(arg-name)
         dispatch = builder.create<fir::DispatchOp>(
-            loc, funcType.getResults(), procName, operands[*passArg], operands,
-            builder.getI32IntegerAttr(*passArg));
+            loc, funcType.getResults(), builder.getStringAttr(procName),
+            operands[*passArg], operands, builder.getI32IntegerAttr(*passArg));
       } else {
         // NOPASS
         const Fortran::evaluate::Component *component =
@@ -2754,9 +2754,15 @@ public:
         assert(component && "expect component for type-bound procedure call.");
         fir::ExtendedValue pass =
             symMap.lookupSymbol(component->GetFirstSymbol()).toExtendedValue();
-        dispatch = builder.create<fir::DispatchOp>(loc, funcType.getResults(),
-                                                   procName, fir::getBase(pass),
-                                                   operands, nullptr);
+        mlir::Value passObject = fir::getBase(pass);
+        if (fir::isa_ref_type(passObject.getType()))
+          passObject = builder.create<fir::ConvertOp>(
+              loc,
+              passObject.getType().dyn_cast<fir::ReferenceType>().getEleTy(),
+              passObject);
+        dispatch = builder.create<fir::DispatchOp>(
+            loc, funcType.getResults(), builder.getStringAttr(procName),
+            passObject, operands, nullptr);
       }
       callResult = dispatch.getResult(0);
       callNumResults = dispatch.getNumResults();

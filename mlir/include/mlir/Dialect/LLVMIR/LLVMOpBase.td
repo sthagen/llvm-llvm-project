@@ -27,7 +27,6 @@ def LLVM_Dialect : Dialect {
   let name = "llvm";
   let cppNamespace = "::mlir::LLVM";
 
-  let useDefaultTypePrinterParser = 1;
   let useDefaultAttributePrinterParser = 1;
   let hasRegionArgAttrVerify = 1;
   let hasRegionResultAttrVerify = 1;
@@ -49,6 +48,7 @@ def LLVM_Dialect : Dialect {
     static StringRef getByRefAttrName() { return "llvm.byref"; }
     static StringRef getStructRetAttrName() { return "llvm.sret"; }
     static StringRef getInAllocaAttrName() { return "llvm.inalloca"; }
+    static StringRef getNoUndefAttrName() { return "llvm.noundef"; }
 
     /// Verifies if the attribute is a well-formed value for "llvm.struct_attrs"
     static LogicalResult verifyStructAttr(
@@ -76,11 +76,20 @@ def LLVM_Dialect : Dialect {
       return "llvm.readnone";
     }
 
+    Type parseType(DialectAsmParser &p) const override;
+    void printType(Type, DialectAsmPrinter &p) const override;
+
   private:
+    /// Register all types.
+    void registerTypes();
+
     /// A cache storing compatible LLVM types that have been verified. This
     /// can save us lots of verification time if there are many occurrences
     /// of some deeply-nested aggregate types in the program.
     ThreadLocalCache<DenseSet<Type>> compatibleTypes;
+
+    /// Register the attributes of this dialect.
+    void registerAttributes();
   }];
 }
 
@@ -228,7 +237,6 @@ class LLVM_OpBase<Dialect dialect, string mnemonic, list<Trait> traits = []> :
   //   - $_builder - substituted with the MLIR builder;
   //   - $_qualCppClassName - substitiuted with the MLIR operation class name.
   // Additionally, `$$` can be used to produce the dollar character.
-  // FIXME: The $name variable resolution does not support variadic arguments.
   string mlirBuilder = "";
 
   // An array that specifies a mapping from MLIR argument indices to LLVM IR
@@ -418,10 +426,9 @@ class LLVM_VectorReduction<string mnem>
 // LLVM vector reduction over a single vector, with an initial value,
 // and with permission to reassociate the reduction operations.
 class LLVM_VectorReductionAcc<string mnem>
-    : LLVM_OpBase<LLVM_Dialect, "intr.vector.reduce." # mnem,
-                  [Pure]>,
-      Results<(outs LLVM_Type:$res)>,
-      Arguments<(ins LLVM_Type, LLVM_Type,
+    : LLVM_OneResultIntrOp<"vector.reduce." # mnem,
+                           [], [0], [Pure]>,
+      Arguments<(ins LLVM_Type:$start_value, LLVM_Type:$input,
                  DefaultValuedAttr<BoolAttr, "false">:$reassoc)> {
   let llvmBuilder = [{
     llvm::Module *module = builder.GetInsertBlock()->getModule();
@@ -438,6 +445,11 @@ class LLVM_VectorReductionAcc<string mnem>
     builder.setFastMathFlags(tempFM);  // set fastmath flag
     $res = builder.CreateCall(fn, operands);
     builder.setFastMathFlags(origFM);  // restore fastmath flag
+  }];
+  let mlirBuilder = [{
+    bool allowReassoc = inst->getFastMathFlags().allowReassoc();
+    $res = $_builder.create<$_qualCppClassName>($_location,
+      $_resultType, $start_value, $input, allowReassoc);
   }];
 }
 
