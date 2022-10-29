@@ -16,6 +16,7 @@
 
 #include "llvm/DebugInfo/LogicalView/Core/LVOptions.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVRange.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Support/ToolOutputFile.h"
@@ -23,6 +24,8 @@
 
 namespace llvm {
 namespace logicalview {
+
+constexpr LVSectionIndex UndefinedSectionIndex = 0;
 
 class LVScopeCompileUnit;
 class LVObject;
@@ -61,6 +64,12 @@ class LVReader {
   using LVCompileUnits = std::map<LVOffset, LVScopeCompileUnit *>;
   LVCompileUnits CompileUnits;
 
+  // Added elements to be used during elements comparison.
+  LVLines Lines;
+  LVScopes Scopes;
+  LVSymbols Symbols;
+  LVTypes Types;
+
   // Create split folder.
   Error createSplitFolder();
   bool OutputSplit = false;
@@ -72,6 +81,9 @@ protected:
   ScopedPrinter &W;
   raw_ostream &OS;
   LVScopeCompileUnit *CompileUnit = nullptr;
+
+  // Only for ELF format. The CodeView is handled in a different way.
+  LVSectionIndex DotTextSectionIndex = UndefinedSectionIndex;
 
   // Record Compilation Unit entry.
   void addCompileUnitOffset(LVOffset Offset, LVScopeCompileUnit *CompileUnit) {
@@ -85,6 +97,23 @@ protected:
     if (options().getAttributeFormat())
       Root->setFileFormatName(FileFormatName);
     return Error::success();
+  }
+
+  // Return a pathname composed by: parent_path(InputFilename)/filename(From).
+  // This is useful when a type server (PDB file associated with an object
+  // file or a precompiled header file) or a DWARF split object have been
+  // moved from their original location. That is the case when running
+  // regression tests, where object files are created in one location and
+  // executed in a different location.
+  std::string createAlternativePath(StringRef From) {
+    // During the reader initialization, any backslashes in 'InputFilename'
+    // are converted to forward slashes.
+    SmallString<128> Path;
+    sys::path::append(Path, sys::path::Style::posix,
+                      sys::path::parent_path(InputFilename),
+                      sys::path::filename(sys::path::convert_to_slash(
+                          From, sys::path::Style::windows)));
+    return std::string(Path);
   }
 
   virtual Error printScopes();
@@ -133,12 +162,40 @@ public:
     return {};
   }
 
-  virtual bool isSystemEntry(LVElement *Element, StringRef Name = {}) {
+  LVSectionIndex getDotTextSectionIndex() const { return DotTextSectionIndex; }
+  virtual LVSectionIndex getSectionIndex(LVScope *Scope) {
+    return getDotTextSectionIndex();
+  }
+
+  virtual bool isSystemEntry(LVElement *Element, StringRef Name = {}) const {
     return false;
   };
 
   // Access to split context.
   LVSplitContext &getSplitContext() { return SplitContext; }
+
+  // In the case of element comparison, register that added element.
+  void notifyAddedElement(LVLine *Line) {
+    if (!options().getCompareContext() && options().getCompareLines())
+      Lines.push_back(Line);
+  }
+  void notifyAddedElement(LVScope *Scope) {
+    if (!options().getCompareContext() && options().getCompareScopes())
+      Scopes.push_back(Scope);
+  }
+  void notifyAddedElement(LVSymbol *Symbol) {
+    if (!options().getCompareContext() && options().getCompareSymbols())
+      Symbols.push_back(Symbol);
+  }
+  void notifyAddedElement(LVType *Type) {
+    if (!options().getCompareContext() && options().getCompareTypes())
+      Types.push_back(Type);
+  }
+
+  const LVLines &getLines() const { return Lines; }
+  const LVScopes &getScopes() const { return Scopes; }
+  const LVSymbols &getSymbols() const { return Symbols; }
+  const LVTypes &getTypes() const { return Types; }
 
   // Conditions to print an object.
   bool doPrintLine(const LVLine *Line) const {
@@ -161,6 +218,7 @@ public:
   static void setInstance(LVReader *Reader);
 
   void print(raw_ostream &OS) const;
+  virtual void printRecords(raw_ostream &OS) const {}
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void dump() const { print(dbgs()); }

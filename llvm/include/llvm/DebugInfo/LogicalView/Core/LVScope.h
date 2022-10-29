@@ -17,11 +17,18 @@
 #include "llvm/DebugInfo/LogicalView/Core/LVElement.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVLocation.h"
 #include "llvm/DebugInfo/LogicalView/Core/LVSort.h"
+#include "llvm/Object/ObjectFile.h"
+#include <list>
 #include <map>
 #include <set>
 
 namespace llvm {
 namespace logicalview {
+
+// Name address, Code size.
+using LVNameInfo = std::pair<LVAddress, uint64_t>;
+using LVPublicNames = std::map<LVScope *, LVNameInfo>;
+using LVPublicAddresses = std::map<LVAddress, LVNameInfo>;
 
 class LVRange;
 
@@ -56,7 +63,12 @@ using LVScopeKindSet = std::set<LVScopeKind>;
 using LVScopeDispatch = std::map<LVScopeKind, LVScopeGetFunction>;
 using LVScopeRequest = std::vector<LVScopeGetFunction>;
 
+using LVOffsetList = std::list<LVOffset>;
 using LVOffsetElementMap = std::map<LVOffset, LVElement *>;
+using LVOffsetLinesMap = std::map<LVOffset, LVLines *>;
+using LVOffsetLocationsMap = std::map<LVOffset, LVLocations *>;
+using LVOffsetSymbolMap = std::map<LVOffset, LVSymbol *>;
+using LVTagOffsetsMap = std::map<dwarf::Tag, LVOffsetList *>;
 
 // Class to represent a DWARF Scope.
 class LVScope : public LVElement {
@@ -94,6 +106,9 @@ class LVScope : public LVElement {
   // Decide if the scope will be printed, using some conditions given by:
   // only-globals, only-locals, a-pattern.
   bool resolvePrinting() const;
+
+  // Find the current scope in the given 'Targets'.
+  LVScope *findIn(const LVScopes *Targets) const;
 
   // Traverse the scope parent tree, executing the given callback function
   // on each scope.
@@ -243,6 +258,10 @@ public:
   // DW_AT_specification, DW_AT_abstract_origin, DW_AT_extension.
   virtual LVScope *getReference() const { return nullptr; }
 
+  LVScope *getCompileUnitParent() const override {
+    return LVElement::getCompileUnitParent();
+  }
+
   // Follow a chain of references given by DW_AT_abstract_origin and/or
   // DW_AT_specification and update the scope name.
   StringRef resolveReferencesChain();
@@ -262,10 +281,40 @@ public:
 
   void resolveElements();
 
+  // Iterate through the 'References' set and check that all its elements
+  // are present in the 'Targets' set. For a missing element, mark its
+  // parents as missing.
+  static void markMissingParents(const LVScopes *References,
+                                 const LVScopes *Targets,
+                                 bool TraverseChildren);
+
+  // Checks if the current scope is contained within the target scope.
+  // Depending on the result, the callback may be performed.
+  virtual void markMissingParents(const LVScope *Target, bool TraverseChildren);
+
+  // Returns true if the current scope and the given 'Scope' have the
+  // same number of children.
+  virtual bool equalNumberOfChildren(const LVScope *Scope) const;
+
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  virtual bool equals(const LVScope *Scope) const;
+
+  // Returns true if the given 'References' are logically equal to the
+  // given 'Targets'.
+  static bool equals(const LVScopes *References, const LVScopes *Targets);
+
+  // For the given 'Scopes' returns a scope that is logically equal
+  // to the current scope; otherwise 'nullptr'.
+  virtual LVScope *findEqualScope(const LVScopes *Scopes) const;
+
+  // Report the current scope as missing or added during comparison.
+  void report(LVComparePass Pass) override;
+
   static LVScopeDispatch &getDispatch() { return Dispatch; }
 
   void print(raw_ostream &OS, bool Full = true) const override;
   void printExtra(raw_ostream &OS, bool Full = true) const override;
+  virtual void printWarnings(raw_ostream &OS, bool Full = true) const {}
   virtual void printMatchedElements(raw_ostream &OS, bool UseMatchedElements) {}
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -301,6 +350,13 @@ public:
     EncodedArgsIndex = getStringPool().getIndex(EncodedArgs);
   }
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
+  // For the given 'Scopes' returns a scope that is logically equal
+  // to the current scope; otherwise 'nullptr'.
+  LVScope *findEqualScope(const LVScopes *Scopes) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -315,6 +371,9 @@ public:
   LVScopeAlias &operator=(const LVScopeAlias &) = delete;
   ~LVScopeAlias() = default;
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -328,6 +387,9 @@ public:
 
   void resolveExtra() override;
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -335,6 +397,12 @@ public:
 class LVScopeCompileUnit final : public LVScope {
   // Names (files and directories) used by the Compile Unit.
   std::vector<size_t> Filenames;
+
+  // As the .debug_pubnames section has been removed in DWARF5, we have a
+  // similar functionality, which is used by the decoded functions. We use
+  // the low-pc and high-pc for those scopes that are marked as public, in
+  // order to support DWARF and CodeView.
+  LVPublicNames PublicNames;
 
   // Toolchain producer.
   size_t ProducerIndex = 0;
@@ -354,14 +422,43 @@ class LVScopeCompileUnit final : public LVScope {
 
   // It records the mapping between logical lines representing a debug line
   // entry and its address in the text section. It is used to find a line
-  // giving its exact or closest address.
+  // giving its exact or closest address. To support comdat functions, all
+  // addresses for the same section are recorded in the same map.
   using LVAddressToLine = std::map<LVAddress, LVLine *>;
-  LVAddressToLine AddressToLine;
+  LVDoubleMap<LVSectionIndex, LVAddress, LVLine *> SectionMappings;
+
+  // DWARF Tags (Tag, Element list).
+  LVTagOffsetsMap DebugTags;
+
+  // Offsets associated with objects being flagged as having invalid data
+  // (ranges, locations, lines zero or coverages).
+  LVOffsetElementMap WarningOffsets;
+
+  // Symbols with invalid locations. (Symbol, Location List).
+  LVOffsetLocationsMap InvalidLocations;
+
+  // Symbols with invalid coverage values.
+  LVOffsetSymbolMap InvalidCoverages;
+
+  // Scopes with invalid ranges (Scope, Range list).
+  LVOffsetLocationsMap InvalidRanges;
+
+  // Scopes with lines zero (Scope, Line list).
+  LVOffsetLinesMap LinesZero;
 
   // Record scopes contribution in bytes to the debug information.
   using LVSizesMap = std::map<const LVScope *, LVOffset>;
   LVSizesMap Sizes;
   LVOffset CUContributionSize = 0;
+
+  // Helper function to add an invalid location/range.
+  void addInvalidLocationOrRange(LVLocation *Location, LVElement *Element,
+                                 LVOffsetLocationsMap *Map) {
+    LVOffset Offset = Element->getOffset();
+    addInvalidOffset(Offset, Element);
+    addItem<LVOffsetLocationsMap, LVLocations, LVOffset, LVLocation *>(
+        Map, Offset, Location);
+  }
 
   // Record scope sizes indexed by lexical level.
   // Setting an initial size that will cover a very deep nested scopes.
@@ -371,6 +468,10 @@ class LVScopeCompileUnit final : public LVScope {
   // Maximum seen lexical level. It is used to control how many entries
   // in the 'Totals' vector are valid values.
   LVLevel MaxSeenLevel = 0;
+
+  // Get the line located at the given address.
+  LVLine *lineLowerBound(LVAddress Address, LVScope *Scope) const;
+  LVLine *lineUpperBound(LVAddress Address, LVScope *Scope) const;
 
   void printScopeSize(const LVScope *Scope, raw_ostream &OS);
   void printScopeSize(const LVScope *Scope, raw_ostream &OS) const {
@@ -388,15 +489,39 @@ public:
   }
   LVScopeCompileUnit(const LVScopeCompileUnit &) = delete;
   LVScopeCompileUnit &operator=(const LVScopeCompileUnit &) = delete;
-  ~LVScopeCompileUnit() = default;
+  ~LVScopeCompileUnit() {
+    deleteList<LVTagOffsetsMap>(DebugTags);
+    deleteList<LVOffsetLocationsMap>(InvalidLocations);
+    deleteList<LVOffsetLocationsMap>(InvalidRanges);
+    deleteList<LVOffsetLinesMap>(LinesZero);
+  }
 
   LVScope *getCompileUnitParent() const override {
     return static_cast<LVScope *>(const_cast<LVScopeCompileUnit *>(this));
   }
 
-  // Get the line located at the given address.
-  LVLine *lineLowerBound(LVAddress Address) const;
-  LVLine *lineUpperBound(LVAddress Address) const;
+  // Add line to address mapping.
+  void addMapping(LVLine *Line, LVSectionIndex SectionIndex);
+  LVLineRange lineRange(LVLocation *Location) const;
+
+  LVNameInfo NameNone = {UINT64_MAX, 0};
+  void addPublicName(LVScope *Scope, LVAddress LowPC, LVAddress HighPC) {
+    PublicNames.emplace(std::piecewise_construct, std::forward_as_tuple(Scope),
+                        std::forward_as_tuple(LowPC, HighPC - LowPC));
+  }
+  const LVNameInfo &findPublicName(LVScope *Scope) {
+    LVPublicNames::iterator Iter = PublicNames.find(Scope);
+    return (Iter != PublicNames.end()) ? Iter->second : NameNone;
+  }
+  const LVPublicNames &getPublicNames() const { return PublicNames; }
+
+  // The base address of the scope for any of the debugging information
+  // entries listed, is given by either the DW_AT_low_pc attribute or the
+  // first address in the first range entry in the list of ranges given by
+  // the DW_AT_ranges attribute.
+  LVAddress getBaseAddress() const {
+    return Ranges ? Ranges->front()->getLowerAddress() : 0;
+  }
 
   StringRef getCompilationDirectory() const {
     return getStringPool().getString(CompilationDirectoryIndex);
@@ -416,6 +541,30 @@ public:
   void setProducer(StringRef ProducerName) override {
     ProducerIndex = getStringPool().getIndex(ProducerName);
   }
+
+  // Record DWARF tags.
+  void addDebugTag(dwarf::Tag Target, LVOffset Offset);
+  // Record elements with invalid offsets.
+  void addInvalidOffset(LVOffset Offset, LVElement *Element);
+  // Record symbols with invalid coverage values.
+  void addInvalidCoverage(LVSymbol *Symbol);
+  // Record symbols with invalid locations.
+  void addInvalidLocation(LVLocation *Location);
+  // Record scopes with invalid ranges.
+  void addInvalidRange(LVLocation *Location);
+  // Record line zero.
+  void addLineZero(LVLine *Line);
+
+  const LVTagOffsetsMap getDebugTags() const { return DebugTags; }
+  const LVOffsetElementMap getWarningOffsets() const { return WarningOffsets; }
+  const LVOffsetLocationsMap getInvalidLocations() const {
+    return InvalidLocations;
+  }
+  const LVOffsetSymbolMap getInvalidCoverages() const {
+    return InvalidCoverages;
+  }
+  const LVOffsetLocationsMap getInvalidRanges() const { return InvalidRanges; }
+  const LVOffsetLinesMap getLinesZero() const { return LinesZero; }
 
   // Process ranges, locations and calculate coverage.
   void processRangeLocationCoverage(
@@ -446,7 +595,7 @@ public:
 
   // A new element has been added to the scopes tree. Take the following steps:
   // Increase the added element counters, for printing summary.
-  // Notify the Reader if element comparison.
+  // During comparison notify the Reader of the new element.
   void addedElement(LVLine *Line);
   void addedElement(LVScope *Scope);
   void addedElement(LVSymbol *Symbol);
@@ -454,8 +603,12 @@ public:
 
   void addSize(LVScope *Scope, LVOffset Lower, LVOffset Upper);
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
   void print(raw_ostream &OS, bool Full = true) const override;
   void printExtra(raw_ostream &OS, bool Full = true) const override;
+  void printWarnings(raw_ostream &OS, bool Full = true) const override;
   void printMatchedElements(raw_ostream &OS, bool UseMatchedElements) override;
 };
 
@@ -466,6 +619,9 @@ public:
   LVScopeEnumeration(const LVScopeEnumeration &) = delete;
   LVScopeEnumeration &operator=(const LVScopeEnumeration &) = delete;
   ~LVScopeEnumeration() = default;
+
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
 
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
@@ -478,6 +634,9 @@ public:
   LVScopeFormalPack(const LVScopeFormalPack &) = delete;
   LVScopeFormalPack &operator=(const LVScopeFormalPack &) = delete;
   ~LVScopeFormalPack() = default;
+
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
 
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
@@ -524,6 +683,13 @@ public:
   void resolveExtra() override;
   void resolveReferences() override;
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
+  // For the given 'Scopes' returns a scope that is logically equal
+  // to the current scope; otherwise 'nullptr'.
+  LVScope *findEqualScope(const LVScopes *Scopes) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -560,6 +726,13 @@ public:
 
   void resolveExtra() override;
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
+  // For the given 'Scopes' returns a scope that is logically equal
+  // to the current scope; otherwise 'nullptr'.
+  LVScope *findEqualScope(const LVScopes *Scopes) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -594,6 +767,13 @@ public:
     setReference(static_cast<LVScope *>(Element));
   }
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
+  // For the given 'Scopes' returns a scope that is logically equal
+  // to the current scope; otherwise 'nullptr'.
+  LVScope *findEqualScope(const LVScopes *Scopes) const override;
+
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };
 
@@ -617,6 +797,9 @@ public:
   // Process the collected location, ranges and calculate coverage.
   void processRangeInformation();
 
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
+
   void print(raw_ostream &OS, bool Full = true) const override;
   void printExtra(raw_ostream &OS, bool Full = true) const override;
   Error doPrintMatches(bool Split, raw_ostream &OS,
@@ -631,6 +814,9 @@ public:
   LVScopeTemplatePack(const LVScopeTemplatePack &) = delete;
   LVScopeTemplatePack &operator=(const LVScopeTemplatePack &) = delete;
   ~LVScopeTemplatePack() = default;
+
+  // Returns true if current scope is logically equal to the given 'Scope'.
+  bool equals(const LVScope *Scope) const override;
 
   void printExtra(raw_ostream &OS, bool Full = true) const override;
 };

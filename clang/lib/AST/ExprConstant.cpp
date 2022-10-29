@@ -11635,17 +11635,31 @@ static bool isUserWritingOffTheEnd(const ASTContext &Ctx, const LValue &LVal) {
   //   conservative with the last element in structs (if it's an array), so our
   //   current behavior is more compatible than an explicit list approach would
   //   be.
-  using FAMKind = LangOptions::StrictFlexArraysLevelKind;
-  FAMKind StrictFlexArraysLevel = Ctx.getLangOpts().getStrictFlexArraysLevel();
+  auto isFlexibleArrayMember = [&] {
+    using FAMKind = LangOptions::StrictFlexArraysLevelKind;
+    FAMKind StrictFlexArraysLevel =
+        Ctx.getLangOpts().getStrictFlexArraysLevel();
+
+    if (Designator.isMostDerivedAnUnsizedArray())
+      return true;
+
+    if (StrictFlexArraysLevel == FAMKind::Default)
+      return true;
+
+    if (Designator.getMostDerivedArraySize() == 0 &&
+        StrictFlexArraysLevel != FAMKind::IncompleteOnly)
+      return true;
+
+    if (Designator.getMostDerivedArraySize() == 1 &&
+        StrictFlexArraysLevel == FAMKind::OneZeroOrIncomplete)
+      return true;
+
+    return false;
+  };
+
   return LVal.InvalidBase &&
          Designator.Entries.size() == Designator.MostDerivedPathLength &&
-         Designator.MostDerivedIsArrayElement &&
-         (Designator.isMostDerivedAnUnsizedArray() ||
-          Designator.getMostDerivedArraySize() == 0 ||
-          (Designator.getMostDerivedArraySize() == 1 &&
-           StrictFlexArraysLevel != FAMKind::Incomplete &&
-           StrictFlexArraysLevel != FAMKind::ZeroOrIncomplete) ||
-          StrictFlexArraysLevel == FAMKind::Default) &&
+         Designator.MostDerivedIsArrayElement && isFlexibleArrayMember() &&
          isDesignatorAtObjectEnd(Ctx, LVal);
 }
 
@@ -15905,9 +15919,7 @@ bool Expr::isIntegerConstantExpr(const ASTContext &Ctx,
   assert(!isValueDependent() &&
          "Expression evaluator can't be called on a dependent expression.");
 
-  llvm::TimeTraceScope TimeScope("isIntegerConstantExpr", [&] {
-    return Loc->printToString(Ctx.getSourceManager());
-  });
+  ExprTimeTraceScope TimeScope(this, Ctx, "isIntegerConstantExpr");
 
   if (Ctx.getLangOpts().CPlusPlus11)
     return EvaluateCPlusPlus11IntegralConstantExpr(Ctx, this, nullptr, Loc);

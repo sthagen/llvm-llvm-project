@@ -33,6 +33,7 @@ constexpr Tag DW_TAG_unaligned = Tag(dwarf::DW_TAG_hi_user + 1);
 namespace llvm {
 namespace logicalview {
 
+using LVSectionIndex = uint64_t;
 using LVAddress = uint64_t;
 using LVHalf = uint16_t;
 using LVLevel = uint32_t;
@@ -101,6 +102,7 @@ using LVOffsets = SmallVector<LVOffset, 8>;
 const LVAddress MaxAddress = std::numeric_limits<uint64_t>::max();
 
 enum class LVBinaryType { NONE, ELF, COFF };
+enum class LVComparePass { Missing, Added };
 
 // Validate functions.
 using LVValidLocation = bool (LVLocation::*)();
@@ -168,6 +170,9 @@ class LVObject {
   // copy constructor to create that object; it is used to print a reference
   // to another object and in the case of templates, to print its encoded args.
   LVObject(const LVObject &Object) {
+#ifndef NDEBUG
+    incID();
+#endif
     Properties = Object.Properties;
     Offset = Object.Offset;
     LineNumber = Object.LineNumber;
@@ -175,6 +180,19 @@ class LVObject {
     TagAttrOpcode = Object.TagAttrOpcode;
     Parent = Object.Parent;
   }
+
+#ifndef NDEBUG
+  // This is an internal ID used for debugging logical elements. It is used
+  // for cases where an unique offset within the binary input file is not
+  // available.
+  static uint64_t GID;
+  uint64_t ID = 0;
+
+  void incID() {
+    ++GID;
+    ID = GID;
+  }
+#endif
 
 protected:
   // Get a string representation for the given number and discriminator.
@@ -190,7 +208,11 @@ protected:
   virtual void printFileIndex(raw_ostream &OS, bool Full = true) const {}
 
 public:
-  LVObject() = default;
+  LVObject() {
+#ifndef NDEBUG
+    incID();
+#endif
+  };
   LVObject &operator=(const LVObject &) = delete;
   virtual ~LVObject() = default;
 
@@ -299,6 +321,9 @@ public:
                        LVObject *Parent, StringRef Value,
                        bool UseQuotes = false, bool PrintRef = false) const;
 
+  // Mark branch as missing (current element and parents).
+  void markBranchAsMissing();
+
   // Prints the common information for an object (name, type, etc).
   virtual void print(raw_ostream &OS, bool Full = true) const;
   // Prints additional information for an object, depending on its kind
@@ -308,6 +333,15 @@ public:
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   virtual void dump() const { print(dbgs()); }
 #endif
+
+  uint64_t getID() const {
+    return
+#ifndef NDEBUG
+        ID;
+#else
+        0;
+#endif
+  }
 };
 
 } // end namespace logicalview

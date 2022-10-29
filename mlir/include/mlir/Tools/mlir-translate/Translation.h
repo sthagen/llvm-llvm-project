@@ -90,7 +90,7 @@ struct TranslateFromMLIRRegistration {
                      << "expected a '" << OpTy::getOperationName()
                      << "' op, got '" << op->getName().getStringRef() << "'";
             },
-            dialectRegistration){};
+            dialectRegistration){}
 };
 struct TranslateRegistration {
   TranslateRegistration(llvm::StringRef name, llvm::StringRef description,
@@ -105,6 +105,9 @@ struct TranslationParser : public llvm::cl::parser<const TranslateFunction *> {
   void printOptionInfo(const llvm::cl::Option &o,
                        size_t globalWidth) const override;
 };
+
+/// Register command-line options used by the translation registry.
+void registerTranslationCLOptions();
 
 } // namespace mlir
 

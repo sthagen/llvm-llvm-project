@@ -707,3 +707,49 @@ define <4 x i32> @freeze_rotr_vec(<4 x i32> %a0) nounwind {
   ret <4 x i32> %z
 }
 declare <4 x i32> @llvm.fshr.v4i32(<4 x i32>, <4 x i32>, <4 x i32>)
+
+define i32 @freeze_fshl(i32 %a0, i32 %a1, i32 %a2) nounwind {
+; X86-LABEL: freeze_fshl:
+; X86:       # %bb.0:
+; X86-NEXT:    movl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    movl {{[0-9]+}}(%esp), %eax
+; X86-NEXT:    shrl $27, %eax
+; X86-NEXT:    shldl $27, %ecx, %eax
+; X86-NEXT:    retl
+;
+; X64-LABEL: freeze_fshl:
+; X64:       # %bb.0:
+; X64-NEXT:    movl %esi, %eax
+; X64-NEXT:    shrl $27, %eax
+; X64-NEXT:    shldl $27, %edx, %eax
+; X64-NEXT:    retq
+  %f1 = freeze i32 %a1
+  %f2 = freeze i32 %a2
+  %x = call i32 @llvm.fshl.i32(i32 %a0, i32 %f1, i32 5)
+  %y = freeze i32 %x
+  %z = call i32 @llvm.fshl.i32(i32 %y, i32 %f2, i32 27)
+  ret i32 %z
+}
+
+define i32 @freeze_fshr(i32 %a0, i32 %a1, i32 %a2) nounwind {
+; X86-LABEL: freeze_fshr:
+; X86:       # %bb.0:
+; X86-NEXT:    movl {{[0-9]+}}(%esp), %ecx
+; X86-NEXT:    movl {{[0-9]+}}(%esp), %eax
+; X86-NEXT:    shrl %eax
+; X86-NEXT:    shldl $1, %ecx, %eax
+; X86-NEXT:    retl
+;
+; X64-LABEL: freeze_fshr:
+; X64:       # %bb.0:
+; X64-NEXT:    movl %esi, %eax
+; X64-NEXT:    shrl %eax
+; X64-NEXT:    shldl $1, %edx, %eax
+; X64-NEXT:    retq
+  %f1 = freeze i32 %a1
+  %f2 = freeze i32 %a2
+  %x = call i32 @llvm.fshr.i32(i32 %a0, i32 %f1, i32 1)
+  %y = freeze i32 %x
+  %z = call i32 @llvm.fshr.i32(i32 %y, i32 %f2, i32 31)
+  ret i32 %z
+}

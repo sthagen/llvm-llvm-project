@@ -371,6 +371,8 @@ defm : Zn2WriteResFpuPair<WriteFSqrt64X,  [Zn2FPU3], 20, [10]>;
 defm : Zn2WriteResFpuPair<WriteFSqrt64Y,  [Zn2FPU3], 20, [10]>;
 defm : X86WriteResPairUnsupported<WriteFSqrt64Z>;
 defm : Zn2WriteResFpuPair<WriteFSqrt80,   [Zn2FPU3], 20, [20]>;
+defm : Zn2WriteResFpuPair<WriteFShuffle256, [Zn2FPU], 2>;
+defm : Zn2WriteResFpuPair<WriteFVarShuffle256, [Zn2FPU], 2>;
 
 // Vector integer operations which uses FPU units
 defm : X86WriteRes<WriteVecLoad,         [Zn2AGU], 8, [1], 1>;
@@ -477,11 +479,6 @@ defm : Zn2WriteResFpuPair<WriteAESKeyGen, [Zn2FPU01], 4>;
 
 def : WriteRes<WriteFence,  [Zn2AGU]>;
 def : WriteRes<WriteNop, []>;
-
-// Following instructions with latency=100 are microcoded.
-// We set long latency so as to block the entire pipeline.
-defm : Zn2WriteResFpuPair<WriteFShuffle256, [Zn2FPU], 100>;
-defm : Zn2WriteResFpuPair<WriteFVarShuffle256, [Zn2FPU], 100>;
 
 // Microcoded Instructions
 def Zn2WriteMicrocoded : SchedWriteRes<[]> {
@@ -1126,21 +1123,6 @@ def Zn2WritePCMPGTQYm : SchedWriteRes<[Zn2AGU, Zn2FPU03]> {
 }
 def : InstRW<[Zn2WritePCMPGTQm], (instregex "(V?)PCMPGTQrm")>;
 def : InstRW<[Zn2WritePCMPGTQYm], (instrs VPCMPGTQYrm)>;
-
-//-- Logic instructions --//
-
-// PSLL,PSRL,PSRA W/D/Q.
-// x,x / v,v,x.
-def Zn2WritePShift  : SchedWriteRes<[Zn2FPU2]> {
-  let Latency = 3;
-}
-def Zn2WritePShiftY : SchedWriteRes<[Zn2FPU2]> {
-  let Latency = 3;
-}
-
-// PSLL,PSRL DQ.
-def : InstRW<[Zn2WritePShift], (instregex "(V?)PS(R|L)LDQri")>;
-def : InstRW<[Zn2WritePShiftY], (instregex "(V?)PS(R|L)LDQYri")>;
 
 //=== Floating Point XMM and YMM Instructions ===//
 //-- Move instructions --//
