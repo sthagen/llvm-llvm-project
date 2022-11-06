@@ -513,7 +513,8 @@ TEST(ToolChainTest, BadConfigFile) {
   // do not provide necessary alignment, so copy constant string into properly
   // allocated memory in heap.
   llvm::BumpPtrAllocator Alloc;
-  char *StrBuff = (char *)Alloc.Allocate(6, 2);
+  char *StrBuff = (char *)Alloc.Allocate(16, 4);
+  std::memset(StrBuff, 0, 16);
   std::memcpy(StrBuff, "\xFF\xFE\x00\xD8\x00\x00", 6);
   StringRef BadUTF(StrBuff, 6);
   FS->setCurrentWorkingDirectory(TestRoot);
@@ -595,9 +596,10 @@ TEST(ToolChainTest, ConfigInexistentInclude) {
     ASSERT_TRUE(C);
     ASSERT_TRUE(C->containsError());
     EXPECT_EQ(1U, DiagConsumer->Errors.size());
-    EXPECT_STREQ("cannot read configuration file '" USERCONFIG
-                 "': cannot not open file '" UNEXISTENT "'",
-                 DiagConsumer->Errors[0].c_str());
+    EXPECT_STRCASEEQ("cannot read configuration file '" USERCONFIG
+                     "': cannot not open file '" UNEXISTENT
+                     "': no such file or directory",
+                     DiagConsumer->Errors[0].c_str());
   }
 
 #undef USERCONFIG

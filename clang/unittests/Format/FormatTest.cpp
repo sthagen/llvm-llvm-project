@@ -5193,6 +5193,34 @@ TEST_F(FormatTest, MacroDefinitionsWithIncompleteCode) {
   verifyNoCrash("a={0,1\n#if a\n#else\n;\n#endif\n}");
   verifyNoCrash("#if a\na(\n#else\n#endif\n) a {a,b,c,d,f,g};");
   verifyNoCrash("#ifdef A\n a(\n #else\n #endif\n) = []() {      \n)}");
+  verifyNoCrash("#else\n"
+                "#else\n"
+                "#endif\n"
+                "#endif");
+  verifyNoCrash("#else\n"
+                "#if X\n"
+                "#endif\n"
+                "#endif");
+  verifyNoCrash("#else\n"
+                "#endif\n"
+                "#if X\n"
+                "#endif");
+  verifyNoCrash("#if X\n"
+                "#else\n"
+                "#else\n"
+                "#endif\n"
+                "#endif");
+  verifyNoCrash("#if X\n"
+                "#elif Y\n"
+                "#elif Y\n"
+                "#endif\n"
+                "#endif");
+  verifyNoCrash("#endif\n"
+                "#endif");
+  verifyNoCrash("#endif\n"
+                "#else");
+  verifyNoCrash("#endif\n"
+                "#elif Y");
 }
 
 TEST_F(FormatTest, MacrosWithoutTrailingSemicolon) {
@@ -6098,6 +6126,33 @@ TEST_F(FormatTest, LayoutStatementsAroundPreprocessorDirectives) {
                "{\n"
                "#endif\n"
                "  x;\n"
+               "}");
+
+  verifyFormat("#if 0\n"
+               "#endif\n"
+               "#if X\n"
+               "int something_fairly_long; // Align here please\n"
+               "#endif                     // Should be aligned");
+
+  verifyFormat("#if 0\n"
+               "#endif\n"
+               "#if X\n"
+               "#else  // Align\n"
+               ";\n"
+               "#endif // Align");
+
+  verifyFormat("void SomeFunction(int param1,\n"
+               "                  template <\n"
+               "#ifdef A\n"
+               "#if 0\n"
+               "#endif\n"
+               "                      MyType<Some>>\n"
+               "#else\n"
+               "                      Type1, Type2>\n"
+               "#endif\n"
+               "                  param2,\n"
+               "                  param3) {\n"
+               "  f();\n"
                "}");
 }
 
@@ -20280,10 +20335,14 @@ TEST_F(FormatTest, GetsCorrectBasedOnStyle) {
   EXPECT_EQ(0, parseConfiguration(TEXT, &Style).value());                      \
   EXPECT_EQ(VALUE, Style.FIELD) << "Unexpected value after parsing!"
 
+#define CHECK_PARSE_NESTED_VALUE(TEXT, STRUCT, FIELD, VALUE)                   \
+  EXPECT_NE(VALUE, Style.STRUCT.FIELD) << "Initial value already the same!";   \
+  EXPECT_EQ(0, parseConfiguration(#STRUCT ":\n  " TEXT, &Style).value());      \
+  EXPECT_EQ(VALUE, Style.STRUCT.FIELD) << "Unexpected value after parsing!";
+
 TEST_F(FormatTest, ParsesConfigurationBools) {
   FormatStyle Style = {};
   Style.Language = FormatStyle::LK_Cpp;
-  CHECK_PARSE_BOOL(AlignTrailingComments);
   CHECK_PARSE_BOOL(AllowAllArgumentsOnNextLine);
   CHECK_PARSE_BOOL(AllowAllParametersOfDeclarationOnNextLine);
   CHECK_PARSE_BOOL(AllowShortCaseLabelsOnASingleLine);
@@ -20607,6 +20666,31 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE("AlignOperands: false", AlignOperands,
               FormatStyle::OAS_DontAlign);
   CHECK_PARSE("AlignOperands: true", AlignOperands, FormatStyle::OAS_Align);
+
+  CHECK_PARSE("AlignTrailingComments: Leave", AlignTrailingComments,
+              FormatStyle::TrailingCommentsAlignmentStyle(
+                  {FormatStyle::TCAS_Leave, 1}));
+  CHECK_PARSE("AlignTrailingComments: Always", AlignTrailingComments,
+              FormatStyle::TrailingCommentsAlignmentStyle(
+                  {FormatStyle::TCAS_Always, 1}));
+  CHECK_PARSE("AlignTrailingComments: Never", AlignTrailingComments,
+              FormatStyle::TrailingCommentsAlignmentStyle(
+                  {FormatStyle::TCAS_Never, 1}));
+  // For backwards compatibility
+  CHECK_PARSE("AlignTrailingComments: true", AlignTrailingComments,
+              FormatStyle::TrailingCommentsAlignmentStyle(
+                  {FormatStyle::TCAS_Always, 1}));
+  CHECK_PARSE("AlignTrailingComments: false", AlignTrailingComments,
+              FormatStyle::TrailingCommentsAlignmentStyle(
+                  {FormatStyle::TCAS_Never, 1}));
+  CHECK_PARSE_NESTED_VALUE("Kind: Always", AlignTrailingComments, Kind,
+                           FormatStyle::TCAS_Always);
+  CHECK_PARSE_NESTED_VALUE("Kind: Never", AlignTrailingComments, Kind,
+                           FormatStyle::TCAS_Never);
+  CHECK_PARSE_NESTED_VALUE("Kind: Leave", AlignTrailingComments, Kind,
+                           FormatStyle::TCAS_Leave);
+  CHECK_PARSE_NESTED_VALUE("OverEmptyLines: 1234", AlignTrailingComments,
+                           OverEmptyLines, 1234u);
 
   Style.UseTab = FormatStyle::UT_ForIndentation;
   CHECK_PARSE("UseTab: Never", UseTab, FormatStyle::UT_Never);
@@ -25463,6 +25547,54 @@ TEST_F(FormatTest, ShortTemplatedArgumentLists) {
 
   verifyFormat("struct Z : X<decltype([] { return 0; }){}> {};", Style);
   verifyFormat("template <int N> struct Foo<char[N]> {};", Style);
+}
+
+TEST_F(FormatTest, MultilineLambdaInConditional) {
+  auto Style = getLLVMStyleWithColumns(70);
+  verifyFormat("auto aLengthyIdentifier = oneExpressionSoThatWeBreak ? []() {\n"
+               "  ;\n"
+               "  return 5;\n"
+               "}()\n"
+               "                                                     : 2;",
+               Style);
+  verifyFormat(
+      "auto aLengthyIdentifier = oneExpressionSoThatWeBreak ? 2 : []() {\n"
+      "  ;\n"
+      "  return 5;\n"
+      "}();",
+      Style);
+
+  Style = getLLVMStyleWithColumns(60);
+  verifyFormat("auto aLengthyIdentifier = oneExpressionSoThatWeBreak\n"
+               "                              ? []() {\n"
+               "                                  ;\n"
+               "                                  return 5;\n"
+               "                                }()\n"
+               "                              : 2;",
+               Style);
+  verifyFormat("auto aLengthyIdentifier =\n"
+               "    oneExpressionSoThatWeBreak ? 2 : []() {\n"
+               "      ;\n"
+               "      return 5;\n"
+               "    }();",
+               Style);
+
+  Style = getLLVMStyleWithColumns(40);
+  verifyFormat("auto aLengthyIdentifier =\n"
+               "    oneExpressionSoThatWeBreak ? []() {\n"
+               "      ;\n"
+               "      return 5;\n"
+               "    }()\n"
+               "                               : 2;",
+               Style);
+  verifyFormat("auto aLengthyIdentifier =\n"
+               "    oneExpressionSoThatWeBreak\n"
+               "        ? 2\n"
+               "        : []() {\n"
+               "            ;\n"
+               "            return 5;\n"
+               "          };",
+               Style);
 }
 
 TEST_F(FormatTest, AlignAfterOpenBracketBlockIndent) {
