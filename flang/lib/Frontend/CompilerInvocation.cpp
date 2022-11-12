@@ -125,6 +125,9 @@ static void parseCodeGenArgs(Fortran::frontend::CodeGenOptions &opts,
                    clang::driver::options::OPT_fno_debug_pass_manager, false))
     opts.DebugPassManager = 1;
 
+  for (auto *a : args.filtered(clang::driver::options::OPT_fpass_plugin_EQ))
+    opts.LLVMPassPlugins.push_back(a->getValue());
+
   // -mrelocation-model option.
   if (const llvm::opt::Arg *A =
           args.getLastArg(clang::driver::options::OPT_mrelocation_model)) {
@@ -688,7 +691,7 @@ static bool parseFloatingPointArgs(CompilerInvocation &invoc,
       fpContractMode = LangOptions::FPM_Fast;
     else {
       diags.Report(clang::diag::err_drv_unsupported_option_argument)
-          << a->getOption().getName() << val;
+          << a->getSpelling() << val;
       return false;
     }
 
@@ -944,8 +947,23 @@ void CompilerInvocation::setSemanticsOpts(
 /// Set \p loweringOptions controlling lowering behavior based
 /// on the \p optimizationLevel.
 void CompilerInvocation::setLoweringOptions() {
-  const auto &codegenOpts = getCodeGenOpts();
+  const CodeGenOptions &codegenOpts = getCodeGenOpts();
 
   // Lower TRANSPOSE as a runtime call under -O0.
   loweringOpts.setOptimizeTranspose(codegenOpts.OptimizationLevel > 0);
+
+  const LangOptions &langOptions = getLangOpts();
+  Fortran::common::MathOptionsBase &mathOpts = loweringOpts.getMathOptions();
+  // TODO: when LangOptions are finalized, we can represent
+  //       the math related options using Fortran::commmon::MathOptionsBase,
+  //       so that we can just copy it into LoweringOptions.
+  mathOpts
+      .setFPContractEnabled(langOptions.getFPContractMode() ==
+                            LangOptions::FPM_Fast)
+      .setNoHonorInfs(langOptions.NoHonorInfs)
+      .setNoHonorNaNs(langOptions.NoHonorNaNs)
+      .setApproxFunc(langOptions.ApproxFunc)
+      .setNoSignedZeros(langOptions.NoSignedZeros)
+      .setAssociativeMath(langOptions.AssociativeMath)
+      .setReciprocalMath(langOptions.ReciprocalMath);
 }

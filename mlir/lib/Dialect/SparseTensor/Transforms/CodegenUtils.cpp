@@ -224,7 +224,7 @@ Operation *SparseTensorLoopEmitter::enterLoopOverTensorAtDim(
   // We can not re-enter the same level.
   assert(!coord[tid][dim]);
   // TODO: support multiple return on parallel for?
-  assert(!isParallel || reduc.empty() <= 1);
+  assert(!isParallel || reduc.size() <= 1);
 
   Value step = constantIndex(builder, loc, 1);
   auto dimType = dimTypes[tid][dim];
@@ -945,6 +945,11 @@ Value mlir::sparse_tensor::allocDenseTensor(OpBuilder &builder, Location loc,
   Value zero = constantZero(builder, loc, elemTp);
   builder.create<linalg::FillOp>(loc, ValueRange{zero}, ValueRange{mem});
   return mem;
+}
+
+void mlir::sparse_tensor::deallocDenseTensor(OpBuilder &builder, Location loc,
+                                             Value buffer) {
+  builder.create<memref::DeallocOp>(loc, buffer);
 }
 
 Value mlir::sparse_tensor::genValueForDense(OpBuilder &builder, Location loc,

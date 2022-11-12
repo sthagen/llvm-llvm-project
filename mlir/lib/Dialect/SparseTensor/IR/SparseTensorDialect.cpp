@@ -6,6 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <utility>
+
 #include "mlir/Dialect/SparseTensor/IR/SparseTensor.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -559,7 +561,8 @@ LogicalResult InsertOp::verify() {
 void PushBackOp::build(OpBuilder &builder, OperationState &result,
                        Type outBuffer, Value bufferSizes, Value inBuffer,
                        Value value, APInt idx) {
-  build(builder, result, outBuffer, bufferSizes, inBuffer, value, idx, Value());
+  build(builder, result, outBuffer, bufferSizes, inBuffer, value,
+        std::move(idx), Value());
 }
 
 LogicalResult PushBackOp::verify() {
@@ -715,6 +718,42 @@ LogicalResult SortOp::verify() {
 
   if (n)
     return checkTypes(getYs(), false);
+
+  return success();
+}
+
+LogicalResult SortCooOp::verify() {
+  auto cn = getN().getDefiningOp<arith::ConstantIndexOp>();
+  // We can't check the size of the buffers when n or buffer dimensions aren't
+  // compile-time constants.
+  if (!cn)
+    return success();
+
+  uint64_t n = cn.value();
+  uint64_t nx = 1;
+  if (auto nxAttr = getNxAttr()) {
+    nx = nxAttr.getInt();
+    if (nx < 1)
+      emitError(llvm::formatv("Expected nx > 1, got {0}", nx));
+  }
+  uint64_t ny = 0;
+  if (auto nyAttr = getNyAttr()) {
+    ny = nyAttr.getInt();
+  }
+
+  auto checkDim = [&](Value v, uint64_t min, const char *message) {
+    MemRefType tp = v.getType().cast<MemRefType>();
+    int64_t dim = tp.getShape()[0];
+    if (dim != ShapedType::kDynamicSize && dim < (int64_t)min) {
+      emitError(llvm::formatv("{0} got {1} < {2}", message, dim, min));
+    }
+  };
+
+  checkDim(getXy(), n * (nx + ny), "Expected dimension(xy) >= n * (nx + ny)");
+
+  for (Value opnd : getYs()) {
+    checkDim(opnd, n, "Expected dimension(y) >= n");
+  }
 
   return success();
 }
