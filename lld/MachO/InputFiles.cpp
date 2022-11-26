@@ -1346,11 +1346,11 @@ void ObjFile::registerEhFrames(Section &ehFrameSection) {
     // that all EH frames have an associated symbol so that we can generate
     // subtractor relocs that reference them.
     if (isec->symbols.size() == 0)
-      make<Defined>("EH_Frame", isec->getFile(), isec, /*value=*/0,
-                    isec->getSize(), /*isWeakDef=*/false, /*isExternal=*/false,
-                    /*isPrivateExtern=*/false, /*includeInSymtab=*/false,
-                    /*isThumb=*/false, /*isReferencedDynamically=*/false,
-                    /*noDeadStrip=*/false);
+      isec->symbols.push_back(make<Defined>(
+          "EH_Frame", isec->getFile(), isec, /*value=*/0, /*size=*/0,
+          /*isWeakDef=*/false, /*isExternal=*/false, /*isPrivateExtern=*/false,
+          /*includeInSymtab=*/false, /*isThumb=*/false,
+          /*isReferencedDynamically=*/false, /*noDeadStrip=*/false));
     else if (isec->symbols[0]->value != 0)
       fatal("found symbol at unexpected offset in __eh_frame");
 
@@ -2212,9 +2212,9 @@ void BitcodeFile::parseLazy() {
 }
 
 void macho::extract(InputFile &file, StringRef reason) {
+  printArchiveMemberLoad(reason, &file);
   assert(file.lazy);
   file.lazy = false;
-  printArchiveMemberLoad(reason, &file);
   if (auto *bitcode = dyn_cast<BitcodeFile>(&file)) {
     bitcode->parse();
   } else {

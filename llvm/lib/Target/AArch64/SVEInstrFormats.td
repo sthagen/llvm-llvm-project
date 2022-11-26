@@ -687,6 +687,17 @@ class sve_int_ptest<bits<6> opc, string asm, SDPatternOperator op>
   let isCompare = 1;
 }
 
+multiclass sve_int_ptest<bits<6> opc, string asm, SDPatternOperator op,
+                         SDPatternOperator op_any> {
+  def NAME : sve_int_ptest<opc, asm, op>;
+
+  let hasNoSchedulingInfo = 1, isCompare = 1, Defs = [NZCV] in {
+  def _ANY : Pseudo<(outs), (ins PPRAny:$Pg, PPR8:$Pn),
+                    [(op_any (nxv16i1 PPRAny:$Pg), (nxv16i1 PPR8:$Pn))]>,
+             PseudoInstExpansion<(!cast<Instruction>(NAME) PPRAny:$Pg, PPR8:$Pn)>;
+  }
+}
+
 class sve_int_pfirst_next<bits<2> sz8_64, bits<5> opc, string asm,
                           PPRRegOp pprty>
 : I<(outs pprty:$Pdn), (ins PPRAny:$Pg, pprty:$_Pdn),
@@ -4470,10 +4481,10 @@ class sve_int_arith_imm<bits<2> sz8_64, bits<6> opc, string asm,
 }
 
 multiclass sve_int_arith_imm1<bits<2> opc, string asm, SDPatternOperator op> {
-  def _B : sve_int_arith_imm<0b00, { 0b1010, opc }, asm, ZPR8, simm8>;
-  def _H : sve_int_arith_imm<0b01, { 0b1010, opc }, asm, ZPR16, simm8>;
-  def _S : sve_int_arith_imm<0b10, { 0b1010, opc }, asm, ZPR32, simm8>;
-  def _D : sve_int_arith_imm<0b11, { 0b1010, opc }, asm, ZPR64, simm8>;
+  def _B : sve_int_arith_imm<0b00, { 0b1010, opc }, asm, ZPR8, simm8_32b>;
+  def _H : sve_int_arith_imm<0b01, { 0b1010, opc }, asm, ZPR16, simm8_32b>;
+  def _S : sve_int_arith_imm<0b10, { 0b1010, opc }, asm, ZPR32, simm8_32b>;
+  def _D : sve_int_arith_imm<0b11, { 0b1010, opc }, asm, ZPR64, simm8_32b>;
 
   def : SVE_1_Op_Imm_Arith_All_Active<nxv16i8, nxv16i1, op, ZPR8, i32, SVEArithSImmPat32, !cast<Instruction>(NAME # _B)>;
   def : SVE_1_Op_Imm_Arith_All_Active<nxv8i16, nxv8i1,  op, ZPR16, i32, SVEArithSImmPat32, !cast<Instruction>(NAME # _H)>;
@@ -4494,10 +4505,10 @@ multiclass sve_int_arith_imm1_unsigned<bits<2> opc, string asm, SDPatternOperato
 }
 
 multiclass sve_int_arith_imm2<string asm, SDPatternOperator op> {
-  def _B : sve_int_arith_imm<0b00, 0b110000, asm, ZPR8,  simm8>;
-  def _H : sve_int_arith_imm<0b01, 0b110000, asm, ZPR16, simm8>;
-  def _S : sve_int_arith_imm<0b10, 0b110000, asm, ZPR32, simm8>;
-  def _D : sve_int_arith_imm<0b11, 0b110000, asm, ZPR64, simm8>;
+  def _B : sve_int_arith_imm<0b00, 0b110000, asm, ZPR8,  simm8_32b>;
+  def _H : sve_int_arith_imm<0b01, 0b110000, asm, ZPR16, simm8_32b>;
+  def _S : sve_int_arith_imm<0b10, 0b110000, asm, ZPR32, simm8_32b>;
+  def _D : sve_int_arith_imm<0b11, 0b110000, asm, ZPR64, simm8_32b>;
 
   def : SVE_1_Op_Imm_Arith_All_Active<nxv16i8, nxv16i1, op, ZPR8, i32, SVEArithSImmPat32, !cast<Instruction>(NAME # _B)>;
   def : SVE_1_Op_Imm_Arith_All_Active<nxv8i16, nxv8i1, op, ZPR16, i32, SVEArithSImmPat32, !cast<Instruction>(NAME # _H)>;

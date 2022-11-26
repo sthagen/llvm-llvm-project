@@ -1004,6 +1004,11 @@ void AsmPrinter::emitFunctionHeader() {
                        HI.TimerGroupDescription, TimePassesIsEnabled);
     HI.Handler->beginFunction(MF);
   }
+  for (const HandlerInfo &HI : Handlers) {
+    NamedRegionTimer T(HI.TimerName, HI.TimerDescription, HI.TimerGroupName,
+                       HI.TimerGroupDescription, TimePassesIsEnabled);
+    HI.Handler->beginBasicBlockSection(MF->front());
+  }
 
   // Emit the prologue data.
   if (F.hasPrologueData())
@@ -1803,6 +1808,15 @@ void AsmPrinter::emitFunctionBody() {
       OutStreamer->emitELFSize(CurrentFnBeginLocal, SizeExp);
   }
 
+  // Call endBasicBlockSection on the last block now, if it wasn't already
+  // called.
+  if (!MF->back().isEndSection()) {
+    for (const HandlerInfo &HI : Handlers) {
+      NamedRegionTimer T(HI.TimerName, HI.TimerDescription, HI.TimerGroupName,
+                         HI.TimerGroupDescription, TimePassesIsEnabled);
+      HI.Handler->endBasicBlockSection(MF->back());
+    }
+  }
   for (const HandlerInfo &HI : Handlers) {
     NamedRegionTimer T(HI.TimerName, HI.TimerDescription, HI.TimerGroupName,
                        HI.TimerGroupDescription, TimePassesIsEnabled);
@@ -2821,9 +2835,9 @@ void AsmPrinter::emitAlignment(Align Alignment, const GlobalObject *GV,
       STI = &getSubtargetInfo();
     else
       STI = TM.getMCSubtargetInfo();
-    OutStreamer->emitCodeAlignment(Alignment.value(), STI, MaxBytesToEmit);
+    OutStreamer->emitCodeAlignment(Alignment, STI, MaxBytesToEmit);
   } else
-    OutStreamer->emitValueToAlignment(Alignment.value(), 0, 1, MaxBytesToEmit);
+    OutStreamer->emitValueToAlignment(Alignment, 0, 1, MaxBytesToEmit);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3655,11 +3669,6 @@ void AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
     }
   }
 
-  // Emit an alignment directive for this block, if needed.
-  const Align Alignment = MBB.getAlignment();
-  if (Alignment != Align(1))
-    emitAlignment(Alignment, nullptr, MBB.getMaxBytesForAlignment());
-
   // Switch to a new section if this basic block must begin a section. The
   // entry block is always placed in the function section and is handled
   // separately.
@@ -3669,6 +3678,11 @@ void AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
                                                             MBB, TM));
     CurrentSectionBeginSym = MBB.getSymbol();
   }
+
+  // Emit an alignment directive for this block, if needed.
+  const Align Alignment = MBB.getAlignment();
+  if (Alignment != Align(1))
+    emitAlignment(Alignment, nullptr, MBB.getMaxBytesForAlignment());
 
   // If the block has its address taken, emit any labels that were used to
   // reference the block.  It is possible that there is more than one label
@@ -3719,11 +3733,11 @@ void AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
   }
 
   // With BB sections, each basic block must handle CFI information on its own
-  // if it begins a section (Entry block is handled separately by
-  // AsmPrinterHandler::beginFunction).
+  // if it begins a section (Entry block call is handled separately, next to
+  // beginFunction).
   if (MBB.isBeginSection() && !MBB.isEntryBlock())
     for (const HandlerInfo &HI : Handlers)
-      HI.Handler->beginBasicBlock(MBB);
+      HI.Handler->beginBasicBlockSection(MBB);
 }
 
 void AsmPrinter::emitBasicBlockEnd(const MachineBasicBlock &MBB) {
@@ -3731,7 +3745,7 @@ void AsmPrinter::emitBasicBlockEnd(const MachineBasicBlock &MBB) {
   // sections.
   if (MBB.isEndSection())
     for (const HandlerInfo &HI : Handlers)
-      HI.Handler->endBasicBlock(MBB);
+      HI.Handler->endBasicBlockSection(MBB);
 }
 
 void AsmPrinter::emitVisibility(MCSymbol *Sym, unsigned Visibility,
@@ -3947,7 +3961,8 @@ void AsmPrinter::emitXRayTable() {
   // pointers. This should work for both 32-bit and 64-bit platforms.
   if (FnSledIndex) {
     OutStreamer->switchSection(FnSledIndex);
-    OutStreamer->emitCodeAlignment(2 * WordSizeBytes, &getSubtargetInfo());
+    OutStreamer->emitCodeAlignment(Align(2 * WordSizeBytes),
+                                   &getSubtargetInfo());
     OutStreamer->emitSymbolValue(SledsStart, WordSizeBytes, false);
     OutStreamer->emitSymbolValue(SledsEnd, WordSizeBytes, false);
     OutStreamer->switchSection(PrevSection);

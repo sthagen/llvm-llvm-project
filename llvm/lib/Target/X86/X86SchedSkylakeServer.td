@@ -401,7 +401,7 @@ defm : SKXWriteResPair<WriteMPSADZ,  [SKXPort5], 4, [2], 2, 7>;
 defm : SKXWriteResPair<WritePSADBW,  [SKXPort5], 3, [1], 1, 5>; // Vector PSADBW.
 defm : SKXWriteResPair<WritePSADBWX, [SKXPort5], 3, [1], 1, 6>;
 defm : SKXWriteResPair<WritePSADBWY, [SKXPort5], 3, [1], 1, 7>;
-defm : SKXWriteResPair<WritePSADBWZ, [SKXPort5], 3, [1], 1, 7>;
+defm : SKXWriteResPair<WritePSADBWZ, [SKXPort5], 3, [1], 1, 7>; // TODO: 512-bit ops require ports 0/1 to be joined.
 defm : SKXWriteResPair<WritePHMINPOS, [SKXPort0], 4, [1], 1, 6>; // Vector PHMINPOS.
 
 // Vector integer shifts.
@@ -709,9 +709,7 @@ def SKXWriteResGroup10 : SchedWriteRes<[SKXPort0156]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[SKXWriteResGroup10], (instrs CBW, CWDE, CDQE,
-                                          CMC, STC,
-                                          SGDT64m,
+def: InstRW<[SKXWriteResGroup10], (instrs SGDT64m,
                                           SIDT64m,
                                           SMSW16m,
                                           STRm,
@@ -828,11 +826,9 @@ def SKXWriteResGroup32 : SchedWriteRes<[SKXPort5]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[SKXWriteResGroup32], (instrs VPSADBWZrr)>; // TODO: 512-bit ops require ports 0/1 to be joined.
 def: InstRW<[SKXWriteResGroup32], (instregex "(ADD|SUB|SUBR)_(FPrST0|FST0r|FrST0)",
                                              "VALIGND(Z|Z128|Z256)rri",
                                              "VALIGNQ(Z|Z128|Z256)rri",
-                                             "VDBPSADBWZrri", // TODO: 512-bit ops require ports 0/1 to be joined.
                                              "VPBROADCAST(B|W)rr",
                                              "VP(MAX|MIN)(S|U)Q(Z|Z128|Z256)rr")>;
 
@@ -958,39 +954,30 @@ def SKXWriteResGroup50 : SchedWriteRes<[SKXPort01]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[SKXWriteResGroup50], (instregex "VCVTDQ2PS(Y|Z128|Z256)rr",
-                                             "(V?)CVTDQ2PSrr",
-                                             "VCVTPD2QQ(Z128|Z256)rr",
+def: InstRW<[SKXWriteResGroup50], (instregex "VCVTPD2QQ(Z128|Z256)rr",
                                              "VCVTPD2UQQ(Z128|Z256)rr",
                                              "VCVTPS2DQ(Y|Z128|Z256)rr",
                                              "(V?)CVTPS2DQrr",
                                              "VCVTPS2UDQ(Z128|Z256)rr",
-                                             "VCVTQQ2PD(Z128|Z256)rr",
                                              "VCVTTPD2QQ(Z128|Z256)rr",
                                              "VCVTTPD2UQQ(Z128|Z256)rr",
                                              "VCVTTPS2DQ(Z128|Z256)rr",
                                              "(V?)CVTTPS2DQrr",
-                                             "VCVTTPS2UDQ(Z128|Z256)rr",
-                                             "VCVTUDQ2PS(Z128|Z256)rr",
-                                             "VCVTUQQ2PD(Z128|Z256)rr")>;
+                                             "VCVTTPS2UDQ(Z128|Z256)rr")>;
 
 def SKXWriteResGroup50z : SchedWriteRes<[SKXPort05]> {
   let Latency = 4;
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[SKXWriteResGroup50z], (instrs VCVTDQ2PSZrr,
-                                           VCVTPD2QQZrr,
+def: InstRW<[SKXWriteResGroup50z], (instrs VCVTPD2QQZrr,
                                            VCVTPD2UQQZrr,
                                            VCVTPS2DQZrr,
                                            VCVTPS2UDQZrr,
-                                           VCVTQQ2PDZrr,
                                            VCVTTPD2QQZrr,
                                            VCVTTPD2UQQZrr,
                                            VCVTTPS2DQZrr,
-                                           VCVTTPS2UDQZrr,
-                                           VCVTUDQ2PSZrr,
-                                           VCVTUQQ2PDZrr)>;
+                                           VCVTTPS2UDQZrr)>;
 
 def SKXWriteResGroup51 : SchedWriteRes<[SKXPort5]> {
   let Latency = 4;

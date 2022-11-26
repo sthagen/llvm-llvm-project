@@ -2443,6 +2443,12 @@ void OMPClauseEnqueue::VisitOMPDynamicAllocatorsClause(
 void OMPClauseEnqueue::VisitOMPAtomicDefaultMemOrderClause(
     const OMPAtomicDefaultMemOrderClause *) {}
 
+void OMPClauseEnqueue::VisitOMPAtClause(const OMPAtClause *) {}
+
+void OMPClauseEnqueue::VisitOMPSeverityClause(const OMPSeverityClause *) {}
+
+void OMPClauseEnqueue::VisitOMPMessageClause(const OMPMessageClause *) {}
+
 void OMPClauseEnqueue::VisitOMPDeviceClause(const OMPDeviceClause *C) {
   Visitor->AddStmt(C->getDevice());
 }
@@ -5401,22 +5407,6 @@ CXString clang_getCursorDisplayName(CXCursor C) {
   }
 
   return clang_getCursorSpelling(C);
-}
-
-CXString
-clang_getCompletionResultKindSpelling(enum CXCompletionResultKind Kind) {
-  switch (Kind) {
-  case CXCompletionResult_Declaration:
-    return cxstring::createRef("Declaration");
-  case CXCompletionResult_Keyword:
-    return cxstring::createRef("Keyword");
-  case CXCompletionResult_Macro:
-    return cxstring::createRef("Macro");
-  case CXCompletionResult_Pattern:
-    return cxstring::createRef("Pattern");
-  }
-
-  llvm_unreachable("Unhandled CXCompletionResultKind");
 }
 
 CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
@@ -8931,6 +8921,17 @@ unsigned clang_CXXMethod_isCopyAssignmentOperator(CXCursor C) {
       D ? dyn_cast_or_null<CXXMethodDecl>(D->getAsFunction()) : nullptr;
 
   return (Method && Method->isCopyAssignmentOperator()) ? 1 : 0;
+}
+
+unsigned clang_CXXMethod_isMoveAssignmentOperator(CXCursor C) {
+  if (!clang_isDeclaration(C.kind))
+    return 0;
+
+  const Decl *D = cxcursor::getCursorDecl(C);
+  const CXXMethodDecl *Method =
+      D ? dyn_cast_or_null<CXXMethodDecl>(D->getAsFunction()) : nullptr;
+
+  return (Method && Method->isMoveAssignmentOperator()) ? 1 : 0;
 }
 
 unsigned clang_CXXRecord_isAbstract(CXCursor C) {

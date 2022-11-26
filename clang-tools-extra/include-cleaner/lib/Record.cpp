@@ -16,6 +16,7 @@
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/PPCallbacks.h"
 #include "clang/Lex/Preprocessor.h"
+#include "clang/Tooling/Inclusions/HeaderAnalysis.h"
 
 namespace clang::include_cleaner {
 namespace {
@@ -82,14 +83,54 @@ public:
       recordMacroRef(MacroName, *MI);
   }
 
+  void Ifdef(SourceLocation Loc, const Token &MacroNameTok,
+             const MacroDefinition &MD) override {
+    if (!Active)
+      return;
+    if (const auto *MI = MD.getMacroInfo())
+      recordMacroRef(MacroNameTok, *MI, RefType::Ambiguous);
+  }
+
+  void Ifndef(SourceLocation Loc, const Token &MacroNameTok,
+              const MacroDefinition &MD) override {
+    if (!Active)
+      return;
+    if (const auto *MI = MD.getMacroInfo())
+      recordMacroRef(MacroNameTok, *MI, RefType::Ambiguous);
+  }
+
+  void Elifdef(SourceLocation Loc, const Token &MacroNameTok,
+               const MacroDefinition &MD) override {
+    if (!Active)
+      return;
+    if (const auto *MI = MD.getMacroInfo())
+      recordMacroRef(MacroNameTok, *MI, RefType::Ambiguous);
+  }
+
+  void Elifndef(SourceLocation Loc, const Token &MacroNameTok,
+                const MacroDefinition &MD) override {
+    if (!Active)
+      return;
+    if (const auto *MI = MD.getMacroInfo())
+      recordMacroRef(MacroNameTok, *MI, RefType::Ambiguous);
+  }
+
+  void Defined(const Token &MacroNameTok, const MacroDefinition &MD,
+               SourceRange Range) override {
+    if (!Active)
+      return;
+    if (const auto *MI = MD.getMacroInfo())
+      recordMacroRef(MacroNameTok, *MI, RefType::Ambiguous);
+  }
+
 private:
-  void recordMacroRef(const Token &Tok, const MacroInfo &MI) {
+  void recordMacroRef(const Token &Tok, const MacroInfo &MI,
+                      RefType RT = RefType::Explicit) {
     if (MI.isBuiltinMacro())
       return; // __FILE__ is not a reference.
-    Recorded.MacroReferences.push_back(
-        SymbolReference{Tok.getLocation(),
-                        Macro{Tok.getIdentifierInfo(), MI.getDefinitionLoc()},
-                        RefType::Explicit});
+    Recorded.MacroReferences.push_back(SymbolReference{
+        Tok.getLocation(),
+        Macro{Tok.getIdentifierInfo(), MI.getDefinitionLoc()}, RT});
   }
 
   bool Active = false;
@@ -118,12 +159,25 @@ static llvm::Optional<StringRef> parseIWYUPragma(const char *Text) {
 class PragmaIncludes::RecordPragma : public PPCallbacks, public CommentHandler {
 public:
   RecordPragma(const CompilerInstance &CI, PragmaIncludes *Out)
-      : SM(CI.getSourceManager()), Out(Out), UniqueStrings(Arena) {}
+      : SM(CI.getSourceManager()),
+        HeaderInfo(CI.getPreprocessor().getHeaderSearchInfo()), Out(Out),
+        UniqueStrings(Arena) {}
 
   void FileChanged(SourceLocation Loc, FileChangeReason Reason,
                    SrcMgr::CharacteristicKind FileType,
                    FileID PrevFID) override {
     InMainFile = SM.isWrittenInMainFile(Loc);
+
+    if (Reason == PPCallbacks::ExitFile) {
+      // At file exit time HeaderSearchInfo is valid and can be used to
+      // determine whether the file was a self-contained header or not.
+      if (const FileEntry *FE = SM.getFileEntryForID(PrevFID)) {
+        if (tooling::isSelfContainedHeader(FE, SM, HeaderInfo))
+          Out->NonSelfContainedFiles.erase(FE->getUniqueID());
+        else
+          Out->NonSelfContainedFiles.insert(FE->getUniqueID());
+      }
+    }
   }
 
   void EndOfMainFile() override {
@@ -238,6 +292,7 @@ private:
 
   bool InMainFile = false;
   const SourceManager &SM;
+  HeaderSearch &HeaderInfo;
   PragmaIncludes *Out;
   llvm::BumpPtrAllocator Arena;
   /// Intern table for strings. Contents are on the arena.
@@ -287,6 +342,10 @@ PragmaIncludes::getExporters(const FileEntry *File, FileManager &FM) const {
   return Results;
 }
 
+bool PragmaIncludes::isSelfContained(const FileEntry *FE) const {
+  return !NonSelfContainedFiles.contains(FE->getUniqueID());
+}
+
 std::unique_ptr<ASTConsumer> RecordedAST::record() {
   class Recorder : public ASTConsumer {
     RecordedAST *Out;
@@ -318,6 +377,13 @@ void RecordedPP::RecordedIncludes::add(const Include &I) {
   BySpellingIt->second.push_back(Index);
   if (I.Resolved)
     ByFile[I.Resolved].push_back(Index);
+  ByLine[I.Line] = Index;
+}
+
+const Include *
+RecordedPP::RecordedIncludes::atLine(unsigned OneBasedIndex) const {
+  auto It = ByLine.find(OneBasedIndex);
+  return (It == ByLine.end()) ? nullptr : &All[It->second];
 }
 
 llvm::SmallVector<const Include *>

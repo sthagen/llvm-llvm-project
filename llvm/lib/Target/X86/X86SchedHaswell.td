@@ -957,9 +957,7 @@ def HWWriteResGroup10 : SchedWriteRes<[HWPort0156]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[HWWriteResGroup10], (instrs CBW, CWDE, CDQE,
-                                         CMC, STC,
-                                         SGDT64m,
+def: InstRW<[HWWriteResGroup10], (instrs SGDT64m,
                                          SIDT64m,
                                          SMSW16m,
                                          STRm,

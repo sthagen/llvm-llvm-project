@@ -169,7 +169,7 @@ static bool isDereferenceableForAllocaSize(const Value *V, const AllocaInst *AI,
 }
 
 static Instruction *simplifyAllocaArraySize(InstCombinerImpl &IC,
-                                            AllocaInst &AI) {
+                                            AllocaInst &AI, DominatorTree &DT) {
   // Check for array size of 1 (scalar allocation).
   if (!AI.isArrayAllocation()) {
     // i32 1 is the canonical array size for scalar allocations.
@@ -187,6 +187,8 @@ static Instruction *simplifyAllocaArraySize(InstCombinerImpl &IC,
       AllocaInst *New = IC.Builder.CreateAlloca(NewTy, AI.getAddressSpace(),
                                                 nullptr, AI.getName());
       New->setAlignment(AI.getAlign());
+
+      replaceAllDbgUsesWith(AI, *New, *New, DT);
 
       // Scan to the end of the allocation instructions, to skip over a block of
       // allocas if possible...also skip interleaved debug info
@@ -356,7 +358,7 @@ void PointerReplacer::replacePointer(Instruction &I, Value *V) {
 }
 
 Instruction *InstCombinerImpl::visitAllocaInst(AllocaInst &AI) {
-  if (auto *I = simplifyAllocaArraySize(*this, AI))
+  if (auto *I = simplifyAllocaArraySize(*this, AI, DT))
     return I;
 
   if (AI.getAllocatedType()->isSized()) {
@@ -511,6 +513,7 @@ static StoreInst *combineStoreToNewValue(InstCombinerImpl &IC, StoreInst &SI,
     // here.
     switch (ID) {
     case LLVMContext::MD_dbg:
+    case LLVMContext::MD_DIAssignID:
     case LLVMContext::MD_tbaa:
     case LLVMContext::MD_prof:
     case LLVMContext::MD_fpmath:
@@ -1554,6 +1557,7 @@ bool InstCombinerImpl::mergeStoreIntoSuccessor(StoreInst &SI) {
                     SI.getOrdering(), SI.getSyncScopeID());
   InsertNewInstBefore(NewSI, *BBI);
   NewSI->setDebugLoc(MergedLoc);
+  NewSI->mergeDIAssignID({&SI, OtherStore});
 
   // If the two stores had AA tags, merge them.
   AAMDNodes AATags = SI.getAAMetadata();

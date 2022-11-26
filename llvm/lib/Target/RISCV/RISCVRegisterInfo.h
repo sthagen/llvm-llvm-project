@@ -38,7 +38,7 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
   bool hasReservedSpillSlot(const MachineFunction &MF, Register Reg,
                             int &FrameIdx) const override;
 
-  void eliminateFrameIndex(MachineBasicBlock::iterator MI, int SPAdj,
+  bool eliminateFrameIndex(MachineBasicBlock::iterator MI, int SPAdj,
                            unsigned FIOperandNum,
                            RegScavenger *RS = nullptr) const override;
 
@@ -66,6 +66,11 @@ struct RISCVRegisterInfo : public RISCVGenRegisterInfo {
                         SmallVectorImpl<uint64_t> &Ops) const override;
 
   unsigned getRegisterCostTableIndex(const MachineFunction &MF) const override;
+
+  bool getRegAllocationHints(Register VirtReg, ArrayRef<MCPhysReg> Order,
+                             SmallVectorImpl<MCPhysReg> &Hints,
+                             const MachineFunction &MF, const VirtRegMap *VRM,
+                             const LiveRegMatrix *Matrix) const override;
 };
 }
 

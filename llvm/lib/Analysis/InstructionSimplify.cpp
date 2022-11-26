@@ -2241,7 +2241,7 @@ static Value *simplifyOrLogic(Value *X, Value *Y) {
   // (B ^ ~A) | (A & B) --> B ^ ~A
   // (~A ^ B) | (B & A) --> ~A ^ B
   // (B ^ ~A) | (B & A) --> B ^ ~A
-  if (match(X, m_c_Xor(m_Not(m_Value(A)), m_Value(B))) &&
+  if (match(X, m_c_Xor(m_NotForbidUndef(m_Value(A)), m_Value(B))) &&
       match(Y, m_c_And(m_Specific(A), m_Specific(B))))
     return X;
 
@@ -5671,6 +5671,7 @@ static bool isIdempotent(Intrinsic::ID ID) {
   case Intrinsic::round:
   case Intrinsic::roundeven:
   case Intrinsic::canonicalize:
+  case Intrinsic::arithmetic_fence:
     return true;
   }
 }

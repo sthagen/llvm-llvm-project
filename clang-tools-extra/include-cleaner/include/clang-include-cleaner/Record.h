@@ -70,6 +70,9 @@ public:
   llvm::SmallVector<const FileEntry *> getExporters(const FileEntry *File,
                                                     FileManager &FM) const;
 
+  /// Returns true if the given file is a self-contained file.
+  bool isSelfContained(const FileEntry *File) const;
+
 private:
   class RecordPragma;
   /// 1-based Line numbers for the #include directives of the main file that
@@ -94,11 +97,13 @@ private:
                  llvm::SmallVector</*RealPathNames*/ llvm::StringRef>>
       IWYUExportBy;
 
+  /// Contains all non self-contained files detected during the parsing.
+  llvm::DenseSet<llvm::sys::fs::UniqueID> NonSelfContainedFiles;
+
   /// Owns the strings.
   llvm::BumpPtrAllocator Arena;
 
   // FIXME: add support for clang use_instead pragma
-  // FIXME: add selfcontained file.
 };
 
 /// Recorded main-file parser events relevant to include-cleaner.
@@ -142,11 +147,15 @@ struct RecordedPP {
     ///  - for a logical file like <vector>, we check Spelled
     llvm::SmallVector<const Include *> match(Header H) const;
 
+    /// Finds the include written on the specified line.
+    const Include *atLine(unsigned OneBasedIndex) const;
+
   private:
     std::vector<Include> All;
     // Lookup structures for match(), values are index into All.
     llvm::StringMap<llvm::SmallVector<unsigned>> BySpelling;
     llvm::DenseMap<const FileEntry *, llvm::SmallVector<unsigned>> ByFile;
+    llvm::DenseMap<unsigned, unsigned> ByLine;
   } Includes;
 };
 

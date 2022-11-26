@@ -1057,14 +1057,15 @@ static FieldDecl *addFieldToRecordDecl(ASTContext &C, DeclContext *DC,
   return Field;
 }
 
-CGOpenMPRuntime::CGOpenMPRuntime(CodeGenModule &CGM, StringRef FirstSeparator,
-                                 StringRef Separator)
-    : CGM(CGM), FirstSeparator(FirstSeparator), Separator(Separator),
-      OMPBuilder(CGM.getModule()), OffloadEntriesInfoManager() {
+CGOpenMPRuntime::CGOpenMPRuntime(CodeGenModule &CGM)
+    : CGM(CGM), OMPBuilder(CGM.getModule()), OffloadEntriesInfoManager() {
   KmpCriticalNameTy = llvm::ArrayType::get(CGM.Int32Ty, /*NumElements*/ 8);
-
+  llvm::OpenMPIRBuilderConfig Config(CGM.getLangOpts().OpenMPIsDevice, false,
+                                     hasRequiresUnifiedSharedMemory());
   // Initialize Types used in OpenMPIRBuilder from OMPKinds.def
   OMPBuilder.initialize();
+  OMPBuilder.setConfig(Config);
+  OffloadEntriesInfoManager.setConfig(Config);
   loadOffloadInfoMetadata();
 }
 
@@ -1084,14 +1085,7 @@ void CGOpenMPRuntime::clear() {
 }
 
 std::string CGOpenMPRuntime::getName(ArrayRef<StringRef> Parts) const {
-  SmallString<128> Buffer;
-  llvm::raw_svector_ostream OS(Buffer);
-  StringRef Sep = FirstSeparator;
-  for (StringRef Part : Parts) {
-    OS << Sep << Part;
-    Sep = Separator;
-  }
-  return std::string(OS.str());
+  return OMPBuilder.createPlatformSpecificName(Parts);
 }
 
 static llvm::Function *
@@ -1627,7 +1621,8 @@ Address CGOpenMPRuntime::getAddrOfDeclareTargetVar(const VarDecl *VD) {
   llvm::Optional<OMPDeclareTargetDeclAttr::MapTypeTy> Res =
       OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD);
   if (Res && (*Res == OMPDeclareTargetDeclAttr::MT_Link ||
-              (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+              ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+                *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
                HasRequiresUnifiedSharedMemory))) {
     SmallString<64> PtrName;
     {
@@ -1644,7 +1639,7 @@ Address CGOpenMPRuntime::getAddrOfDeclareTargetVar(const VarDecl *VD) {
     QualType PtrTy = CGM.getContext().getPointerType(VD->getType());
     llvm::Type *LlvmPtrTy = CGM.getTypes().ConvertTypeForMem(PtrTy);
     if (!Ptr) {
-      Ptr = getOrCreateInternalVariable(LlvmPtrTy, PtrName);
+      Ptr = OMPBuilder.getOrCreateInternalVariable(LlvmPtrTy, PtrName);
 
       auto *GV = cast<llvm::GlobalVariable>(Ptr);
       GV->setLinkage(llvm::GlobalValue::WeakAnyLinkage);
@@ -1664,8 +1659,8 @@ CGOpenMPRuntime::getOrCreateThreadPrivateCache(const VarDecl *VD) {
          !CGM.getContext().getTargetInfo().isTLSSupported());
   // Lookup the entry, lazily creating it if necessary.
   std::string Suffix = getName({"cache", ""});
-  return getOrCreateInternalVariable(
-      CGM.Int8PtrPtrTy, Twine(CGM.getMangledName(VD)).concat(Suffix));
+  return OMPBuilder.getOrCreateInternalVariable(
+      CGM.Int8PtrPtrTy, Twine(CGM.getMangledName(VD)).concat(Suffix).str());
 }
 
 Address CGOpenMPRuntime::getAddrOfThreadPrivate(CodeGenFunction &CGF,
@@ -1840,7 +1835,8 @@ bool CGOpenMPRuntime::emitDeclareTargetVarDefinition(const VarDecl *VD,
   Optional<OMPDeclareTargetDeclAttr::MapTypeTy> Res =
       OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD);
   if (!Res || *Res == OMPDeclareTargetDeclAttr::MT_Link ||
-      (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+      ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+        *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
        HasRequiresUnifiedSharedMemory))
     return CGM.getLangOpts().OpenMPIsDevice;
   VD = VD->getDefinition(CGM.getContext());
@@ -1908,8 +1904,7 @@ bool CGOpenMPRuntime::emitDeclareTargetVarDefinition(const VarDecl *VD,
     CtorEntryInfo.ParentName = Twine(Buffer, "_ctor").toStringRef(Out);
     OffloadEntriesInfoManager.registerTargetRegionEntryInfo(
         CtorEntryInfo, Ctor, ID,
-        llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryCtor,
-        CGM.getLangOpts().OpenMPIsDevice);
+        llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryCtor);
   }
   if (VD->getType().isDestructedType() != QualType::DK_none) {
     llvm::Constant *Dtor;
@@ -1958,8 +1953,7 @@ bool CGOpenMPRuntime::emitDeclareTargetVarDefinition(const VarDecl *VD,
     DtorEntryInfo.ParentName = Twine(Buffer, "_dtor").toStringRef(Out);
     OffloadEntriesInfoManager.registerTargetRegionEntryInfo(
         DtorEntryInfo, Dtor, ID,
-        llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryDtor,
-        CGM.getLangOpts().OpenMPIsDevice);
+        llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryDtor);
   }
   return CGM.getLangOpts().OpenMPIsDevice;
 }
@@ -1969,8 +1963,8 @@ Address CGOpenMPRuntime::getAddrOfArtificialThreadPrivate(CodeGenFunction &CGF,
                                                           StringRef Name) {
   std::string Suffix = getName({"artificial", ""});
   llvm::Type *VarLVType = CGF.ConvertTypeForMem(VarType);
-  llvm::GlobalVariable *GAddr =
-      getOrCreateInternalVariable(VarLVType, Twine(Name).concat(Suffix));
+  llvm::GlobalVariable *GAddr = OMPBuilder.getOrCreateInternalVariable(
+      VarLVType, Twine(Name).concat(Suffix).str());
   if (CGM.getLangOpts().OpenMP && CGM.getLangOpts().OpenMPUseTLS &&
       CGM.getTarget().isTLSSupported()) {
     GAddr->setThreadLocal(/*Val=*/true);
@@ -1984,8 +1978,9 @@ Address CGOpenMPRuntime::getAddrOfArtificialThreadPrivate(CodeGenFunction &CGF,
       CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(GAddr, CGM.VoidPtrTy),
       CGF.Builder.CreateIntCast(CGF.getTypeSize(VarType), CGM.SizeTy,
                                 /*isSigned=*/false),
-      getOrCreateInternalVariable(
-          CGM.VoidPtrPtrTy, Twine(Name).concat(Suffix).concat(CacheSuffix))};
+      OMPBuilder.getOrCreateInternalVariable(
+          CGM.VoidPtrPtrTy,
+          Twine(Name).concat(Suffix).concat(CacheSuffix).str())};
   return Address(
       CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
           CGF.EmitRuntimeCall(
@@ -2130,30 +2125,10 @@ Address CGOpenMPRuntime::emitThreadIDAddress(CodeGenFunction &CGF,
   return ThreadIDTemp;
 }
 
-llvm::GlobalVariable *CGOpenMPRuntime::getOrCreateInternalVariable(
-    llvm::Type *Ty, const llvm::Twine &Name, unsigned AddressSpace) {
-  SmallString<256> Buffer;
-  llvm::raw_svector_ostream Out(Buffer);
-  Out << Name;
-  StringRef RuntimeName = Out.str();
-  auto &Elem = *InternalVars.try_emplace(RuntimeName, nullptr).first;
-  if (Elem.second) {
-    assert(Elem.second->getType()->isOpaqueOrPointeeTypeMatches(Ty) &&
-           "OMP internal variable has different type than requested");
-    return &*Elem.second;
-  }
-
-  return Elem.second = new llvm::GlobalVariable(
-             CGM.getModule(), Ty, /*IsConstant*/ false,
-             llvm::GlobalValue::CommonLinkage, llvm::Constant::getNullValue(Ty),
-             Elem.first(), /*InsertBefore=*/nullptr,
-             llvm::GlobalValue::NotThreadLocal, AddressSpace);
-}
-
 llvm::Value *CGOpenMPRuntime::getCriticalRegionLock(StringRef CriticalName) {
   std::string Prefix = Twine("gomp_critical_user_", CriticalName).str();
   std::string Name = getName({Prefix, "var"});
-  return getOrCreateInternalVariable(KmpCriticalNameTy, Name);
+  return OMPBuilder.getOrCreateInternalVariable(KmpCriticalNameTy, Name);
 }
 
 namespace {
@@ -2997,10 +2972,8 @@ void CGOpenMPRuntime::createOffloadEntriesAndInfoMetadata() {
     }
   };
 
-  OMPBuilder.createOffloadEntriesAndInfoMetadata(
-      OffloadEntriesInfoManager, isTargetCodegen(),
-      CGM.getLangOpts().OpenMPIsDevice,
-      CGM.getOpenMPRuntime().hasRequiresUnifiedSharedMemory(), ErrorReportFn);
+  OMPBuilder.createOffloadEntriesAndInfoMetadata(OffloadEntriesInfoManager,
+                                                 ErrorReportFn);
 }
 
 /// Loads all the offload entries information from the host IR
@@ -6170,8 +6143,7 @@ void CGOpenMPRuntime::emitTargetOutlinedFunctionHelper(
   // Register the information for the entry associated with this target region.
   OffloadEntriesInfoManager.registerTargetRegionEntryInfo(
       EntryInfo, TargetRegionEntryAddr, OutlinedFnID,
-      llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryTargetRegion,
-      CGM.getLangOpts().OpenMPIsDevice);
+      llvm::OffloadEntriesInfoManager::OMPTargetRegionEntryTargetRegion);
 
   // Add NumTeams and ThreadLimit attributes to the outlined GPU function
   int32_t DefaultValTeams = -1;
@@ -7480,7 +7452,8 @@ private:
         if (llvm::Optional<OMPDeclareTargetDeclAttr::MapTypeTy> Res =
                 OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD)) {
           if ((*Res == OMPDeclareTargetDeclAttr::MT_Link) ||
-              (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+              ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+                *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
                CGF.CGM.getOpenMPRuntime().hasRequiresUnifiedSharedMemory())) {
             RequiresReference = true;
             BP = CGF.CGM.getOpenMPRuntime().getAddrOfDeclareTargetVar(VD);
@@ -10344,7 +10317,8 @@ bool CGOpenMPRuntime::emitTargetGlobalVariable(GlobalDecl GD) {
       OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(
           cast<VarDecl>(GD.getDecl()));
   if (!Res || *Res == OMPDeclareTargetDeclAttr::MT_Link ||
-      (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+      ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+        *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
        HasRequiresUnifiedSharedMemory)) {
     DeferredGlobalVariables.insert(cast<VarDecl>(GD.getDecl()));
     return true;
@@ -10381,7 +10355,8 @@ void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
   int64_t VarSize;
   llvm::GlobalValue::LinkageTypes Linkage;
 
-  if (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+  if ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+       *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
       !HasRequiresUnifiedSharedMemory) {
     Flags = llvm::OffloadEntriesInfoManager::OMPTargetGlobalVarEntryTo;
     VarName = CGM.getMangledName(VD);
@@ -10402,7 +10377,7 @@ void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
       std::string RefName = getName({VarName, "ref"});
       if (!CGM.GetGlobalValue(RefName)) {
         llvm::Constant *AddrRef =
-            getOrCreateInternalVariable(Addr->getType(), RefName);
+            OMPBuilder.getOrCreateInternalVariable(Addr->getType(), RefName);
         auto *GVAddrRef = cast<llvm::GlobalVariable>(AddrRef);
         GVAddrRef->setConstant(/*Val=*/true);
         GVAddrRef->setLinkage(llvm::GlobalValue::InternalLinkage);
@@ -10412,7 +10387,8 @@ void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
     }
   } else {
     assert(((*Res == OMPDeclareTargetDeclAttr::MT_Link) ||
-            (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+            ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+              *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
              HasRequiresUnifiedSharedMemory)) &&
            "Declare target attribute must link or to with unified memory.");
     if (*Res == OMPDeclareTargetDeclAttr::MT_Link)
@@ -10432,7 +10408,7 @@ void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
   }
 
   OffloadEntriesInfoManager.registerDeviceGlobalVarEntryInfo(
-      VarName, Addr, VarSize, Flags, Linkage, CGM.getLangOpts().OpenMPIsDevice);
+      VarName, Addr, VarSize, Flags, Linkage);
 }
 
 bool CGOpenMPRuntime::emitTargetGlobal(GlobalDecl GD) {
@@ -10449,12 +10425,14 @@ void CGOpenMPRuntime::emitDeferredTargetDecls() const {
         OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD);
     if (!Res)
       continue;
-    if (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+    if ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+         *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
         !HasRequiresUnifiedSharedMemory) {
       CGM.EmitGlobal(VD);
     } else {
       assert((*Res == OMPDeclareTargetDeclAttr::MT_Link ||
-              (*Res == OMPDeclareTargetDeclAttr::MT_To &&
+              ((*Res == OMPDeclareTargetDeclAttr::MT_To ||
+                *Res == OMPDeclareTargetDeclAttr::MT_Enter) &&
                HasRequiresUnifiedSharedMemory)) &&
              "Expected link clause or to clause with unified memory.");
       (void)CGM.getOpenMPRuntime().getAddrOfDeclareTargetVar(VD);
@@ -10472,6 +10450,7 @@ void CGOpenMPRuntime::processRequiresDirective(const OMPRequiresDecl *D) {
   for (const OMPClause *Clause : D->clauselists()) {
     if (Clause->getClauseKind() == OMPC_unified_shared_memory) {
       HasRequiresUnifiedSharedMemory = true;
+      OMPBuilder.Config.setHasRequiresUnifiedSharedMemory(true);
     } else if (const auto *AC =
                    dyn_cast<OMPAtomicDefaultMemOrderClause>(Clause)) {
       switch (AC->getAtomicDefaultMemOrderKind()) {
@@ -12195,15 +12174,15 @@ void CGOpenMPRuntime::emitLastprivateConditionalUpdate(CodeGenFunction &CGF,
   // Last updated loop counter for the lastprivate conditional var.
   // int<xx> last_iv = 0;
   llvm::Type *LLIVTy = CGF.ConvertTypeForMem(IVLVal.getType());
-  llvm::Constant *LastIV =
-      getOrCreateInternalVariable(LLIVTy, getName({UniqueDeclName, "iv"}));
+  llvm::Constant *LastIV = OMPBuilder.getOrCreateInternalVariable(
+      LLIVTy, getName({UniqueDeclName, "iv"}));
   cast<llvm::GlobalVariable>(LastIV)->setAlignment(
       IVLVal.getAlignment().getAsAlign());
   LValue LastIVLVal = CGF.MakeNaturalAlignAddrLValue(LastIV, IVLVal.getType());
 
   // Last value of the lastprivate conditional.
   // decltype(priv_a) last_a;
-  llvm::GlobalVariable *Last = getOrCreateInternalVariable(
+  llvm::GlobalVariable *Last = OMPBuilder.getOrCreateInternalVariable(
       CGF.ConvertTypeForMem(LVal.getType()), UniqueDeclName);
   Last->setAlignment(LVal.getAlignment().getAsAlign());
   LValue LastLVal = CGF.MakeAddrLValue(
