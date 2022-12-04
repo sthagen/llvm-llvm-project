@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <optional>
 
 using namespace llvm;
 using namespace llvm::PatternMatch;
@@ -163,8 +164,8 @@ public:
   Optional<unsigned> calculateIterationsToPeel();
 
 protected:
-  using PeelCounter = Optional<unsigned>;
-  const PeelCounter Unknown = None;
+  using PeelCounter = std::optional<unsigned>;
+  const PeelCounter Unknown = std::nullopt;
 
   // Add 1 respecting Unknown and return Unknown if result over MaxIterations
   PeelCounter addOne(PeelCounter PC) const {
@@ -249,7 +250,7 @@ Optional<unsigned> PhiAnalyzer::calculateIterationsToPeel() {
     }
   }
   assert((Iterations <= MaxIterations) && "bad result in phi analysis");
-  return Iterations ? Optional<unsigned>(Iterations) : None;
+  return Iterations ? Optional<unsigned>(Iterations) : std::nullopt;
 }
 
 } // unnamed namespace

@@ -129,6 +129,7 @@
 #include "llvm/Transforms/Utils/CallGraphUpdater.h"
 
 #include <map>
+#include <optional>
 
 namespace llvm {
 
@@ -1347,7 +1348,7 @@ struct AttributorConfig {
   DenseSet<const char *> *Allowed = nullptr;
 
   /// Maximum number of iterations to run until fixpoint.
-  Optional<unsigned> MaxFixpointIterations = None;
+  std::optional<unsigned> MaxFixpointIterations = std::nullopt;
 
   /// A callback function that returns an ORE object from a Function pointer.
   ///{
@@ -3142,11 +3143,6 @@ struct AAReturnedValues
     : public IRAttribute<Attribute::Returned, AbstractAttribute> {
   AAReturnedValues(const IRPosition &IRP, Attributor &A) : IRAttribute(IRP) {}
 
-  /// Return an assumed unique return value if a single candidate is found. If
-  /// there cannot be one, return a nullptr. If it is not clear yet, return the
-  /// Optional::NoneType.
-  Optional<Value *> getAssumedUniqueReturnValue(Attributor &A) const;
-
   /// Check \p Pred on all returned values.
   ///
   /// This method will evaluate \p Pred on returned values and return
@@ -4396,7 +4392,7 @@ struct AAValueConstantRange
           AA::getWithType(*ConstantInt::get(Ty->getContext(), *C), *Ty));
     }
     if (RangeV.isEmptySet())
-      return llvm::None;
+      return std::nullopt;
     return nullptr;
   }
 
@@ -4651,7 +4647,7 @@ struct AAPotentialConstantValues
     if (getAssumedSet().size() == 0) {
       if (undefIsContained())
         return UndefValue::get(getAssociatedValue().getType());
-      return llvm::None;
+      return std::nullopt;
     }
 
     return nullptr;

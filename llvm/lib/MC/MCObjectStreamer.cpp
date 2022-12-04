@@ -154,7 +154,7 @@ static Optional<uint64_t> absoluteSymbolDiff(const MCSymbol *Hi,
   assert(Hi && Lo);
   if (!Hi->getFragment() || Hi->getFragment() != Lo->getFragment() ||
       Hi->isVariable() || Lo->isVariable())
-    return None;
+    return std::nullopt;
 
   return Hi->getOffset() - Lo->getOffset();
 }
@@ -650,8 +650,7 @@ void MCObjectStreamer::emitValueToAlignment(Align Alignment, int64_t Value,
 
   // Update the maximum alignment on the current section if necessary.
   MCSection *CurSec = getCurrentSectionOnly();
-  if (CurSec->getAlign() < Alignment)
-    CurSec->setAlignment(Alignment);
+  CurSec->ensureMinAlignment(Alignment);
 }
 
 void MCObjectStreamer::emitCodeAlignment(Align Alignment,
@@ -747,7 +746,7 @@ getOffsetAndDataFragment(const MCSymbol &Symbol, uint32_t &RelocOffset,
                               std::string("symbol in offset has no data "
                                           "fragment"));
       DF = cast<MCDataFragment>(Fragment);
-      return None;
+      return std::nullopt;
     }
 
     if (OffsetVal.getSymB())
@@ -786,7 +785,7 @@ getOffsetAndDataFragment(const MCSymbol &Symbol, uint32_t &RelocOffset,
                                         "fragment"));
     DF = cast<MCDataFragment>(Fragment);
   }
-  return None;
+  return std::nullopt;
 }
 
 Optional<std::pair<bool, std::string>>
@@ -815,7 +814,7 @@ MCObjectStreamer::emitRelocDirective(const MCExpr &Offset, StringRef Name,
       return std::make_pair(false, std::string(".reloc offset is negative"));
     DF->getFixups().push_back(
         MCFixup::create(OffsetVal.getConstant(), Expr, Kind, Loc));
-    return None;
+    return std::nullopt;
   }
   if (OffsetVal.getSymB())
     return std::make_pair(false,
@@ -828,19 +827,19 @@ MCObjectStreamer::emitRelocDirective(const MCExpr &Offset, StringRef Name,
     Optional<std::pair<bool, std::string>> Error;
     Error = getOffsetAndDataFragment(Symbol, SymbolOffset, DF);
 
-    if (Error != None)
+    if (Error != std::nullopt)
       return Error;
 
     DF->getFixups().push_back(
         MCFixup::create(SymbolOffset + OffsetVal.getConstant(),
                         Expr, Kind, Loc));
-    return None;
+    return std::nullopt;
   }
 
   PendingFixups.emplace_back(
       &SRE.getSymbol(), DF,
       MCFixup::create(OffsetVal.getConstant(), Expr, Kind, Loc));
-  return None;
+  return std::nullopt;
 }
 
 void MCObjectStreamer::emitFill(const MCExpr &NumBytes, uint64_t FillValue,

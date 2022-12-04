@@ -1314,6 +1314,7 @@ private:
     const SCEV *ExactNotTaken; // The exit is not taken exactly this many times
     const SCEV *ConstantMaxNotTaken; // The exit is not taken at most this many
                                      // times
+    const SCEV *SymbolicMaxNotTaken;
 
     // Not taken either exactly ConstantMaxNotTaken or zero times
     bool MaxOrZero = false;
@@ -1333,10 +1334,9 @@ private:
     /// as arguments and asserts enforce that internally.
     /*implicit*/ ExitLimit(const SCEV *E);
 
-    ExitLimit(
-        const SCEV *E, const SCEV *ConstantMaxNotTaken, bool MaxOrZero,
-        ArrayRef<const SmallPtrSetImpl<const SCEVPredicate *> *> PredSetList =
-            None);
+    ExitLimit(const SCEV *E, const SCEV *ConstantMaxNotTaken, bool MaxOrZero,
+              ArrayRef<const SmallPtrSetImpl<const SCEVPredicate *> *>
+                  PredSetList = std::nullopt);
 
     ExitLimit(const SCEV *E, const SCEV *ConstantMaxNotTaken, bool MaxOrZero,
               const SmallPtrSetImpl<const SCEVPredicate *> &PredSet);
@@ -1360,14 +1360,16 @@ private:
     PoisoningVH<BasicBlock> ExitingBlock;
     const SCEV *ExactNotTaken;
     const SCEV *ConstantMaxNotTaken;
+    const SCEV *SymbolicMaxNotTaken;
     SmallPtrSet<const SCEVPredicate *, 4> Predicates;
 
     explicit ExitNotTakenInfo(
         PoisoningVH<BasicBlock> ExitingBlock, const SCEV *ExactNotTaken,
-        const SCEV *ConstantMaxNotTaken,
+        const SCEV *ConstantMaxNotTaken, const SCEV *SymbolicMaxNotTaken,
         const SmallPtrSet<const SCEVPredicate *, 4> &Predicates)
         : ExitingBlock(ExitingBlock), ExactNotTaken(ExactNotTaken),
-          ConstantMaxNotTaken(ConstantMaxNotTaken), Predicates(Predicates) {}
+          ConstantMaxNotTaken(ConstantMaxNotTaken),
+          SymbolicMaxNotTaken(SymbolicMaxNotTaken), Predicates(Predicates) {}
 
     bool hasAlwaysTruePredicate() const {
       return Predicates.empty();

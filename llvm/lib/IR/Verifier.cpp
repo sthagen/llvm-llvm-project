@@ -743,7 +743,7 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
             "wrong type for intrinsic global variable", &GV);
       Check(STy->getNumElements() == 3,
             "the third field of the element type is mandatory, "
-            "specify i8* null to migrate from the obsoleted 2-field form");
+            "specify ptr null to migrate from the obsoleted 2-field form");
       Type *ETy = STy->getTypeAtIndex(2);
       Type *Int8Ty = Type::getInt8Ty(ETy->getContext());
       Check(ETy->isPointerTy() &&
@@ -888,6 +888,10 @@ void Verifier::visitGlobalIFunc(const GlobalIFunc &GI) {
   // Check that the immediate resolver operand (prior to any bitcasts) has the
   // correct type.
   const Type *ResolverTy = GI.getResolver()->getType();
+
+  Check(isa<PointerType>(Resolver->getFunctionType()->getReturnType()),
+        "IFunc resolver must return a pointer", &GI);
+
   const Type *ResolverFuncTy =
       GlobalIFunc::getResolverFunctionType(GI.getValueType());
   Check(ResolverTy == ResolverFuncTy->getPointerTo(GI.getAddressSpace()),
@@ -2126,7 +2130,7 @@ void Verifier::verifyFunctionAttrs(FunctionType *FT, AttributeList Attrs,
     if (VScaleMin == 0)
       CheckFailed("'vscale_range' minimum must be greater than 0", V);
 
-    Optional<unsigned> VScaleMax = Attrs.getFnAttrs().getVScaleRangeMax();
+    std::optional<unsigned> VScaleMax = Attrs.getFnAttrs().getVScaleRangeMax();
     if (VScaleMax && VScaleMin > VScaleMax)
       CheckFailed("'vscale_range' minimum cannot be greater than maximum", V);
   }
@@ -5021,7 +5025,7 @@ void Verifier::visitIntrinsicCall(Intrinsic::ID ID, CallBase &Call) {
            " (the operand should be a string)"),
           MD);
 
-    Optional<RoundingMode> RoundMode =
+    std::optional<RoundingMode> RoundMode =
         convertStrToRoundingMode(cast<MDString>(MD)->getString());
     Check(RoundMode && *RoundMode != RoundingMode::Dynamic,
           "unsupported rounding mode argument", Call);
