@@ -20,6 +20,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/TargetParser.h"
+#include <optional>
 
 namespace clang {
 namespace targets {
@@ -113,6 +114,9 @@ public:
   uint64_t getMaxPointerWidth() const override {
     return getTriple().getArch() == llvm::Triple::amdgcn ? 64 : 32;
   }
+
+  bool hasBFloat16Type() const override { return isAMDGCN(getTriple()); }
+  const char *getBFloat16Mangling() const override { return "u6__bf16"; };
 
   const char *getClobbers() const override { return ""; }
 
@@ -391,9 +395,9 @@ public:
   /// space \p AddressSpace to be converted in order to be used, then return the
   /// corresponding target specific DWARF address space.
   ///
-  /// \returns Otherwise return None and no conversion will be emitted in the
-  /// DWARF.
-  Optional<unsigned>
+  /// \returns Otherwise return std::nullopt and no conversion will be emitted
+  /// in the DWARF.
+  std::optional<unsigned>
   getDWARFAddressSpace(unsigned AddressSpace) const override {
     const unsigned DWARF_Private = 1;
     const unsigned DWARF_Local = 2;

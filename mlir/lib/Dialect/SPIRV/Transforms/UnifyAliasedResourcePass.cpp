@@ -52,8 +52,8 @@ static AliasedResourceMap collectAliasedResources(spirv::ModuleOp moduleOp) {
   AliasedResourceMap aliasedResources;
   moduleOp->walk([&aliasedResources](spirv::GlobalVariableOp varOp) {
     if (varOp->getAttrOfType<UnitAttr>("aliased")) {
-      Optional<uint32_t> set = varOp.getDescriptorSet();
-      Optional<uint32_t> binding = varOp.getBinding();
+      std::optional<uint32_t> set = varOp.getDescriptorSet();
+      std::optional<uint32_t> binding = varOp.getBinding();
       if (set && binding)
         aliasedResources[{*set, *binding}].push_back(varOp);
     }
@@ -82,7 +82,7 @@ static Type getRuntimeArrayElementType(Type type) {
 }
 
 /// Given a list of resource element `types`, returns the index of the canonical
-/// resource that all resources should be unified into. Returns llvm::None if
+/// resource that all resources should be unified into. Returns std::nullopt if
 /// unable to unify.
 static Optional<int> deduceCanonicalResource(ArrayRef<spirv::SPIRVType> types) {
   // scalarNumBits: contains all resources' scalar types' bit counts.

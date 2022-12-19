@@ -17,8 +17,6 @@
 #define LLVM_ADT_OPTIONAL_H
 
 #include "llvm/ADT/Hashing.h"
-#include "llvm/ADT/None.h"
-#include "llvm/ADT/STLForwardCompat.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/type_traits.h"
 #include <cassert>
@@ -26,8 +24,6 @@
 #include <utility>
 
 namespace llvm {
-
-class raw_ostream;
 
 namespace optional_detail {
 
@@ -262,10 +258,6 @@ public:
     Storage.emplace(std::forward<ArgTypes>(Args)...);
   }
 
-  static constexpr Optional create(const T *y) {
-    return y ? Optional(*y) : Optional();
-  }
-
   Optional &operator=(const T &y) {
     Storage = y;
     return *this;
@@ -278,42 +270,28 @@ public:
   constexpr const T *getPointer() const { return &Storage.value(); }
   LLVM_DEPRECATED("Use &*X instead.", "&*X")
   T *getPointer() { return &Storage.value(); }
+  LLVM_DEPRECATED("std::optional::value is throwing. Use *X instead", "*X")
   constexpr const T &value() const & { return Storage.value(); }
+  LLVM_DEPRECATED("std::optional::value is throwing. Use *X instead", "*X")
   T &value() & { return Storage.value(); }
 
   constexpr explicit operator bool() const { return has_value(); }
   constexpr bool has_value() const { return Storage.has_value(); }
   constexpr const T *operator->() const { return &Storage.value(); }
   T *operator->() { return &Storage.value(); }
-  constexpr const T &operator*() const & { return value(); }
-  T &operator*() & { return value(); }
+  constexpr const T &operator*() const & { return Storage.value(); }
+  T &operator*() & { return Storage.value(); }
 
   template <typename U> constexpr T value_or(U &&alt) const & {
-    return has_value() ? value() : std::forward<U>(alt);
+    return has_value() ? operator*() : std::forward<U>(alt);
   }
 
-  /// Apply a function to the value if present; otherwise return None.
-  template <class Function>
-  auto transform(const Function &F) const & -> Optional<decltype(F(value()))> {
-    if (*this)
-      return F(value());
-    return std::nullopt;
-  }
-
+  LLVM_DEPRECATED("std::optional::value is throwing. Use *X instead", "*X")
   T &&value() && { return std::move(Storage.value()); }
   T &&operator*() && { return std::move(Storage.value()); }
 
   template <typename U> T value_or(U &&alt) && {
-    return has_value() ? std::move(value()) : std::forward<U>(alt);
-  }
-
-  /// Apply a function to the value if present; otherwise return None.
-  template <class Function>
-  auto transform(
-      const Function &F) && -> Optional<decltype(F(std::move(*this).value()))> {
-    if (*this)
-      return F(std::move(*this).value());
-    return std::nullopt;
+    return has_value() ? std::move(operator*()) : std::forward<U>(alt);
   }
 };
 
@@ -476,18 +454,6 @@ constexpr bool operator>=(const Optional<T> &X, const T &Y) {
 template <typename T>
 constexpr bool operator>=(const T &X, const Optional<T> &Y) {
   return !(X < Y);
-}
-
-raw_ostream &operator<<(raw_ostream &OS, std::nullopt_t);
-
-template <typename T, typename = decltype(std::declval<raw_ostream &>()
-                                          << std::declval<const T &>())>
-raw_ostream &operator<<(raw_ostream &OS, const Optional<T> &O) {
-  if (O)
-    OS << *O;
-  else
-    OS << std::nullopt;
-  return OS;
 }
 
 } // end namespace llvm

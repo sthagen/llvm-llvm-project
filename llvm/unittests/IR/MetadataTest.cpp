@@ -22,6 +22,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 #include "gtest/gtest.h"
+#include <optional>
 using namespace llvm;
 
 namespace {
@@ -1115,51 +1116,46 @@ TEST_F(DILocationTest, cloneTemporary) {
 }
 
 TEST_F(DILocationTest, discriminatorEncoding) {
-  EXPECT_EQ(0U, DILocation::encodeDiscriminator(0, 0, 0).value());
+  EXPECT_EQ(0U, *DILocation::encodeDiscriminator(0, 0, 0));
 
   // Encode base discriminator as a component: lsb is 0, then the value.
   // The other components are all absent, so we leave all the other bits 0.
-  EXPECT_EQ(2U, DILocation::encodeDiscriminator(1, 0, 0).value());
+  EXPECT_EQ(2U, *DILocation::encodeDiscriminator(1, 0, 0));
 
   // Base discriminator component is empty, so lsb is 1. Next component is not
   // empty, so its lsb is 0, then its value (1). Next component is empty.
   // So the bit pattern is 101.
-  EXPECT_EQ(5U, DILocation::encodeDiscriminator(0, 1, 0).value());
+  EXPECT_EQ(5U, *DILocation::encodeDiscriminator(0, 1, 0));
 
   // First 2 components are empty, so the bit pattern is 11. Then the
   // next component - ending up with 1011.
-  EXPECT_EQ(0xbU, DILocation::encodeDiscriminator(0, 0, 1).value());
+  EXPECT_EQ(0xbU, *DILocation::encodeDiscriminator(0, 0, 1));
 
   // The bit pattern for the first 2 components is 11. The next bit is 0,
   // because the last component is not empty. We have 29 bits usable for
   // encoding, but we cap it at 12 bits uniformously for all components. We
   // encode the last component over 14 bits.
-  EXPECT_EQ(0xfffbU, DILocation::encodeDiscriminator(0, 0, 0xfff).value());
+  EXPECT_EQ(0xfffbU, *DILocation::encodeDiscriminator(0, 0, 0xfff));
 
-  EXPECT_EQ(0x102U, DILocation::encodeDiscriminator(1, 1, 0).value());
+  EXPECT_EQ(0x102U, *DILocation::encodeDiscriminator(1, 1, 0));
 
-  EXPECT_EQ(0x13eU, DILocation::encodeDiscriminator(0x1f, 1, 0).value());
+  EXPECT_EQ(0x13eU, *DILocation::encodeDiscriminator(0x1f, 1, 0));
 
-  EXPECT_EQ(0x87feU, DILocation::encodeDiscriminator(0x1ff, 1, 0).value());
+  EXPECT_EQ(0x87feU, *DILocation::encodeDiscriminator(0x1ff, 1, 0));
 
-  EXPECT_EQ(0x1f3eU, DILocation::encodeDiscriminator(0x1f, 0x1f, 0).value());
+  EXPECT_EQ(0x1f3eU, *DILocation::encodeDiscriminator(0x1f, 0x1f, 0));
 
-  EXPECT_EQ(0x3ff3eU, DILocation::encodeDiscriminator(0x1f, 0x1ff, 0).value());
+  EXPECT_EQ(0x3ff3eU, *DILocation::encodeDiscriminator(0x1f, 0x1ff, 0));
 
-  EXPECT_EQ(0x1ff87feU,
-            DILocation::encodeDiscriminator(0x1ff, 0x1ff, 0).value());
+  EXPECT_EQ(0x1ff87feU, *DILocation::encodeDiscriminator(0x1ff, 0x1ff, 0));
 
-  EXPECT_EQ(0xfff9f3eU,
-            DILocation::encodeDiscriminator(0x1f, 0x1f, 0xfff).value());
+  EXPECT_EQ(0xfff9f3eU, *DILocation::encodeDiscriminator(0x1f, 0x1f, 0xfff));
 
-  EXPECT_EQ(0xffc3ff3eU,
-            DILocation::encodeDiscriminator(0x1f, 0x1ff, 0x1ff).value());
+  EXPECT_EQ(0xffc3ff3eU, *DILocation::encodeDiscriminator(0x1f, 0x1ff, 0x1ff));
 
-  EXPECT_EQ(0xffcf87feU,
-            DILocation::encodeDiscriminator(0x1ff, 0x1f, 0x1ff).value());
+  EXPECT_EQ(0xffcf87feU, *DILocation::encodeDiscriminator(0x1ff, 0x1f, 0x1ff));
 
-  EXPECT_EQ(0xe1ff87feU,
-            DILocation::encodeDiscriminator(0x1ff, 0x1ff, 7).value());
+  EXPECT_EQ(0xe1ff87feU, *DILocation::encodeDiscriminator(0x1ff, 0x1ff, 7));
 }
 
 TEST_F(DILocationTest, discriminatorEncodingNegativeTests) {
@@ -1181,39 +1177,38 @@ TEST_F(DILocationTest, discriminatorSpecialCases) {
   EXPECT_EQ(0U, L1->getBaseDiscriminator());
   EXPECT_EQ(1U, L1->getDuplicationFactor());
 
-  EXPECT_EQ(L1, L1->cloneWithBaseDiscriminator(0).value());
-  EXPECT_EQ(L1, L1->cloneByMultiplyingDuplicationFactor(0).value());
-  EXPECT_EQ(L1, L1->cloneByMultiplyingDuplicationFactor(1).value());
+  EXPECT_EQ(L1, *L1->cloneWithBaseDiscriminator(0));
+  EXPECT_EQ(L1, *L1->cloneByMultiplyingDuplicationFactor(0));
+  EXPECT_EQ(L1, *L1->cloneByMultiplyingDuplicationFactor(1));
 
-  auto L2 = L1->cloneWithBaseDiscriminator(1).value();
+  auto L2 = *L1->cloneWithBaseDiscriminator(1);
   EXPECT_EQ(0U, L1->getBaseDiscriminator());
   EXPECT_EQ(1U, L1->getDuplicationFactor());
 
   EXPECT_EQ(1U, L2->getBaseDiscriminator());
   EXPECT_EQ(1U, L2->getDuplicationFactor());
 
-  auto L3 = L2->cloneByMultiplyingDuplicationFactor(2).value();
+  auto L3 = *L2->cloneByMultiplyingDuplicationFactor(2);
   EXPECT_EQ(1U, L3->getBaseDiscriminator());
   EXPECT_EQ(2U, L3->getDuplicationFactor());
 
-  EXPECT_EQ(L2, L2->cloneByMultiplyingDuplicationFactor(1).value());
+  EXPECT_EQ(L2, *L2->cloneByMultiplyingDuplicationFactor(1));
 
-  auto L4 = L3->cloneByMultiplyingDuplicationFactor(4).value();
+  auto L4 = *L3->cloneByMultiplyingDuplicationFactor(4);
   EXPECT_EQ(1U, L4->getBaseDiscriminator());
   EXPECT_EQ(8U, L4->getDuplicationFactor());
 
-  auto L5 = L4->cloneWithBaseDiscriminator(2).value();
+  auto L5 = *L4->cloneWithBaseDiscriminator(2);
   EXPECT_EQ(2U, L5->getBaseDiscriminator());
   EXPECT_EQ(8U, L5->getDuplicationFactor());
 
   // Check extreme cases
-  auto L6 = L1->cloneWithBaseDiscriminator(0xfff).value();
+  auto L6 = *L1->cloneWithBaseDiscriminator(0xfff);
   EXPECT_EQ(0xfffU, L6->getBaseDiscriminator());
-  EXPECT_EQ(0xfffU, L6->cloneByMultiplyingDuplicationFactor(0xfff)
-                        .value()
+  EXPECT_EQ(0xfffU, (*L6->cloneByMultiplyingDuplicationFactor(0xfff))
                         ->getDuplicationFactor());
 
-  // Check we return None for unencodable cases.
+  // Check we return std::nullopt for unencodable cases.
   EXPECT_EQ(std::nullopt, L4->cloneWithBaseDiscriminator(0x1000));
   EXPECT_EQ(std::nullopt, L4->cloneByMultiplyingDuplicationFactor(0x1000));
 }
@@ -2220,6 +2215,20 @@ TEST_F(DIFileTest, get) {
   EXPECT_EQ(N, MDNode::replaceWithUniqued(std::move(Temp)));
 }
 
+TEST_F(DIFileTest, EmptySource) {
+  DIFile *N = DIFile::get(Context, "file", "dir");
+  EXPECT_EQ(std::nullopt, N->getSource());
+
+  std::optional<DIFile::ChecksumInfo<StringRef>> Checksum = std::nullopt;
+  std::optional<StringRef> Source = std::nullopt;
+  N = DIFile::get(Context, "file", "dir", Checksum, Source);
+  EXPECT_EQ(Source, N->getSource());
+
+  Source = "";
+  N = DIFile::get(Context, "file", "dir", Checksum, Source);
+  EXPECT_EQ(Source, N->getSource());
+}
+
 TEST_F(DIFileTest, ScopeGetFile) {
   // Ensure that DIScope::getFile() returns itself.
   DIScope *N = DIFile::get(Context, "file", "dir");
@@ -3016,7 +3025,7 @@ TEST_F(DIExpressionTest, createFragmentExpression) {
   } while (false)
 
   // createFragmentExpression adds correct ops.
-  Optional<DIExpression*> R = DIExpression::createFragmentExpression(
+  std::optional<DIExpression*> R = DIExpression::createFragmentExpression(
     DIExpression::get(Context, {}), 0, 32);
   EXPECT_EQ(R.has_value(), true);
   EXPECT_EQ(3u, (*R)->getNumElements());

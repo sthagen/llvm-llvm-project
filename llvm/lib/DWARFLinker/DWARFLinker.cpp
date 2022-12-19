@@ -137,7 +137,7 @@ AddressesMap::~AddressesMap() = default;
 
 DwarfEmitter::~DwarfEmitter() = default;
 
-static Optional<StringRef> StripTemplateParameters(StringRef Name) {
+static std::optional<StringRef> StripTemplateParameters(StringRef Name) {
   // We are looking for template parameters to strip from Name. e.g.
   //
   //  operator<<B>
@@ -191,7 +191,7 @@ bool DWARFLinker::DIECloner::getDIENames(const DWARFDie &Die,
 
   if (StripTemplate && Info.Name && Info.MangledName != Info.Name) {
     StringRef Name = Info.Name.getString();
-    if (Optional<StringRef> StrippedName = StripTemplateParameters(Name))
+    if (std::optional<StringRef> StrippedName = StripTemplateParameters(Name))
       Info.NameWithoutTemplate = StringPool.getEntry(*StrippedName);
   }
 
@@ -225,7 +225,8 @@ static void analyzeImportedModule(
     SysRoot = CU.getSysRoot();
   if (!SysRoot.empty() && Path.startswith(SysRoot))
     return;
-  Optional<const char*> Name = dwarf::toString(DIE.find(dwarf::DW_AT_name));
+  std::optional<const char *> Name =
+      dwarf::toString(DIE.find(dwarf::DW_AT_name));
   if (!Name)
     return;
   auto &Entry = (*ParseableSwiftInterfaces)[*Name];
@@ -498,7 +499,7 @@ unsigned DWARFLinker::shouldKeepSubprogramDIE(
 
   Flags |= TF_Keep;
 
-  Optional<uint64_t> HighPc = DIE.getHighPC(*LowPc);
+  std::optional<uint64_t> HighPc = DIE.getHighPC(*LowPc);
   if (!HighPc) {
     reportWarning("Function without high_pc. Range will be discarded.\n", File,
                   &DIE);
@@ -882,7 +883,7 @@ void DWARFLinker::assignAbbrev(DIEAbbrev &Abbrev) {
 unsigned DWARFLinker::DIECloner::cloneStringAttribute(
     DIE &Die, AttributeSpec AttrSpec, const DWARFFormValue &Val,
     const DWARFUnit &, OffsetsStringPool &StringPool, AttributesInfo &Info) {
-  Optional<const char *> String = dwarf::toString(Val);
+  std::optional<const char *> String = dwarf::toString(Val);
   if (!String)
     return 0;
 
@@ -1107,7 +1108,7 @@ unsigned DWARFLinker::DIECloner::cloneAddressAttribute(
   dwarf::Form Form = AttrSpec.Form;
   uint64_t Addr = 0;
   if (Form == dwarf::DW_FORM_addrx) {
-    if (Optional<uint64_t> AddrOffsetSectionBase =
+    if (std::optional<uint64_t> AddrOffsetSectionBase =
             Unit.getOrigUnit().getAddrOffsetSectionBase()) {
       uint64_t StartOffset =
           *AddrOffsetSectionBase +
@@ -1583,7 +1584,7 @@ void DWARFLinker::patchRangesForUnit(const CompileUnit &Unit,
   DWARFDataExtractor RangeExtractor(OrigDwarf.getDWARFObj(),
                                     OrigDwarf.getDWARFObj().getRangesSection(),
                                     OrigDwarf.isLittleEndian(), AddressSize);
-  Optional<std::pair<AddressRange, int64_t>> CurrRange;
+  std::optional<std::pair<AddressRange, int64_t>> CurrRange;
   DWARFUnit &OrigUnit = Unit.getOrigUnit();
   auto OrigUnitDie = OrigUnit.getUnitDIE(false);
   uint64_t OrigLowPc =
@@ -1717,7 +1718,7 @@ void DWARFLinker::patchLineTableForUnit(CompileUnit &Unit,
   // in NewRows.
   std::vector<DWARFDebugLine::Row> Seq;
   const auto &FunctionRanges = Unit.getFunctionRanges();
-  Optional<std::pair<AddressRange, int64_t>> CurrRange;
+  std::optional<std::pair<AddressRange, int64_t>> CurrRange;
 
   // FIXME: This logic is meant to generate exactly the same output as
   // Darwin's classic dsymutil. There is a nicer way to implement this
@@ -1751,7 +1752,7 @@ void DWARFLinker::patchLineTableForUnit(CompileUnit &Unit,
           // for now do as dsymutil.
           // FIXME: Understand exactly what cases this addresses and
           // potentially remove it along with the Ranges map.
-          if (Optional<std::pair<AddressRange, int64_t>> Range =
+          if (std::optional<std::pair<AddressRange, int64_t>> Range =
                   Ranges.getRangeValueThatContains(Row.Address.Address))
             StopAddress = Row.Address.Address + (*Range).second;
         }
@@ -1894,13 +1895,13 @@ void DWARFLinker::patchFrameInfoForObject(const DWARFFile &File,
       continue;
     }
 
-    uint32_t Loc = Data.getUnsigned(&InputOffset, AddrSize);
+    uint64_t Loc = Data.getUnsigned(&InputOffset, AddrSize);
 
     // Some compilers seem to emit frame info that doesn't start at
     // the function entry point, thus we can't just lookup the address
     // in the debug map. Use the AddressInfo's range map to see if the FDE
     // describes something that we can relocate.
-    Optional<std::pair<AddressRange, int64_t>> Range =
+    std::optional<std::pair<AddressRange, int64_t>> Range =
         Ranges.getRangeValueThatContains(Loc);
     if (!Range) {
       // The +4 is to account for the size of the InitialLength field itself.
@@ -1943,7 +1944,7 @@ uint32_t DWARFLinker::DIECloner::hashFullyQualifiedName(DWARFDie DIE,
   const char *Name = nullptr;
   DWARFUnit *OrigUnit = &U.getOrigUnit();
   CompileUnit *CU = &U;
-  Optional<DWARFFormValue> Ref;
+  std::optional<DWARFFormValue> Ref;
 
   while (true) {
     if (const char *CurrentName = DIE.getName(DINameKind::ShortName))

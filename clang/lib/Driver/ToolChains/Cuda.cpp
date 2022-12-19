@@ -16,7 +16,6 @@
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/InputInfo.h"
 #include "clang/Driver/Options.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Option/ArgList.h"
 #include "llvm/Support/FileSystem.h"
@@ -78,7 +77,7 @@ CudaVersion getCudaVersion(uint32_t raw_version) {
 
 CudaVersion parseCudaHFile(llvm::StringRef Input) {
   // Helper lambda which skips the words if the line starts with them or returns
-  // None otherwise.
+  // std::nullopt otherwise.
   auto StartsWithWords =
       [](llvm::StringRef Line,
          const SmallVector<StringRef, 3> words) -> std::optional<StringRef> {

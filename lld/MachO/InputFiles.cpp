@@ -231,8 +231,14 @@ std::optional<MemoryBufferRef> macho::readFile(StringRef path) {
       return std::nullopt;
     }
 
-    if (read32be(&arch[i].cputype) != static_cast<uint32_t>(target->cpuType) ||
-        read32be(&arch[i].cpusubtype) != target->cpuSubtype)
+    uint32_t cpuType = read32be(&arch[i].cputype);
+    uint32_t cpuSubtype =
+        read32be(&arch[i].cpusubtype) & ~MachO::CPU_SUBTYPE_MASK;
+
+    // FIXME: LD64 has a more complex fallback logic here.
+    // Consider implementing that as well?
+    if (cpuType != static_cast<uint32_t>(target->cpuType) ||
+        cpuSubtype != target->cpuSubtype)
       continue;
 
     uint32_t offset = read32be(&arch[i].offset);
@@ -622,12 +628,6 @@ void ObjFile::parseRelocations(ArrayRef<SectionHeader> sectionHeaders,
   }
 }
 
-// Symbols with `l` or `L` as a prefix are linker-private and never appear in
-// the output.
-static bool isPrivateLabel(StringRef name) {
-  return name.startswith("l") || name.startswith("L");
-}
-
 template <class NList>
 static macho::Symbol *createDefined(const NList &sym, StringRef name,
                                     InputSection *isec, uint64_t value,
@@ -697,7 +697,8 @@ static macho::Symbol *createDefined(const NList &sym, StringRef name,
   }
   assert(!isWeakDefCanBeHidden &&
          "weak_def_can_be_hidden on already-hidden symbol?");
-  bool includeInSymtab = !isPrivateLabel(name) && !isEhFrameSection(isec);
+  bool includeInSymtab =
+      !name.startswith("l") && !name.startswith("L") && !isEhFrameSection(isec);
   return make<Defined>(
       name, isec->getFile(), isec, value, size, sym.n_desc & N_WEAK_DEF,
       /*isExternal=*/false, /*isPrivateExtern=*/false, includeInSymtab,
@@ -830,25 +831,17 @@ void ObjFile::parseSymbols(ArrayRef<typename LP::section> sectionHeaders,
     }
     sections[i]->doneSplitting = true;
 
-    auto getSymName = [strtab](const NList& sym) -> StringRef {
-      return StringRef(strtab + sym.n_strx);
-    };
-
     // Calculate symbol sizes and create subsections by splitting the sections
     // along symbol boundaries.
     // We populate subsections by repeatedly splitting the last (highest
     // address) subsection.
     llvm::stable_sort(symbolIndices, [&](uint32_t lhs, uint32_t rhs) {
-      // Put private-label symbols after other symbols at the same address.
-      if (nList[lhs].n_value == nList[rhs].n_value)
-        return !isPrivateLabel(getSymName(nList[lhs])) &&
-               isPrivateLabel(getSymName(nList[rhs]));
       return nList[lhs].n_value < nList[rhs].n_value;
     });
     for (size_t j = 0; j < symbolIndices.size(); ++j) {
       const uint32_t symIndex = symbolIndices[j];
       const NList &sym = nList[symIndex];
-      StringRef name = getSymName(sym);
+      StringRef name = strtab + sym.n_strx;
       Subsection &subsec = subsections.back();
       InputSection *isec = subsec.isec;
 
@@ -868,15 +861,8 @@ void ObjFile::parseSymbols(ArrayRef<typename LP::section> sectionHeaders,
       if (!subsectionsViaSymbols || symbolOffset == 0 ||
           sym.n_desc & N_ALT_ENTRY || !isa<ConcatInputSection>(isec)) {
         isec->hasAltEntry = symbolOffset != 0;
-        // If we have an private-label symbol that's an alias, just reuse the
-        // aliased symbol. Our sorting step above ensures that any such symbols
-        // will appear after the non-private-label ones. See
-        // weak-def-alias-ignored.s for the motivation behind this.
-        if (symbolOffset == 0 && isPrivateLabel(name) && j != 0)
-          symbols[symIndex] = symbols[symbolIndices[j - 1]];
-        else
-          symbols[symIndex] = createDefined(sym, name, isec, symbolOffset,
-                                            symbolSize, forceHidden);
+        symbols[symIndex] = createDefined(sym, name, isec, symbolOffset,
+                                          symbolSize, forceHidden);
         continue;
       }
       auto *concatIsec = cast<ConcatInputSection>(isec);
@@ -1367,11 +1353,11 @@ void ObjFile::registerEhFrames(Section &ehFrameSection) {
     // that all EH frames have an associated symbol so that we can generate
     // subtractor relocs that reference them.
     if (isec->symbols.size() == 0)
-      isec->symbols.push_back(make<Defined>(
-          "EH_Frame", isec->getFile(), isec, /*value=*/0, /*size=*/0,
-          /*isWeakDef=*/false, /*isExternal=*/false, /*isPrivateExtern=*/false,
-          /*includeInSymtab=*/false, /*isThumb=*/false,
-          /*isReferencedDynamically=*/false, /*noDeadStrip=*/false));
+      make<Defined>("EH_Frame", isec->getFile(), isec, /*value=*/0,
+                    isec->getSize(), /*isWeakDef=*/false, /*isExternal=*/false,
+                    /*isPrivateExtern=*/false, /*includeInSymtab=*/false,
+                    /*isThumb=*/false, /*isReferencedDynamically=*/false,
+                    /*noDeadStrip=*/false);
     else if (isec->symbols[0]->value != 0)
       fatal("found symbol at unexpected offset in __eh_frame");
 
@@ -2235,9 +2221,11 @@ void BitcodeFile::parseLazy() {
 }
 
 void macho::extract(InputFile &file, StringRef reason) {
-  printArchiveMemberLoad(reason, &file);
-  assert(file.lazy);
+  if (!file.lazy)
+    return;
   file.lazy = false;
+
+  printArchiveMemberLoad(reason, &file);
   if (auto *bitcode = dyn_cast<BitcodeFile>(&file)) {
     bitcode->parse();
   } else {

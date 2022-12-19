@@ -1105,7 +1105,15 @@ getAMDProcessorTypeAndSubtype(unsigned Family, unsigned Model,
       *Subtype = X86::AMDFAM19H_ZNVER3;
       break;
     }
-    break;
+    if ((Model >= 0x10 && Model <= 0x1f) ||
+        (Model >= 0x60 && Model <= 0x74) ||
+        (Model >= 0x78 && Model <= 0x7b) ||
+        (Model >= 0xA0 && Model <= 0xAf)) {
+      CPU = "znver4";
+      *Subtype = X86::AMDFAM19H_ZNVER4;
+      break; //  "znver4"
+    }
+    break; // family 19h 
   default:
     break; // Unknown AMD CPU.
   }
@@ -1789,7 +1797,7 @@ bool sys::getHostCPUFeatures(StringMap<bool> &Features) {
                                    .Case("half", "fp16")
                                    .Case("neon", "neon")
                                    .Case("vfpv3", "vfp3")
-                                   .Case("vfpv3d16", "d16")
+                                   .Case("vfpv3d16", "vfp3d16")
                                    .Case("vfpv4", "vfp4")
                                    .Case("idiva", "hwdiv-arm")
                                    .Case("idivt", "hwdiv")

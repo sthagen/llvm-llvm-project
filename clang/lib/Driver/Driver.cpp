@@ -97,6 +97,7 @@
 #include <cstdlib> // ::getenv
 #include <map>
 #include <memory>
+#include <optional>
 #include <utility>
 #if LLVM_ON_UNIX
 #include <unistd.h> // getpid
@@ -197,7 +198,7 @@ Driver::Driver(StringRef ClangExecutable, StringRef TargetTriple,
       ModulesModeCXX20(false), LTOMode(LTOK_None),
       ClangExecutable(ClangExecutable), SysRoot(DEFAULT_SYSROOT),
       DriverTitle(Title), CCCPrintBindings(false), CCPrintOptions(false),
-      CCPrintHeaders(false), CCLogDiagnostics(false), CCGenDiagnostics(false),
+      CCLogDiagnostics(false), CCGenDiagnostics(false),
       CCPrintProcessStats(false), TargetTriple(TargetTriple), Saver(Alloc),
       CheckInputsExist(true), ProbePrecompiled(true),
       SuppressMissingInputWarning(false) {
@@ -575,7 +576,7 @@ static llvm::Triple computeTargetTriple(const Driver &D,
 
   // On AIX, the env OBJECT_MODE may affect the resulting arch variant.
   if (Target.isOSAIX()) {
-    if (Optional<std::string> ObjectModeValue =
+    if (std::optional<std::string> ObjectModeValue =
             llvm::sys::Process::GetEnv("OBJECT_MODE")) {
       StringRef ObjectMode = *ObjectModeValue;
       llvm::Triple::ArchType AT = llvm::Triple::UnknownArch;
@@ -1277,7 +1278,7 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
     A->claim();
     PrefixDirs.push_back(A->getValue(0));
   }
-  if (Optional<std::string> CompilerPathValue =
+  if (std::optional<std::string> CompilerPathValue =
           llvm::sys::Process::GetEnv("COMPILER_PATH")) {
     StringRef CompilerPath = *CompilerPathValue;
     while (!CompilerPath.empty()) {
@@ -3066,6 +3067,17 @@ class OffloadingActionBuilder final {
           if (A->getOption().matches(options::OPT_no_offload_arch_EQ) &&
               ArchStr == "all") {
             GpuArchs.clear();
+          } else if (ArchStr == "native" &&
+                     ToolChains.front()->getTriple().isAMDGPU()) {
+            auto *TC = static_cast<const toolchains::HIPAMDToolChain *>(
+                ToolChains.front());
+            SmallVector<std::string, 1> GPUs;
+            auto Err = TC->detectSystemGPUs(Args, GPUs);
+            if (!Err) {
+              for (auto GPU : GPUs)
+                GpuArchs.insert(Args.MakeArgString(GPU));
+            } else
+              llvm::consumeError(std::move(Err));
           } else {
             ArchStr = getCanonicalOffloadArch(ArchStr);
             if (ArchStr.empty()) {
@@ -3402,7 +3414,7 @@ class OffloadingActionBuilder final {
                                                AssociatedOffloadKind);
 
       if (CompileDeviceOnly && CurPhase == FinalPhase && BundleOutput &&
-          BundleOutput.value()) {
+          *BundleOutput) {
         for (unsigned I = 0, E = GpuArchList.size(); I != E; ++I) {
           OffloadAction::DeviceDependences DDep;
           DDep.add(*CudaDeviceActions[I], *ToolChains.front(), GpuArchList[I],
@@ -5460,7 +5472,7 @@ const char *Driver::CreateTempFile(Compilation &C, StringRef Prefix,
                                    StringRef BoundArch) const {
   SmallString<128> TmpName;
   Arg *A = C.getArgs().getLastArg(options::OPT_fcrash_diagnostics_dir);
-  Optional<std::string> CrashDirectory =
+  std::optional<std::string> CrashDirectory =
       CCGenDiagnostics && A
           ? std::string(A->getValue())
           : llvm::sys::Process::GetEnv("CLANG_CRASH_DIAGNOSTICS_DIR");

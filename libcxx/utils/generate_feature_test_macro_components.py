@@ -309,6 +309,10 @@ feature_test_macros = [ add_version_header(x) for x in [
     "headers": ["execution"],
     "unimplemented": True,
   }, {
+    "name": "__cpp_lib_expected",
+    "values": { "c++2b": 202202 },
+    "headers": ["expected"],
+  }, {
     "name": "__cpp_lib_filesystem",
     "values": { "c++17": 201703 },
     "headers": ["filesystem"],
@@ -525,7 +529,6 @@ feature_test_macros = [ add_version_header(x) for x in [
     "name": "__cpp_lib_polymorphic_allocator",
     "values": { "c++20": 201902 },
     "headers": ["memory_resource"],
-    "unimplemented": True,
   }, {
     "name": "__cpp_lib_quoted_string_io",
     "values": { "c++14": 201304 },

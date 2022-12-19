@@ -2367,7 +2367,7 @@ AArch64TTIImpl::getMaskedMemoryOpCost(unsigned Opcode, Type *Src,
   if (cast<VectorType>(Src)->getElementCount() == ElementCount::getScalable(1))
     return InstructionCost::getInvalid();
 
-  return LT.first * 2;
+  return LT.first;
 }
 
 static unsigned getSVEGatherScatterOverhead(unsigned Opcode) {
@@ -2450,6 +2450,10 @@ InstructionCost AArch64TTIImpl::getMemoryOpCost(unsigned Opcode, Type *Ty,
 
     return LT.first * 2 * AmortizationCost;
   }
+
+  // Opaque ptr or ptr vector types are i64s and can be lowered to STP/LDPs.
+  if (Ty->isPtrOrPtrVectorTy())
+    return LT.first;
 
   // Check truncating stores and extending loads.
   if (useNeonVector(Ty) &&

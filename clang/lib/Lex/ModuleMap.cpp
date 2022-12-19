@@ -28,7 +28,6 @@
 #include "clang/Lex/LiteralSupport.h"
 #include "clang/Lex/Token.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/None.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
@@ -1216,8 +1215,8 @@ void ModuleMap::resolveHeaderDirectives(
     Module *Mod, llvm::Optional<const FileEntry *> File) const {
   bool NeedsFramework = false;
   SmallVector<Module::UnresolvedHeaderDirective, 1> NewHeaders;
-  const auto Size = File ? File.value()->getSize() : 0;
-  const auto ModTime = File ? File.value()->getModificationTime() : 0;
+  const auto Size = File ? (*File)->getSize() : 0;
+  const auto ModTime = File ? (*File)->getModificationTime() : 0;
 
   for (auto &Header : Mod->UnresolvedHeaders) {
     if (File && ((Header.ModTime && Header.ModTime != ModTime) ||

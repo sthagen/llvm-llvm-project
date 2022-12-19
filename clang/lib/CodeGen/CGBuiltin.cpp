@@ -3325,7 +3325,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   }
 
   case Builtin::BI__builtin_flt_rounds: {
-    Function *F = CGM.getIntrinsic(Intrinsic::flt_rounds);
+    Function *F = CGM.getIntrinsic(Intrinsic::get_rounding);
 
     llvm::Type *ResultType = ConvertType(E->getType());
     Value *Result = Builder.CreateCall(F);
@@ -4258,8 +4258,9 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   }
   case Builtin::BI__builtin_annotation: {
     llvm::Value *AnnVal = EmitScalarExpr(E->getArg(0));
-    llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::annotation,
-                                      AnnVal->getType());
+    llvm::Function *F =
+        CGM.getIntrinsic(llvm::Intrinsic::annotation,
+                         {AnnVal->getType(), CGM.ConstGlobalsPtrTy});
 
     // Get the annotation string, go through casts. Sema requires this to be a
     // non-wide string literal, potentially casted, so the cast<> is safe.
@@ -6773,7 +6774,7 @@ static Value *EmitCommonNeonSISDBuiltinExpr(
     Ops[j] = CGF.Builder.CreateTruncOrBitCast(
         Ops[j], cast<llvm::VectorType>(ArgTy)->getElementType());
     Ops[j] =
-        CGF.Builder.CreateInsertElement(UndefValue::get(ArgTy), Ops[j], C0);
+        CGF.Builder.CreateInsertElement(PoisonValue::get(ArgTy), Ops[j], C0);
   }
 
   Value *Result = CGF.EmitNeonCall(F, Ops, s);
@@ -7605,9 +7606,10 @@ static Value *EmitSpecialRegisterBuiltin(CodeGenFunction &CGF,
                                          llvm::Type *ValueType,
                                          SpecialRegisterAccessKind AccessKind,
                                          StringRef SysReg = "") {
-  // write and register intrinsics only support 32 and 64 bit operations.
-  assert((RegisterType->isIntegerTy(32) || RegisterType->isIntegerTy(64))
-          && "Unsupported size for register.");
+  // write and register intrinsics only support 32, 64 and 128 bit operations.
+  assert((RegisterType->isIntegerTy(32) || RegisterType->isIntegerTy(64) ||
+          RegisterType->isIntegerTy(128)) &&
+         "Unsupported size for register.");
 
   CodeGen::CGBuilderTy &Builder = CGF.Builder;
   CodeGen::CodeGenModule &CGM = CGF.CGM;
@@ -9588,7 +9590,7 @@ Value *CodeGenFunction::EmitAArch64SVEBuiltinExpr(unsigned BuiltinID,
 
     llvm::Type *OverloadedTy = getSVEVectorForElementType(EltTy);
     Value *InsertSubVec = Builder.CreateInsertVector(
-        OverloadedTy, UndefValue::get(OverloadedTy), Vec, Builder.getInt64(0));
+        OverloadedTy, PoisonValue::get(OverloadedTy), Vec, Builder.getInt64(0));
 
     Function *F =
         CGM.getIntrinsic(Intrinsic::aarch64_sve_dupq_lane, OverloadedTy);
@@ -9696,7 +9698,7 @@ Value *CodeGenFunction::EmitAArch64SVEBuiltinExpr(unsigned BuiltinID,
   case SVE::BI__builtin_sve_svdup_neonq_f32:
   case SVE::BI__builtin_sve_svdup_neonq_f64:
   case SVE::BI__builtin_sve_svdup_neonq_bf16: {
-    Value *Insert = Builder.CreateInsertVector(Ty, UndefValue::get(Ty), Ops[0],
+    Value *Insert = Builder.CreateInsertVector(Ty, PoisonValue::get(Ty), Ops[0],
                                                Builder.getInt64(0));
     return Builder.CreateIntrinsic(Intrinsic::aarch64_sve_dupq_lane, {Ty},
                                    {Insert, Builder.getInt64(0)});
@@ -9745,29 +9747,6 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
   if (HintID != static_cast<unsigned>(-1)) {
     Function *F = CGM.getIntrinsic(Intrinsic::aarch64_hint);
     return Builder.CreateCall(F, llvm::ConstantInt::get(Int32Ty, HintID));
-  }
-
-  if (BuiltinID == clang::AArch64::BI__builtin_arm_prefetch) {
-    Value *Address         = EmitScalarExpr(E->getArg(0));
-    Value *RW              = EmitScalarExpr(E->getArg(1));
-    Value *CacheLevel      = EmitScalarExpr(E->getArg(2));
-    Value *RetentionPolicy = EmitScalarExpr(E->getArg(3));
-    Value *IsData          = EmitScalarExpr(E->getArg(4));
-
-    Value *Locality = nullptr;
-    if (cast<llvm::ConstantInt>(RetentionPolicy)->isZero()) {
-      // Temporal fetch, needs to convert cache level to locality.
-      Locality = llvm::ConstantInt::get(Int32Ty,
-        -cast<llvm::ConstantInt>(CacheLevel)->getValue() + 3);
-    } else {
-      // Streaming fetch.
-      Locality = llvm::ConstantInt::get(Int32Ty, 0);
-    }
-
-    // FIXME: We need AArch64 specific LLVM intrinsic if we want to specify
-    // PLDL3STRM or PLDL2STRM.
-    Function *F = CGM.getIntrinsic(Intrinsic::prefetch, Address->getType());
-    return Builder.CreateCall(F, {Address, RW, Locality, IsData});
   }
 
   if (BuiltinID == clang::AArch64::BI__builtin_arm_rbit) {
@@ -10173,32 +10152,43 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
 
   if (BuiltinID == clang::AArch64::BI__builtin_arm_rsr ||
       BuiltinID == clang::AArch64::BI__builtin_arm_rsr64 ||
+      BuiltinID == clang::AArch64::BI__builtin_arm_rsr128 ||
       BuiltinID == clang::AArch64::BI__builtin_arm_rsrp ||
       BuiltinID == clang::AArch64::BI__builtin_arm_wsr ||
       BuiltinID == clang::AArch64::BI__builtin_arm_wsr64 ||
+      BuiltinID == clang::AArch64::BI__builtin_arm_wsr128 ||
       BuiltinID == clang::AArch64::BI__builtin_arm_wsrp) {
 
     SpecialRegisterAccessKind AccessKind = Write;
     if (BuiltinID == clang::AArch64::BI__builtin_arm_rsr ||
         BuiltinID == clang::AArch64::BI__builtin_arm_rsr64 ||
+        BuiltinID == clang::AArch64::BI__builtin_arm_rsr128 ||
         BuiltinID == clang::AArch64::BI__builtin_arm_rsrp)
       AccessKind = VolatileRead;
 
     bool IsPointerBuiltin = BuiltinID == clang::AArch64::BI__builtin_arm_rsrp ||
                             BuiltinID == clang::AArch64::BI__builtin_arm_wsrp;
 
-    bool Is64Bit = BuiltinID != clang::AArch64::BI__builtin_arm_rsr &&
-                   BuiltinID != clang::AArch64::BI__builtin_arm_wsr;
+    bool Is32Bit = BuiltinID == clang::AArch64::BI__builtin_arm_rsr ||
+                   BuiltinID == clang::AArch64::BI__builtin_arm_wsr;
+
+    bool Is128Bit = BuiltinID == clang::AArch64::BI__builtin_arm_rsr128 ||
+                    BuiltinID == clang::AArch64::BI__builtin_arm_wsr128;
 
     llvm::Type *ValueType;
     llvm::Type *RegisterType = Int64Ty;
-    if (IsPointerBuiltin) {
-      ValueType = VoidPtrTy;
-    } else if (Is64Bit) {
-      ValueType = Int64Ty;
-    } else {
+    if (Is32Bit) {
       ValueType = Int32Ty;
-    }
+    } else if (Is128Bit) {
+      llvm::Type *Int128Ty =
+          llvm::IntegerType::getInt128Ty(CGM.getLLVMContext());
+      ValueType = Int128Ty;
+      RegisterType = Int128Ty;
+    } else if (IsPointerBuiltin) {
+      ValueType = VoidPtrTy;
+    } else {
+      ValueType = Int64Ty;
+    };
 
     return EmitSpecialRegisterBuiltin(*this, E, RegisterType, ValueType,
                                       AccessKind);
@@ -16657,16 +16647,9 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
   case PPC::BI__builtin_ppc_test_data_class: {
     Value *Op0 = EmitScalarExpr(E->getArg(0));
     Value *Op1 = EmitScalarExpr(E->getArg(1));
-    llvm::Type *ArgType = Op0->getType();
-    unsigned IntrinsicID;
-    if (ArgType->isDoubleTy())
-      IntrinsicID = Intrinsic::ppc_test_data_class_d;
-    else if (ArgType->isFloatTy())
-      IntrinsicID = Intrinsic::ppc_test_data_class_f;
-    else
-      llvm_unreachable("Invalid Argument Type");
-    return Builder.CreateCall(CGM.getIntrinsic(IntrinsicID), {Op0, Op1},
-                              "test_data_class");
+    return Builder.CreateCall(
+        CGM.getIntrinsic(Intrinsic::ppc_test_data_class, Op0->getType()),
+        {Op0, Op1}, "test_data_class");
   }
   case PPC::BI__builtin_ppc_maxfe: {
     Value *Op0 = EmitScalarExpr(E->getArg(0));
@@ -16893,7 +16876,7 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
       Args.push_back(EmitScalarExpr(E->getArg(I)));
     assert(Args.size() == 5 || Args.size() == 6);
     if (Args.size() == 5)
-      Args.insert(Args.begin(), llvm::UndefValue::get(Args[0]->getType()));
+      Args.insert(Args.begin(), llvm::PoisonValue::get(Args[0]->getType()));
     Function *F =
         CGM.getIntrinsic(Intrinsic::amdgcn_update_dpp, Args[0]->getType());
     return Builder.CreateCall(F, Args);
@@ -19693,6 +19676,48 @@ Value *CodeGenFunction::EmitLoongArchBuiltinExpr(unsigned BuiltinID,
     break;
   case LoongArch::BI__builtin_loongarch_crcc_w_d_w:
     ID = Intrinsic::loongarch_crcc_w_d_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrrd_w:
+    ID = Intrinsic::loongarch_csrrd_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrwr_w:
+    ID = Intrinsic::loongarch_csrwr_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrxchg_w:
+    ID = Intrinsic::loongarch_csrxchg_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrrd_d:
+    ID = Intrinsic::loongarch_csrrd_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrwr_d:
+    ID = Intrinsic::loongarch_csrwr_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_csrxchg_d:
+    ID = Intrinsic::loongarch_csrxchg_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrrd_b:
+    ID = Intrinsic::loongarch_iocsrrd_b;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrrd_h:
+    ID = Intrinsic::loongarch_iocsrrd_h;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrrd_w:
+    ID = Intrinsic::loongarch_iocsrrd_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrrd_d:
+    ID = Intrinsic::loongarch_iocsrrd_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrwr_b:
+    ID = Intrinsic::loongarch_iocsrwr_b;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrwr_h:
+    ID = Intrinsic::loongarch_iocsrwr_h;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrwr_w:
+    ID = Intrinsic::loongarch_iocsrwr_w;
+    break;
+  case LoongArch::BI__builtin_loongarch_iocsrwr_d:
+    ID = Intrinsic::loongarch_iocsrwr_d;
     break;
     // TODO: Support more Intrinsics.
   }

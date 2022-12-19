@@ -12,7 +12,6 @@
 
 #include "InstCombineInternal.h"
 #include "llvm/ADT/APInt.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -316,33 +315,42 @@ Instruction *InstCombinerImpl::foldSelectOpOp(SelectInst &SI, Instruction *TI,
 
   Value *OtherOpT, *OtherOpF;
   bool MatchIsOpZero;
-  auto getCommonOp = [&](Instruction *TI, Instruction *FI,
-                         bool Commute) -> Value * {
-    Value *CommonOp = nullptr;
-    if (TI->getOperand(0) == FI->getOperand(0)) {
-      CommonOp = TI->getOperand(0);
-      OtherOpT = TI->getOperand(1);
-      OtherOpF = FI->getOperand(1);
-      MatchIsOpZero = true;
-    } else if (TI->getOperand(1) == FI->getOperand(1)) {
-      CommonOp = TI->getOperand(1);
-      OtherOpT = TI->getOperand(0);
-      OtherOpF = FI->getOperand(0);
-      MatchIsOpZero = false;
-    } else if (!Commute) {
-      return nullptr;
-    } else if (TI->getOperand(0) == FI->getOperand(1)) {
-      CommonOp = TI->getOperand(0);
-      OtherOpT = TI->getOperand(1);
-      OtherOpF = FI->getOperand(0);
-      MatchIsOpZero = true;
-    } else if (TI->getOperand(1) == FI->getOperand(0)) {
-      CommonOp = TI->getOperand(1);
-      OtherOpT = TI->getOperand(0);
-      OtherOpF = FI->getOperand(1);
-      MatchIsOpZero = true;
+  auto getCommonOp = [&](Instruction *TI, Instruction *FI, bool Commute,
+                         bool Swapped = false) -> Value * {
+    assert(!(Commute && Swapped) &&
+           "Commute and Swapped can't set at the same time");
+    if (!Swapped) {
+      if (TI->getOperand(0) == FI->getOperand(0)) {
+        OtherOpT = TI->getOperand(1);
+        OtherOpF = FI->getOperand(1);
+        MatchIsOpZero = true;
+        return TI->getOperand(0);
+      } else if (TI->getOperand(1) == FI->getOperand(1)) {
+        OtherOpT = TI->getOperand(0);
+        OtherOpF = FI->getOperand(0);
+        MatchIsOpZero = false;
+        return TI->getOperand(1);
+      }
     }
-    return CommonOp;
+
+    if (!Commute && !Swapped)
+      return nullptr;
+
+    // If we are allowing commute or swap of operands, then
+    // allow a cross-operand match. In that case, MatchIsOpZero
+    // means that TI's operand 0 (FI's operand 1) is the common op.
+    if (TI->getOperand(0) == FI->getOperand(1)) {
+      OtherOpT = TI->getOperand(1);
+      OtherOpF = FI->getOperand(0);
+      MatchIsOpZero = true;
+      return TI->getOperand(0);
+    } else if (TI->getOperand(1) == FI->getOperand(0)) {
+      OtherOpT = TI->getOperand(0);
+      OtherOpF = FI->getOperand(1);
+      MatchIsOpZero = false;
+      return TI->getOperand(1);
+    }
+    return nullptr;
   };
 
   if (TI->hasOneUse() || FI->hasOneUse()) {
@@ -379,16 +387,20 @@ Instruction *InstCombinerImpl::foldSelectOpOp(SelectInst &SI, Instruction *TI,
       }
     }
 
-    // icmp eq/ne with a common operand also can have the common operand
+    // icmp with a common operand also can have the common operand
     // pulled after the select.
     ICmpInst::Predicate TPred, FPred;
     if (match(TI, m_ICmp(TPred, m_Value(), m_Value())) &&
         match(FI, m_ICmp(FPred, m_Value(), m_Value()))) {
-      if (TPred == FPred && ICmpInst::isEquality(TPred)) {
-        if (Value *MatchOp = getCommonOp(TI, FI, true)) {
+      if (TPred == FPred || TPred == CmpInst::getSwappedPredicate(FPred)) {
+        bool Swapped = TPred != FPred;
+        if (Value *MatchOp =
+                getCommonOp(TI, FI, ICmpInst::isEquality(TPred), Swapped)) {
           Value *NewSel = Builder.CreateSelect(Cond, OtherOpT, OtherOpF,
                                                SI.getName() + ".v", &SI);
-          return new ICmpInst(TPred, NewSel, MatchOp);
+          return new ICmpInst(
+              MatchIsOpZero ? TPred : CmpInst::getSwappedPredicate(TPred),
+              MatchOp, NewSel);
         }
       }
     }
@@ -2489,7 +2501,7 @@ Instruction *InstCombinerImpl::foldAndOrOfSelectUsingImpliedCond(Value *Op,
   assert(Op->getType()->isIntOrIntVectorTy(1) &&
          "Op must be either i1 or vector of i1.");
 
-  Optional<bool> Res = isImpliedCondition(Op, CondVal, DL, IsAnd);
+  std::optional<bool> Res = isImpliedCondition(Op, CondVal, DL, IsAnd);
   if (!Res)
     return nullptr;
 
@@ -2527,6 +2539,7 @@ static Instruction *foldSelectWithFCmpToFabs(SelectInst &SI,
                                              InstCombinerImpl &IC) {
   Value *CondVal = SI.getCondition();
 
+  bool ChangedFMF = false;
   for (bool Swap : {false, true}) {
     Value *TrueVal = SI.getTrueValue();
     Value *X = SI.getFalseValue();
@@ -2551,13 +2564,29 @@ static Instruction *foldSelectWithFCmpToFabs(SelectInst &SI,
       }
     }
 
+    if (!match(TrueVal, m_FNeg(m_Specific(X))))
+      return nullptr;
+
+    // Forward-propagate nnan and ninf from the fneg to the select.
+    // If all inputs are not those values, then the select is not either.
+    // Note: nsz is defined differently, so it may not be correct to propagate.
+    FastMathFlags FMF = cast<FPMathOperator>(TrueVal)->getFastMathFlags();
+    if (FMF.noNaNs() && !SI.hasNoNaNs()) {
+      SI.setHasNoNaNs(true);
+      ChangedFMF = true;
+    }
+    if (FMF.noInfs() && !SI.hasNoInfs()) {
+      SI.setHasNoInfs(true);
+      ChangedFMF = true;
+    }
+
     // With nsz, when 'Swap' is false:
     // fold (X < +/-0.0) ? -X : X or (X <= +/-0.0) ? -X : X to fabs(X)
     // fold (X > +/-0.0) ? -X : X or (X >= +/-0.0) ? -X : X to -fabs(x)
     // when 'Swap' is true:
     // fold (X > +/-0.0) ? X : -X or (X >= +/-0.0) ? X : -X to fabs(X)
     // fold (X < +/-0.0) ? X : -X or (X <= +/-0.0) ? X : -X to -fabs(X)
-    if (!match(TrueVal, m_FNeg(m_Specific(X))) || !SI.hasNoSignedZeros())
+    if (!SI.hasNoSignedZeros())
       return nullptr;
 
     if (Swap)
@@ -2580,7 +2609,7 @@ static Instruction *foldSelectWithFCmpToFabs(SelectInst &SI,
     }
   }
 
-  return nullptr;
+  return ChangedFMF ? &SI : nullptr;
 }
 
 // Match the following IR pattern:
@@ -2656,6 +2685,85 @@ foldRoundUpIntegerWithPow2Alignment(SelectInst &SI,
   return R;
 }
 
+namespace {
+struct DecomposedSelect {
+  Value *Cond = nullptr;
+  Value *TrueVal = nullptr;
+  Value *FalseVal = nullptr;
+};
+} // namespace
+
+/// Look for patterns like
+///   %outer.cond = select i1 %inner.cond, i1 %alt.cond, i1 false
+///   %inner.sel = select i1 %inner.cond, i8 %inner.sel.t, i8 %inner.sel.f
+///   %outer.sel = select i1 %outer.cond, i8 %outer.sel.t, i8 %inner.sel
+/// and rewrite it as
+///   %inner.sel = select i1 %cond.alternative, i8 %sel.outer.t, i8 %sel.inner.t
+///   %sel.outer = select i1 %cond.inner, i8 %inner.sel, i8 %sel.inner.f
+static Instruction *foldNestedSelects(SelectInst &OuterSelVal,
+                                      InstCombiner::BuilderTy &Builder) {
+  // We must start with a `select`.
+  DecomposedSelect OuterSel;
+  match(&OuterSelVal,
+        m_Select(m_Value(OuterSel.Cond), m_Value(OuterSel.TrueVal),
+                 m_Value(OuterSel.FalseVal)));
+
+  // Canonicalize inversion of the outermost `select`'s condition.
+  if (match(OuterSel.Cond, m_Not(m_Value(OuterSel.Cond))))
+    std::swap(OuterSel.TrueVal, OuterSel.FalseVal);
+
+  // The condition of the outermost select must be an `and`/`or`.
+  if (!match(OuterSel.Cond, m_c_LogicalOp(m_Value(), m_Value())))
+    return nullptr;
+
+  // Depending on the logical op, inner select might be in different hand.
+  bool IsAndVariant = match(OuterSel.Cond, m_LogicalAnd());
+  Value *InnerSelVal = IsAndVariant ? OuterSel.FalseVal : OuterSel.TrueVal;
+
+  // Profitability check - avoid increasing instruction count.
+  if (none_of(ArrayRef<Value *>({OuterSelVal.getCondition(), InnerSelVal}),
+              [](Value *V) { return V->hasOneUse(); }))
+    return nullptr;
+
+  // The appropriate hand of the outermost `select` must be a select itself.
+  DecomposedSelect InnerSel;
+  if (!match(InnerSelVal,
+             m_Select(m_Value(InnerSel.Cond), m_Value(InnerSel.TrueVal),
+                      m_Value(InnerSel.FalseVal))))
+    return nullptr;
+
+  // Canonicalize inversion of the innermost `select`'s condition.
+  if (match(InnerSel.Cond, m_Not(m_Value(InnerSel.Cond))))
+    std::swap(InnerSel.TrueVal, InnerSel.FalseVal);
+
+  Value *AltCond = nullptr;
+  auto matchOuterCond = [OuterSel, &AltCond](auto m_InnerCond) {
+    return match(OuterSel.Cond, m_c_LogicalOp(m_InnerCond, m_Value(AltCond)));
+  };
+
+  // Finally, match the condition that was driving the outermost `select`,
+  // it should be a logical operation between the condition that was driving
+  // the innermost `select` (after accounting for the possible inversions
+  // of the condition), and some other condition.
+  if (matchOuterCond(m_Specific(InnerSel.Cond))) {
+    // Done!
+  } else if (Value * NotInnerCond; matchOuterCond(m_CombineAnd(
+                 m_Not(m_Specific(InnerSel.Cond)), m_Value(NotInnerCond)))) {
+    // Done!
+    std::swap(InnerSel.TrueVal, InnerSel.FalseVal);
+    InnerSel.Cond = NotInnerCond;
+  } else // Not the pattern we were looking for.
+    return nullptr;
+
+  Value *SelInner = Builder.CreateSelect(
+      AltCond, IsAndVariant ? OuterSel.TrueVal : InnerSel.FalseVal,
+      IsAndVariant ? InnerSel.TrueVal : OuterSel.FalseVal);
+  SelInner->takeName(InnerSelVal);
+  return SelectInst::Create(InnerSel.Cond,
+                            IsAndVariant ? SelInner : InnerSel.TrueVal,
+                            !IsAndVariant ? SelInner : InnerSel.FalseVal);
+}
+
 Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
   Value *CondVal = SI.getCondition();
   Value *TrueVal = SI.getTrueValue();
@@ -2668,6 +2776,10 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
   if (!SelType->isIntOrIntVectorTy(1) || isa<Constant>(CondVal) ||
       TrueVal->getType() != CondVal->getType())
     return nullptr;
+
+  auto *One = ConstantInt::getTrue(SelType);
+  auto *Zero = ConstantInt::getFalse(SelType);
+  Value *A, *B, *C, *D;
 
   // Folding select to and/or i1 isn't poison safe in general. impliesPoison
   // checks whether folding it does not convert a well-defined value into
@@ -2683,7 +2795,30 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
         if (Value *V = foldLogicOfFCmps(LHS, RHS, /*IsAnd*/ false,
                                         /*IsSelectLogical*/ true))
           return replaceInstUsesWith(SI, V);
+
+    // (A && B) || (C && B) --> (A || C) && B
+    if (match(CondVal, m_LogicalAnd(m_Value(A), m_Value(B))) &&
+        match(FalseVal, m_LogicalAnd(m_Value(C), m_Value(D))) &&
+        (CondVal->hasOneUse() || FalseVal->hasOneUse())) {
+      bool CondLogicAnd = isa<SelectInst>(CondVal);
+      bool FalseLogicAnd = isa<SelectInst>(FalseVal);
+      if (CondLogicAnd && FalseLogicAnd) {
+        // (A ? B : 0) ? 1 : (A ? D : 0) --> A ? (B ? 1 : D) : 0
+        if (A == C)
+          return SelectInst::Create(A, Builder.CreateSelect(B, One, D), Zero);
+        // (A ? B : 0) ? 1 : (C ? A : 0) --> A ? (B ? 1 : C) : 0
+        if (A == D)
+          return SelectInst::Create(A, Builder.CreateSelect(B, One, C), Zero);
+        // (A ? B : 0) ? 1 : (B ? D : 0) --> B ? (A ? 1 : D) : 0
+        if (B == C)
+          return SelectInst::Create(B, Builder.CreateSelect(A, One, D), Zero);
+        // (A ? B : 0) ? 1 : (C ? B : 0) --> (A ? 1 : C) ? B : 0
+        if (B == D)
+          return SelectInst::Create(Builder.CreateSelect(A, One, C), B, Zero);
+      }
+    }
   }
+
   if (match(FalseVal, m_Zero())) {
     if (impliesPoison(TrueVal, CondVal)) {
       // Change: A = select B, C, false --> A = and B, C
@@ -2695,10 +2830,29 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
         if (Value *V = foldLogicOfFCmps(LHS, RHS, /*IsAnd*/ true,
                                         /*IsSelectLogical*/ true))
           return replaceInstUsesWith(SI, V);
-  }
 
-  auto *One = ConstantInt::getTrue(SelType);
-  auto *Zero = ConstantInt::getFalse(SelType);
+    // (A || B) && (C || B) --> (A && C) || B
+    if (match(CondVal, m_LogicalOr(m_Value(A), m_Value(B))) &&
+        match(TrueVal, m_LogicalOr(m_Value(C), m_Value(D))) &&
+        (CondVal->hasOneUse() || TrueVal->hasOneUse())) {
+      bool CondLogicOr = isa<SelectInst>(CondVal);
+      bool TrueLogicOr = isa<SelectInst>(TrueVal);
+      if (CondLogicOr && TrueLogicOr) {
+        // (A ? 1 : B) ? (A ? 1 : D) : 0 --> A ? 1 : (B ? D : 0)
+        if (A == C)
+          return SelectInst::Create(A, One, Builder.CreateSelect(B, D, Zero));
+        // (A ? 1 : B) ? (C ? 1 : A) : 0 --> A ? 1 : (B ? C : 0)
+        if (A == D)
+          return SelectInst::Create(A, One, Builder.CreateSelect(B, C, Zero));
+        // (A ? 1 : B) ? (B ? 1 : D) : 0 --> B ? 1 : (A ? D : 0)
+        if (B == C)
+          return SelectInst::Create(B, One, Builder.CreateSelect(A, D, Zero));
+        // (A ? 1 : B) ? (C ? 1 : B) : 0 --> (A ? C : 0) ? 1 : B
+        if (B == D)
+          return SelectInst::Create(Builder.CreateSelect(A, C, Zero), One, B);
+      }
+    }
+  }
 
   // We match the "full" 0 or 1 constant here to avoid a potential infinite
   // loop with vectors that may have undefined/poison elements.
@@ -2712,8 +2866,6 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
     Value *NotCond = Builder.CreateNot(CondVal, "not." + CondVal->getName());
     return SelectInst::Create(NotCond, One, TrueVal);
   }
-
-  Value *A, *B;
 
   // DeMorgan in select form: !a && !b --> !(a || b)
   // select !a, !b, false --> not (select a, true, b)
@@ -2743,7 +2895,6 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
                                 m_c_LogicalOr(m_Deferred(A), m_Deferred(B)))))
     return BinaryOperator::CreateXor(A, B);
 
-  Value *C;
   // select (~a | c), a, b -> and a, (or c, freeze(b))
   if (match(CondVal, m_c_Or(m_Not(m_Specific(TrueVal)), m_Value(C))) &&
       CondVal->hasOneUse()) {
@@ -2785,13 +2936,13 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
   //   if c implies that b is false.
   if (match(CondVal, m_LogicalOr(m_Value(A), m_Value(B))) &&
       match(FalseVal, m_Zero())) {
-    Optional<bool> Res = isImpliedCondition(TrueVal, B, DL);
+    std::optional<bool> Res = isImpliedCondition(TrueVal, B, DL);
     if (Res && *Res == false)
       return replaceOperand(SI, 0, A);
   }
   if (match(TrueVal, m_LogicalOr(m_Value(A), m_Value(B))) &&
       match(FalseVal, m_Zero())) {
-    Optional<bool> Res = isImpliedCondition(CondVal, B, DL);
+    std::optional<bool> Res = isImpliedCondition(CondVal, B, DL);
     if (Res && *Res == false)
       return replaceOperand(SI, 1, A);
   }
@@ -2800,13 +2951,13 @@ Instruction *InstCombinerImpl::foldSelectOfBools(SelectInst &SI) {
   //   if c = false implies that b = true
   if (match(TrueVal, m_One()) &&
       match(FalseVal, m_LogicalAnd(m_Value(A), m_Value(B)))) {
-    Optional<bool> Res = isImpliedCondition(CondVal, B, DL, false);
+    std::optional<bool> Res = isImpliedCondition(CondVal, B, DL, false);
     if (Res && *Res == true)
       return replaceOperand(SI, 2, A);
   }
   if (match(CondVal, m_LogicalAnd(m_Value(A), m_Value(B))) &&
       match(TrueVal, m_One())) {
-    Optional<bool> Res = isImpliedCondition(FalseVal, B, DL, false);
+    std::optional<bool> Res = isImpliedCondition(FalseVal, B, DL, false);
     if (Res && *Res == true)
       return replaceOperand(SI, 0, A);
   }
@@ -2960,8 +3111,23 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
         Value *NewSel = Builder.CreateSelect(NewCond, FalseVal, TrueVal);
         return replaceInstUsesWith(SI, NewSel);
       }
+    }
+  }
 
-      // NOTE: if we wanted to, this is where to detect MIN/MAX
+  if (isa<FPMathOperator>(SI)) {
+    // TODO: Try to forward-propagate FMF from select arms to the select.
+
+    // Canonicalize select of FP values where NaN and -0.0 are not valid as
+    // minnum/maxnum intrinsics.
+    if (SI.hasNoNaNs() && SI.hasNoSignedZeros()) {
+      Value *X, *Y;
+      if (match(&SI, m_OrdFMax(m_Value(X), m_Value(Y))))
+        return replaceInstUsesWith(
+            SI, Builder.CreateBinaryIntrinsic(Intrinsic::maxnum, X, Y, &SI));
+
+      if (match(&SI, m_OrdFMin(m_Value(X), m_Value(Y))))
+        return replaceInstUsesWith(
+            SI, Builder.CreateBinaryIntrinsic(Intrinsic::minnum, X, Y, &SI));
     }
   }
 
@@ -3074,19 +3240,6 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
         return replaceInstUsesWith(SI, NewCast);
       }
     }
-  }
-
-  // Canonicalize select of FP values where NaN and -0.0 are not valid as
-  // minnum/maxnum intrinsics.
-  if (isa<FPMathOperator>(SI) && SI.hasNoNaNs() && SI.hasNoSignedZeros()) {
-    Value *X, *Y;
-    if (match(&SI, m_OrdFMax(m_Value(X), m_Value(Y))))
-      return replaceInstUsesWith(
-          SI, Builder.CreateBinaryIntrinsic(Intrinsic::maxnum, X, Y, &SI));
-
-    if (match(&SI, m_OrdFMin(m_Value(X), m_Value(Y))))
-      return replaceInstUsesWith(
-          SI, Builder.CreateBinaryIntrinsic(Intrinsic::minnum, X, Y, &SI));
   }
 
   // See if we can fold the select into a phi node if the condition is a select.
@@ -3276,6 +3429,16 @@ Instruction *InstCombinerImpl::visitSelectInst(SelectInst &SI) {
       return replaceInstUsesWith(SI, MaskedInst);
     }
   }
+
+  if (Instruction *I = foldNestedSelects(SI, Builder))
+    return I;
+
+  // Match logical variants of the pattern,
+  // and transform them iff that gets rid of inversions.
+  //   (~x) | y  -->  ~(x & (~y))
+  //   (~x) & y  -->  ~(x | (~y))
+  if (sinkNotIntoOtherHandOfLogicalOp(SI))
+    return &SI;
 
   return nullptr;
 }

@@ -203,6 +203,9 @@ enum OperandType : unsigned {
   OPERAND_SRC_FIRST = OPERAND_REG_IMM_INT32,
   OPERAND_SRC_LAST = OPERAND_REG_INLINE_C_LAST,
 
+  OPERAND_KIMM_FIRST = OPERAND_KIMM32,
+  OPERAND_KIMM_LAST = OPERAND_KIMM16,
+
   // Operand for source modifiers for VOP instructions
   OPERAND_INPUT_MODS,
 
@@ -899,6 +902,13 @@ enum Offset_COV5 : unsigned {
 };
 
 } // namespace ImplicitArg
+
+namespace VirtRegFlag {
+// Virtual Register Flags.
+enum Register_Flag : uint8_t { WWM_REG = 0 };
+
+} // namespace VirtRegFlag
+
 } // namespace AMDGPU
 
 #define R_00B028_SPI_SHADER_PGM_RSRC1_PS                                0x00B028

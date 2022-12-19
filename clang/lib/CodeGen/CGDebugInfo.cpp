@@ -51,6 +51,7 @@
 #include "llvm/Support/SHA1.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/TimeProfiler.h"
+#include <optional>
 using namespace clang;
 using namespace clang::CodeGen;
 
@@ -345,7 +346,7 @@ StringRef CGDebugInfo::getClassName(const RecordDecl *RD) {
   return StringRef();
 }
 
-Optional<llvm::DIFile::ChecksumKind>
+std::optional<llvm::DIFile::ChecksumKind>
 CGDebugInfo::computeChecksum(FileID FID, SmallString<64> &Checksum) const {
   Checksum.clear();
 
@@ -373,8 +374,8 @@ CGDebugInfo::computeChecksum(FileID FID, SmallString<64> &Checksum) const {
   llvm_unreachable("Unhandled DebugSrcHashKind enum");
 }
 
-Optional<StringRef> CGDebugInfo::getSource(const SourceManager &SM,
-                                           FileID FID) {
+std::optional<StringRef> CGDebugInfo::getSource(const SourceManager &SM,
+                                                FileID FID) {
   if (!CGM.getCodeGenOpts().EmbedSource)
     return std::nullopt;
 
@@ -419,17 +420,18 @@ llvm::DIFile *CGDebugInfo::getOrCreateFile(SourceLocation Loc) {
 
   SmallString<64> Checksum;
 
-  Optional<llvm::DIFile::ChecksumKind> CSKind = computeChecksum(FID, Checksum);
-  Optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo;
+  std::optional<llvm::DIFile::ChecksumKind> CSKind =
+      computeChecksum(FID, Checksum);
+  std::optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo;
   if (CSKind)
     CSInfo.emplace(*CSKind, Checksum);
   return createFile(FileName, CSInfo, getSource(SM, SM.getFileID(Loc)));
 }
 
-llvm::DIFile *
-CGDebugInfo::createFile(StringRef FileName,
-                        Optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo,
-                        Optional<StringRef> Source) {
+llvm::DIFile *CGDebugInfo::createFile(
+    StringRef FileName,
+    std::optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo,
+    std::optional<StringRef> Source) {
   StringRef Dir;
   StringRef File;
   std::string RemappedFile = remapDIPath(FileName);
@@ -512,8 +514,8 @@ StringRef CGDebugInfo::getCurrentDirname() {
 
 void CGDebugInfo::CreateCompileUnit() {
   SmallString<64> Checksum;
-  Optional<llvm::DIFile::ChecksumKind> CSKind;
-  Optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo;
+  std::optional<llvm::DIFile::ChecksumKind> CSKind;
+  std::optional<llvm::DIFile::ChecksumInfo<StringRef>> CSInfo;
 
   // Should we be asking the SourceManager for the main file name, instead of
   // accepting it as an argument? This just causes the main file name to
@@ -524,7 +526,8 @@ void CGDebugInfo::CreateCompileUnit() {
 
   // Get absolute path name.
   SourceManager &SM = CGM.getContext().getSourceManager();
-  std::string MainFileName = CGM.getCodeGenOpts().MainFileName;
+  auto &CGO = CGM.getCodeGenOpts();
+  std::string MainFileName = CGO.MainFileName;
   if (MainFileName.empty())
     MainFileName = "<stdin>";
 
@@ -560,11 +563,11 @@ void CGDebugInfo::CreateCompileUnit() {
   if (LO.CPlusPlus) {
     if (LO.ObjC)
       LangTag = llvm::dwarf::DW_LANG_ObjC_plus_plus;
-    else if (LO.CPlusPlus14 && (!CGM.getCodeGenOpts().DebugStrictDwarf ||
-                                CGM.getCodeGenOpts().DwarfVersion >= 5))
+    else if (CGO.DebugStrictDwarf && CGO.DwarfVersion < 5)
+      LangTag = llvm::dwarf::DW_LANG_C_plus_plus;
+    else if (LO.CPlusPlus14)
       LangTag = llvm::dwarf::DW_LANG_C_plus_plus_14;
-    else if (LO.CPlusPlus11 && (!CGM.getCodeGenOpts().DebugStrictDwarf ||
-                                CGM.getCodeGenOpts().DwarfVersion >= 5))
+    else if (LO.CPlusPlus11)
       LangTag = llvm::dwarf::DW_LANG_C_plus_plus_11;
     else
       LangTag = llvm::dwarf::DW_LANG_C_plus_plus;
@@ -575,6 +578,8 @@ void CGDebugInfo::CreateCompileUnit() {
     LangTag = llvm::dwarf::DW_LANG_OpenCL;
   } else if (LO.RenderScript) {
     LangTag = llvm::dwarf::DW_LANG_GOOGLE_RenderScript;
+  } else if (LO.C11) {
+    LangTag = llvm::dwarf::DW_LANG_C11;
   } else if (LO.C99) {
     LangTag = llvm::dwarf::DW_LANG_C99;
   } else {
@@ -1148,8 +1153,9 @@ llvm::DIType *CGDebugInfo::CreatePointerLikeType(llvm::dwarf::Tag Tag,
   // Size is always the size of a pointer.
   uint64_t Size = CGM.getContext().getTypeSize(Ty);
   auto Align = getTypeAlignIfRequired(Ty, CGM.getContext());
-  Optional<unsigned> DWARFAddressSpace = CGM.getTarget().getDWARFAddressSpace(
-      CGM.getTypes().getTargetAddressSpace(PointeeTy));
+  std::optional<unsigned> DWARFAddressSpace =
+      CGM.getTarget().getDWARFAddressSpace(
+          CGM.getTypes().getTargetAddressSpace(PointeeTy));
 
   SmallVector<llvm::Metadata *, 4> Annots;
   auto *BTFAttrTy = dyn_cast<BTFTagAttributedType>(PointeeTy);
@@ -1650,10 +1656,15 @@ void CGDebugInfo::CollectRecordFields(
       } else if (CGM.getCodeGenOpts().EmitCodeView) {
         // Debug info for nested types is included in the member list only for
         // CodeView.
-        if (const auto *nestedType = dyn_cast<TypeDecl>(I))
+        if (const auto *nestedType = dyn_cast<TypeDecl>(I)) {
+          // MSVC doesn't generate nested type for anonymous struct/union.
+          if (isa<RecordDecl>(I) &&
+              cast<RecordDecl>(I)->isAnonymousStructOrUnion())
+            continue;
           if (!nestedType->isImplicit() &&
               nestedType->getDeclContext() == record)
             CollectRecordNestedType(nestedType, elements);
+        }
       }
   }
 }
@@ -1988,35 +1999,23 @@ CGDebugInfo::CollectTemplateParams(Optional<TemplateArgs> OArgs,
     const TemplateArgument &TA = Args.Args[i];
     StringRef Name;
     bool defaultParameter = false;
-    if (Args.TList)
+    if (Args.TList) {
       Name = Args.TList->getParam(i)->getName();
+
+      NamedDecl const *ND = Args.TList->getParam(i);
+      defaultParameter = clang::isSubstitutedDefaultArgument(
+          CGM.getContext(), TA, ND, Args.Args, Args.TList->getDepth());
+    }
+
     switch (TA.getKind()) {
     case TemplateArgument::Type: {
       llvm::DIType *TTy = getOrCreateType(TA.getAsType(), Unit);
-
-      if (Args.TList)
-        if (auto *templateType =
-                dyn_cast_or_null<TemplateTypeParmDecl>(Args.TList->getParam(i)))
-          if (templateType->hasDefaultArgument())
-            defaultParameter =
-                templateType->getDefaultArgument() == TA.getAsType();
-
       TemplateParams.push_back(DBuilder.createTemplateTypeParameter(
           TheCU, Name, TTy, defaultParameter));
 
     } break;
     case TemplateArgument::Integral: {
       llvm::DIType *TTy = getOrCreateType(TA.getIntegralType(), Unit);
-      if (Args.TList && CGM.getCodeGenOpts().DwarfVersion >= 5)
-        if (auto *templateType = dyn_cast_or_null<NonTypeTemplateParmDecl>(
-                Args.TList->getParam(i)))
-          if (templateType->hasDefaultArgument() &&
-              !templateType->getDefaultArgument()->isValueDependent())
-            defaultParameter = llvm::APSInt::isSameValue(
-                templateType->getDefaultArgument()->EvaluateKnownConstInt(
-                    CGM.getContext()),
-                TA.getAsIntegral());
-
       TemplateParams.push_back(DBuilder.createTemplateValueParameter(
           TheCU, Name, TTy, defaultParameter,
           llvm::ConstantInt::get(CGM.getLLVMContext(), TA.getAsIntegral())));
@@ -2092,7 +2091,7 @@ CGDebugInfo::CollectTemplateParams(Optional<TemplateArgs> OArgs,
       TA.getAsTemplate().getAsTemplateDecl()->printQualifiedName(
           OS, getPrintingPolicy());
       TemplateParams.push_back(DBuilder.createTemplateTemplateParameter(
-          TheCU, Name, nullptr, OS.str()));
+          TheCU, Name, nullptr, OS.str(), defaultParameter));
       break;
     }
     case TemplateArgument::Pack:
@@ -2201,7 +2200,7 @@ llvm::DIType *CGDebugInfo::getOrCreateVTablePtrType(llvm::DIFile *Unit) {
   llvm::DIType *SubTy = DBuilder.createSubroutineType(SElements);
   unsigned Size = Context.getTypeSize(Context.VoidPtrTy);
   unsigned VtblPtrAddressSpace = CGM.getTarget().getVtblPtrAddressSpace();
-  Optional<unsigned> DWARFAddressSpace =
+  std::optional<unsigned> DWARFAddressSpace =
       CGM.getTarget().getDWARFAddressSpace(VtblPtrAddressSpace);
 
   llvm::DIType *vtbl_ptr_type = DBuilder.createPointerType(
@@ -2298,7 +2297,7 @@ void CGDebugInfo::CollectVTableInfo(const CXXRecordDecl *RD, llvm::DIFile *Unit,
         VFTLayout.vtable_components().size() - CGM.getLangOpts().RTTIData;
     unsigned VTableWidth = PtrWidth * VSlotCount;
     unsigned VtblPtrAddressSpace = CGM.getTarget().getVtblPtrAddressSpace();
-    Optional<unsigned> DWARFAddressSpace =
+    std::optional<unsigned> DWARFAddressSpace =
         CGM.getTarget().getDWARFAddressSpace(VtblPtrAddressSpace);
 
     // Create a very wide void* type and insert it directly in the element list.
@@ -4284,7 +4283,7 @@ void CGDebugInfo::CreateLexicalBlock(SourceLocation Loc) {
 
 void CGDebugInfo::AppendAddressSpaceXDeref(
     unsigned AddressSpace, SmallVectorImpl<uint64_t> &Expr) const {
-  Optional<unsigned> DWARFAddressSpace =
+  std::optional<unsigned> DWARFAddressSpace =
       CGM.getTarget().getDWARFAddressSpace(AddressSpace);
   if (!DWARFAddressSpace)
     return;

@@ -90,6 +90,116 @@ static Value genIndexAndValueForDense(OpBuilder &builder, Location loc,
   return val;
 }
 
+void sparse_tensor::foreachFieldInSparseTensor(
+    const SparseTensorEncodingAttr enc,
+    llvm::function_ref<bool(unsigned, SparseTensorFieldKind, unsigned,
+                            DimLevelType)>
+        callback) {
+  assert(enc);
+
+#define RETURN_ON_FALSE(idx, kind, dim, dlt)                                   \
+  if (!(callback(idx, kind, dim, dlt)))                                        \
+    return;
+
+  RETURN_ON_FALSE(dimSizesIdx, SparseTensorFieldKind::DimSizes, -1u,
+                  DimLevelType::Undef);
+  RETURN_ON_FALSE(memSizesIdx, SparseTensorFieldKind::MemSizes, -1u,
+                  DimLevelType::Undef);
+
+  static_assert(dataFieldIdx == memSizesIdx + 1);
+  unsigned fieldIdx = dataFieldIdx;
+  // Per-dimension storage.
+  for (unsigned r = 0, rank = enc.getDimLevelType().size(); r < rank; r++) {
+    // Dimension level types apply in order to the reordered dimension.
+    // As a result, the compound type can be constructed directly in the given
+    // order.
+    auto dlt = getDimLevelType(enc, r);
+    if (isCompressedDLT(dlt)) {
+      RETURN_ON_FALSE(fieldIdx++, SparseTensorFieldKind::PtrMemRef, r, dlt);
+      RETURN_ON_FALSE(fieldIdx++, SparseTensorFieldKind::IdxMemRef, r, dlt);
+    } else if (isSingletonDLT(dlt)) {
+      RETURN_ON_FALSE(fieldIdx++, SparseTensorFieldKind::IdxMemRef, r, dlt);
+    } else {
+      assert(isDenseDLT(dlt)); // no fields
+    }
+  }
+  // The values array.
+  RETURN_ON_FALSE(fieldIdx++, SparseTensorFieldKind::ValMemRef, -1u,
+                  DimLevelType::Undef);
+
+#undef RETURN_ON_FALSE
+}
+
+void sparse_tensor::foreachFieldAndTypeInSparseTensor(
+    RankedTensorType rType,
+    llvm::function_ref<bool(Type, unsigned, SparseTensorFieldKind, unsigned,
+                            DimLevelType)>
+        callback) {
+  auto enc = getSparseTensorEncoding(rType);
+  assert(enc);
+  // Construct the basic types.
+  Type indexType = IndexType::get(enc.getContext());
+  Type idxType = enc.getIndexType();
+  Type ptrType = enc.getPointerType();
+  Type eltType = rType.getElementType();
+  unsigned rank = rType.getShape().size();
+  // memref<rank x index> dimSizes
+  Type dimSizeType = MemRefType::get({rank}, indexType);
+  // memref<n x index> memSizes
+  Type memSizeType =
+      MemRefType::get({getNumDataFieldsFromEncoding(enc)}, indexType);
+  // memref<? x ptr>  pointers
+  Type ptrMemType = MemRefType::get({ShapedType::kDynamic}, ptrType);
+  // memref<? x idx>  indices
+  Type idxMemType = MemRefType::get({ShapedType::kDynamic}, idxType);
+  // memref<? x eltType> values
+  Type valMemType = MemRefType::get({ShapedType::kDynamic}, eltType);
+
+  foreachFieldInSparseTensor(
+      enc,
+      [dimSizeType, memSizeType, ptrMemType, idxMemType, valMemType,
+       callback](unsigned fieldIdx, SparseTensorFieldKind fieldKind,
+                 unsigned dim, DimLevelType dlt) -> bool {
+        switch (fieldKind) {
+        case SparseTensorFieldKind::DimSizes:
+          return callback(dimSizeType, fieldIdx, fieldKind, dim, dlt);
+        case SparseTensorFieldKind::MemSizes:
+          return callback(memSizeType, fieldIdx, fieldKind, dim, dlt);
+        case SparseTensorFieldKind::PtrMemRef:
+          return callback(ptrMemType, fieldIdx, fieldKind, dim, dlt);
+        case SparseTensorFieldKind::IdxMemRef:
+          return callback(idxMemType, fieldIdx, fieldKind, dim, dlt);
+        case SparseTensorFieldKind::ValMemRef:
+          return callback(valMemType, fieldIdx, fieldKind, dim, dlt);
+        };
+        llvm_unreachable("unrecognized field kind");
+      });
+}
+
+unsigned sparse_tensor::getNumFieldsFromEncoding(SparseTensorEncodingAttr enc) {
+  unsigned numFields = 0;
+  foreachFieldInSparseTensor(enc,
+                             [&numFields](unsigned, SparseTensorFieldKind,
+                                          unsigned, DimLevelType) -> bool {
+                               numFields++;
+                               return true;
+                             });
+  return numFields;
+}
+
+unsigned
+sparse_tensor::getNumDataFieldsFromEncoding(SparseTensorEncodingAttr enc) {
+  unsigned numFields = 0; // one value memref
+  foreachFieldInSparseTensor(enc,
+                             [&numFields](unsigned fidx, SparseTensorFieldKind,
+                                          unsigned, DimLevelType) -> bool {
+                               if (fidx >= dataFieldIdx)
+                                 numFields++;
+                               return true;
+                             });
+  assert(numFields == getNumFieldsFromEncoding(enc) - dataFieldIdx);
+  return numFields;
+}
 //===----------------------------------------------------------------------===//
 // Sparse tensor loop emitter class implementations
 //===----------------------------------------------------------------------===//
@@ -770,23 +880,23 @@ Type mlir::sparse_tensor::getOverheadType(Builder &builder, OverheadType ot) {
   llvm_unreachable("Unknown OverheadType");
 }
 
-OverheadType mlir::sparse_tensor::pointerOverheadTypeEncoding(
-    const SparseTensorEncodingAttr &enc) {
+OverheadType
+mlir::sparse_tensor::pointerOverheadTypeEncoding(SparseTensorEncodingAttr enc) {
   return overheadTypeEncoding(enc.getPointerBitWidth());
 }
 
-OverheadType mlir::sparse_tensor::indexOverheadTypeEncoding(
-    const SparseTensorEncodingAttr &enc) {
+OverheadType
+mlir::sparse_tensor::indexOverheadTypeEncoding(SparseTensorEncodingAttr enc) {
   return overheadTypeEncoding(enc.getIndexBitWidth());
 }
 
-Type mlir::sparse_tensor::getPointerOverheadType(
-    Builder &builder, const SparseTensorEncodingAttr &enc) {
+Type mlir::sparse_tensor::getPointerOverheadType(Builder &builder,
+                                                 SparseTensorEncodingAttr enc) {
   return getOverheadType(builder, pointerOverheadTypeEncoding(enc));
 }
 
-Type mlir::sparse_tensor::getIndexOverheadType(
-    Builder &builder, const SparseTensorEncodingAttr &enc) {
+Type mlir::sparse_tensor::getIndexOverheadType(Builder &builder,
+                                               SparseTensorEncodingAttr enc) {
   return getOverheadType(builder, indexOverheadTypeEncoding(enc));
 }
 
@@ -1039,6 +1149,18 @@ Value mlir::sparse_tensor::genAlloca(OpBuilder &builder, Location loc, Value sz,
 Value mlir::sparse_tensor::genAllocaScalar(OpBuilder &builder, Location loc,
                                            Type tp) {
   return builder.create<memref::AllocaOp>(loc, MemRefType::get({}, tp));
+}
+
+Value mlir::sparse_tensor::allocaBuffer(OpBuilder &builder, Location loc,
+                                        ValueRange values) {
+  const unsigned sz = values.size();
+  assert(sz >= 1);
+  Value buffer = genAlloca(builder, loc, sz, values[0].getType());
+  for (unsigned i = 0; i < sz; i++) {
+    Value idx = constantIndex(builder, loc, i);
+    builder.create<memref::StoreOp>(loc, values[i], buffer, idx);
+  }
+  return buffer;
 }
 
 Value mlir::sparse_tensor::allocDenseTensor(OpBuilder &builder, Location loc,
