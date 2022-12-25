@@ -3797,17 +3797,64 @@ bool llvm::isKnownNeverInfinity(const Value *V, const TargetLibraryInfo *TLI,
       // Peek through to source op. If it is not infinity, this is not infinity.
       return isKnownNeverInfinity(Inst->getOperand(0), TLI, Depth + 1);
     }
+    case Instruction::FPTrunc: {
+      // Need a range check.
+      return false;
+    }
     default:
       break;
     }
 
     if (const auto *II = dyn_cast<IntrinsicInst>(V)) {
       switch (II->getIntrinsicID()) {
+      case Intrinsic::sin:
+      case Intrinsic::cos:
+        // Return NaN on infinite inputs.
+        return true;
       case Intrinsic::fabs:
+      case Intrinsic::sqrt:
       case Intrinsic::canonicalize:
       case Intrinsic::copysign:
       case Intrinsic::arithmetic_fence:
+      case Intrinsic::trunc:
         return isKnownNeverInfinity(Inst->getOperand(0), TLI, Depth + 1);
+      case Intrinsic::floor:
+      case Intrinsic::ceil:
+      case Intrinsic::rint:
+      case Intrinsic::nearbyint:
+      case Intrinsic::round:
+      case Intrinsic::roundeven:
+        // PPC_FP128 is a special case.
+        if (V->getType()->isMultiUnitFPType())
+          return false;
+        return isKnownNeverInfinity(Inst->getOperand(0), TLI, Depth + 1);
+      case Intrinsic::fptrunc_round:
+        // Requires knowing the value range.
+        return false;
+      case Intrinsic::minnum:
+      case Intrinsic::maxnum:
+      case Intrinsic::minimum:
+      case Intrinsic::maximum:
+        return isKnownNeverInfinity(Inst->getOperand(0), TLI, Depth + 1) &&
+               isKnownNeverInfinity(Inst->getOperand(1), TLI, Depth + 1);
+      case Intrinsic::log:
+      case Intrinsic::log10:
+      case Intrinsic::log2:
+        // log(+inf) -> +inf
+        // log([+-]0.0) -> -inf
+        // log(-inf) -> nan
+        // log(-x) -> nan
+        // TODO: We lack API to check the == 0 case.
+        return false;
+      case Intrinsic::exp:
+      case Intrinsic::exp2:
+      case Intrinsic::pow:
+      case Intrinsic::powi:
+      case Intrinsic::fma:
+      case Intrinsic::fmuladd:
+        // These can return infinities on overflow cases, so it's hard to prove
+        // anything about it.
+        return false;
       default:
         break;
       }
@@ -5216,6 +5263,12 @@ static bool canCreateUndefOrPoison(const Operator *Op, bool PoisonOnly,
       case Intrinsic::uadd_with_overflow:
       case Intrinsic::usub_with_overflow:
       case Intrinsic::umul_with_overflow:
+      case Intrinsic::sadd_sat:
+      case Intrinsic::uadd_sat:
+      case Intrinsic::ssub_sat:
+      case Intrinsic::usub_sat:
+      case Intrinsic::sshl_sat:
+      case Intrinsic::ushl_sat:
       case Intrinsic::fma:
       case Intrinsic::fmuladd:
       case Intrinsic::sqrt:

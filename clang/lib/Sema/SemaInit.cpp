@@ -5930,25 +5930,6 @@ static bool canPerformArrayCopy(const InitializedEntity &Entity) {
   return false;
 }
 
-static bool onlyHasDefaultedCtors(OverloadCandidateSet &OCS) {
-  if (OCS.size() != 3)
-    return false;
-
-  bool HasDefaultCtor = false, HasCopyCtor = false, HasMoveCtor = false;
-  for (const auto &Candidate : OCS) {
-    if (auto *Ctor = dyn_cast_or_null<CXXConstructorDecl>(Candidate.Function);
-        Ctor != nullptr && Ctor->isDefaulted()) {
-      if (Ctor->isDefaultConstructor())
-        HasDefaultCtor = true;
-      else if (Ctor->isCopyConstructor())
-        HasCopyCtor = true;
-      else if (Ctor->isMoveConstructor())
-        HasMoveCtor = true;
-    }
-  }
-  return HasDefaultCtor && HasCopyCtor && HasMoveCtor;
-}
-
 void InitializationSequence::InitializeFrom(Sema &S,
                                             const InitializedEntity &Entity,
                                             const InitializationKind &Kind,
@@ -6195,9 +6176,12 @@ void InitializationSequence::InitializeFrom(Sema &S,
       // constructors. For example, conversion function.
       if (const auto *RD =
               dyn_cast<CXXRecordDecl>(DestType->getAs<RecordType>()->getDecl());
-          S.getLangOpts().CPlusPlus20 && RD && RD->isAggregate() && Failed() &&
-          getFailureKind() == FK_ConstructorOverloadFailed &&
-          onlyHasDefaultedCtors(getFailedCandidateSet())) {
+          // In general, we should call isCompleteType for RD to check its
+          // completeness, we don't call it here as it was already called in the
+          // above TryConstructorInitialization.
+          S.getLangOpts().CPlusPlus20 && RD && RD->hasDefinition() &&
+          RD->isAggregate() && Failed() &&
+          getFailureKind() == FK_ConstructorOverloadFailed) {
         // C++20 [dcl.init] 17.6.2.2:
         //   - Otherwise, if no constructor is viable, the destination type is
         //   an

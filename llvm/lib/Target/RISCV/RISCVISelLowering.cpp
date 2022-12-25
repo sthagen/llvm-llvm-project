@@ -306,7 +306,8 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   if (Subtarget.is64Bit())
     setOperationAction(ISD::ABS, MVT::i32, Custom);
 
-  setOperationAction(ISD::SELECT, XLenVT, Custom);
+  if (!Subtarget.hasVendorXVentanaCondOps())
+    setOperationAction(ISD::SELECT, XLenVT, Custom);
 
   static const unsigned FPLegalNodeTypes[] = {
       ISD::FMINNUM,        ISD::FMAXNUM,       ISD::LRINT,
@@ -325,18 +326,17 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
       ISD::FSIN, ISD::FCOS,       ISD::FSINCOS,   ISD::FPOW,
       ISD::FREM, ISD::FP16_TO_FP, ISD::FP_TO_FP16};
 
+  static const unsigned FPRndMode[] = {
+      ISD::FCEIL, ISD::FFLOOR, ISD::FTRUNC, ISD::FRINT, ISD::FROUND,
+      ISD::FROUNDEVEN};
+
   if (Subtarget.hasStdExtZfhOrZfhmin())
     setOperationAction(ISD::BITCAST, MVT::i16, Custom);
 
   if (Subtarget.hasStdExtZfhOrZfhmin()) {
     if (Subtarget.hasStdExtZfh()) {
       setOperationAction(FPLegalNodeTypes, MVT::f16, Legal);
-      setOperationAction(ISD::FCEIL, MVT::f16, Custom);
-      setOperationAction(ISD::FFLOOR, MVT::f16, Custom);
-      setOperationAction(ISD::FTRUNC, MVT::f16, Custom);
-      setOperationAction(ISD::FRINT, MVT::f16, Custom);
-      setOperationAction(ISD::FROUND, MVT::f16, Custom);
-      setOperationAction(ISD::FROUNDEVEN, MVT::f16, Custom);
+      setOperationAction(FPRndMode, MVT::f16, Custom);
       setOperationAction(ISD::SELECT, MVT::f16, Custom);
     } else {
       static const unsigned ZfhminPromoteOps[] = {
@@ -385,12 +385,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   if (Subtarget.hasStdExtF()) {
     setOperationAction(FPLegalNodeTypes, MVT::f32, Legal);
-    setOperationAction(ISD::FCEIL, MVT::f32, Custom);
-    setOperationAction(ISD::FFLOOR, MVT::f32, Custom);
-    setOperationAction(ISD::FTRUNC, MVT::f32, Custom);
-    setOperationAction(ISD::FRINT, MVT::f32, Custom);
-    setOperationAction(ISD::FROUND, MVT::f32, Custom);
-    setOperationAction(ISD::FROUNDEVEN, MVT::f32, Custom);
+    setOperationAction(FPRndMode, MVT::f32, Custom);
     setCondCodeAction(FPCCToExpand, MVT::f32, Expand);
     setOperationAction(ISD::SELECT_CC, MVT::f32, Expand);
     setOperationAction(ISD::SELECT, MVT::f32, Custom);
@@ -406,12 +401,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   if (Subtarget.hasStdExtD()) {
     setOperationAction(FPLegalNodeTypes, MVT::f64, Legal);
     if (Subtarget.is64Bit()) {
-      setOperationAction(ISD::FCEIL, MVT::f64, Custom);
-      setOperationAction(ISD::FFLOOR, MVT::f64, Custom);
-      setOperationAction(ISD::FTRUNC, MVT::f64, Custom);
-      setOperationAction(ISD::FRINT, MVT::f64, Custom);
-      setOperationAction(ISD::FROUND, MVT::f64, Custom);
-      setOperationAction(ISD::FROUNDEVEN, MVT::f64, Custom);
+      setOperationAction(FPRndMode, MVT::f64, Custom);
     }
     setOperationAction(ISD::STRICT_FP_ROUND, MVT::f32, Legal);
     setOperationAction(ISD::STRICT_FP_EXTEND, MVT::f64, Legal);
@@ -1018,7 +1008,7 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   setJumpIsExpensive();
 
   setTargetDAGCombine({ISD::INTRINSIC_WO_CHAIN, ISD::ADD, ISD::SUB, ISD::AND,
-                       ISD::OR, ISD::XOR, ISD::SETCC});
+                       ISD::OR, ISD::XOR, ISD::SETCC, ISD::SELECT});
   if (Subtarget.is64Bit())
     setTargetDAGCombine(ISD::SRA);
 
@@ -3074,6 +3064,28 @@ static SDValue lowerVECTOR_SHUFFLEAsVNSRL(const SDLoc &DL, MVT VT,
   return convertFromScalableVector(VT, Res, DAG, Subtarget);
 }
 
+static SDValue getVSlidedown(SelectionDAG &DAG, const RISCVSubtarget &Subtarget,
+                             SDLoc DL, EVT VT, SDValue Merge, SDValue Op,
+                             SDValue Offset, SDValue Mask, SDValue VL,
+                             unsigned Policy = /* TUMU */ 0) {
+  if (Merge.isUndef())
+    Policy = RISCVII::TAIL_AGNOSTIC | RISCVII::MASK_AGNOSTIC;
+  SDValue PolicyOp = DAG.getTargetConstant(Policy, DL, Subtarget.getXLenVT());
+  SDValue Ops[] = {Merge, Op, Offset, Mask, VL, PolicyOp};
+  return DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, VT, Ops);
+}
+
+static SDValue getVSlideup(SelectionDAG &DAG, const RISCVSubtarget &Subtarget,
+                           SDLoc DL, EVT VT, SDValue Merge, SDValue Op,
+                           SDValue Offset, SDValue Mask, SDValue VL,
+                           unsigned Policy = /* TUMU */ 0) {
+  if (Merge.isUndef())
+    Policy = RISCVII::TAIL_AGNOSTIC | RISCVII::MASK_AGNOSTIC;
+  SDValue PolicyOp = DAG.getTargetConstant(Policy, DL, Subtarget.getXLenVT());
+  SDValue Ops[] = {Merge, Op, Offset, Mask, VL, PolicyOp};
+  return DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, VT, Ops);
+}
+
 // Lower the following shuffle to vslidedown.
 // a)
 // t49: v8i8 = extract_subvector t13, Constant:i64<0>
@@ -3141,10 +3153,10 @@ static SDValue lowerVECTOR_SHUFFLEAsVSlidedown(const SDLoc &DL, MVT VT,
   MVT SrcVT = Src.getSimpleValueType();
   MVT ContainerVT = getContainerForFixedLengthVector(DAG, SrcVT, Subtarget);
   auto [TrueMask, VL] = getDefaultVLOps(SrcVT, ContainerVT, DL, DAG, Subtarget);
-  SDValue Slidedown = DAG.getNode(
-      RISCVISD::VSLIDEDOWN_VL, DL, ContainerVT, DAG.getUNDEF(ContainerVT),
-      convertToScalableVector(ContainerVT, Src, DAG, Subtarget),
-      DAG.getConstant(NewMask[0], DL, XLenVT), TrueMask, VL);
+  SDValue Slidedown =
+      getVSlidedown(DAG, Subtarget, DL, ContainerVT, DAG.getUNDEF(ContainerVT),
+                    convertToScalableVector(ContainerVT, Src, DAG, Subtarget),
+                    DAG.getConstant(NewMask[0], DL, XLenVT), TrueMask, VL);
   return DAG.getNode(
       ISD::EXTRACT_SUBVECTOR, DL, VT,
       convertFromScalableVector(SrcVT, Slidedown, DAG, Subtarget),
@@ -3274,12 +3286,12 @@ static SDValue lowerVECTOR_SHUFFLE(SDValue Op, SelectionDAG &DAG,
       SDValue DownVL = VL;
       if (LoV)
         DownVL = DAG.getConstant(InvRotate, DL, XLenVT);
-      Res =
-          DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, ContainerVT, Res, HiV,
-                      DAG.getConstant(Rotation, DL, XLenVT), TrueMask, DownVL);
+      Res = getVSlidedown(DAG, Subtarget, DL, ContainerVT, Res, HiV,
+                          DAG.getConstant(Rotation, DL, XLenVT), TrueMask,
+                          DownVL);
     }
     if (LoV)
-      Res = DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, ContainerVT, Res, LoV,
+      Res = getVSlideup(DAG, Subtarget, DL, ContainerVT, Res, LoV,
                         DAG.getConstant(InvRotate, DL, XLenVT), TrueMask, VL);
 
     return convertFromScalableVector(VT, Res, DAG, Subtarget);
@@ -5224,8 +5236,8 @@ SDValue RISCVTargetLowering::lowerINSERT_VECTOR_ELT(SDValue Op,
   // Now that the value is in a vector, slide it into position.
   SDValue InsertVL =
       DAG.getNode(ISD::ADD, DL, XLenVT, Idx, DAG.getConstant(1, DL, XLenVT));
-  SDValue Slideup = DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, ContainerVT, Vec,
-                                ValInVec, Idx, Mask, InsertVL);
+  SDValue Slideup = getVSlideup(DAG, Subtarget, DL, ContainerVT, Vec, ValInVec,
+                                Idx, Mask, InsertVL);
   if (!VecVT.isFixedLengthVector())
     return Slideup;
   return convertFromScalableVector(VecVT, Slideup, DAG, Subtarget);
@@ -5302,8 +5314,8 @@ SDValue RISCVTargetLowering::lowerEXTRACT_VECTOR_ELT(SDValue Op,
   if (!isNullConstant(Idx)) {
     // Use a VL of 1 to avoid processing more elements than we need.
     auto [Mask, VL] = getDefaultVLOps(1, ContainerVT, DL, DAG, Subtarget);
-    Vec = DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, ContainerVT,
-                      DAG.getUNDEF(ContainerVT), Vec, Idx, Mask, VL);
+    Vec = getVSlidedown(DAG, Subtarget, DL, ContainerVT,
+                        DAG.getUNDEF(ContainerVT), Vec, Idx, Mask, VL);
   }
 
   if (!EltVT.isInteger()) {
@@ -6132,8 +6144,8 @@ SDValue RISCVTargetLowering::lowerINSERT_SUBVECTOR(SDValue Op,
     SDValue VL =
         getVLOp(OrigIdx + SubVecVT.getVectorNumElements(), DL, DAG, Subtarget);
     SDValue SlideupAmt = DAG.getConstant(OrigIdx, DL, XLenVT);
-    SDValue Slideup = DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, ContainerVT, Vec,
-                                  SubVec, SlideupAmt, Mask, VL);
+    SDValue Slideup = getVSlideup(DAG, Subtarget, DL, ContainerVT, Vec, SubVec,
+                                  SlideupAmt, Mask, VL);
     if (VecVT.isFixedLengthVector())
       Slideup = convertFromScalableVector(VecVT, Slideup, DAG, Subtarget);
     return DAG.getBitcast(Op.getValueType(), Slideup);
@@ -6195,8 +6207,8 @@ SDValue RISCVTargetLowering::lowerINSERT_SUBVECTOR(SDValue Op,
                        DAG.getUNDEF(InterSubVT), SubVec,
                        DAG.getConstant(0, DL, XLenVT));
 
-  SDValue Slideup = DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, InterSubVT,
-                                AlignedExtract, SubVec, SlideupAmt, Mask, VL);
+  SDValue Slideup = getVSlideup(DAG, Subtarget, DL, InterSubVT, AlignedExtract,
+                                SubVec, SlideupAmt, Mask, VL);
 
   // If required, insert this subvector back into the correct vector register.
   // This should resolve to an INSERT_SUBREG instruction.
@@ -6279,8 +6291,8 @@ SDValue RISCVTargetLowering::lowerEXTRACT_SUBVECTOR(SDValue Op,
     SDValue VL = getVLOp(SubVecVT.getVectorNumElements(), DL, DAG, Subtarget);
     SDValue SlidedownAmt = DAG.getConstant(OrigIdx, DL, XLenVT);
     SDValue Slidedown =
-        DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, ContainerVT,
-                    DAG.getUNDEF(ContainerVT), Vec, SlidedownAmt, Mask, VL);
+        getVSlidedown(DAG, Subtarget, DL, ContainerVT,
+                      DAG.getUNDEF(ContainerVT), Vec, SlidedownAmt, Mask, VL);
     // Now we can use a cast-like subvector extract to get the result.
     Slidedown = DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, SubVecVT, Slidedown,
                             DAG.getConstant(0, DL, XLenVT));
@@ -6319,8 +6331,8 @@ SDValue RISCVTargetLowering::lowerEXTRACT_SUBVECTOR(SDValue Op,
 
   auto [Mask, VL] = getDefaultScalableVLOps(InterSubVT, DL, DAG, Subtarget);
   SDValue Slidedown =
-      DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, InterSubVT,
-                  DAG.getUNDEF(InterSubVT), Vec, SlidedownAmt, Mask, VL);
+      getVSlidedown(DAG, Subtarget, DL, InterSubVT, DAG.getUNDEF(InterSubVT),
+                    Vec, SlidedownAmt, Mask, VL);
 
   // Now the vector is in the right position, extract our final subvector. This
   // should resolve to a COPY.
@@ -6469,9 +6481,9 @@ SDValue RISCVTargetLowering::lowerVECTOR_SPLICE(SDValue Op,
   SDValue TrueMask = getAllOnesMask(VecVT, VLMax, DL, DAG);
 
   SDValue SlideDown =
-      DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, VecVT, DAG.getUNDEF(VecVT), V1,
-                  DownOffset, TrueMask, UpOffset);
-  return DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, VecVT, SlideDown, V2, UpOffset,
+      getVSlidedown(DAG, Subtarget, DL, VecVT, DAG.getUNDEF(VecVT), V1,
+                    DownOffset, TrueMask, UpOffset);
+  return getVSlideup(DAG, Subtarget, DL, VecVT, SlideDown, V2, UpOffset,
                      TrueMask, DAG.getRegister(RISCV::X0, XLenVT));
 }
 
@@ -7933,8 +7945,8 @@ void RISCVTargetLowering::ReplaceNodeResults(SDNode *N,
     // Unless the index is known to be 0, we must slide the vector down to get
     // the desired element into index 0.
     if (!isNullConstant(Idx)) {
-      Vec = DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, ContainerVT,
-                        DAG.getUNDEF(ContainerVT), Vec, Idx, Mask, VL);
+      Vec = getVSlidedown(DAG, Subtarget, DL, ContainerVT,
+                          DAG.getUNDEF(ContainerVT), Vec, Idx, Mask, VL);
     }
 
     // Extract the lower XLEN bits of the correct vector element.
@@ -8453,6 +8465,226 @@ static SDValue performTRUNCATECombine(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
+// Helper class contains information about comparison operation.
+// The first two operands of this operation are compared values and the
+// last one is the operation.
+// Compared values are stored in Ops.
+// Comparison operation is stored in CCode.
+class CmpOpInfo {
+  static unsigned constexpr Size = 2u;
+
+  // Type for storing operands of compare operation.
+  using OpsArray = std::array<SDValue, Size>;
+  OpsArray Ops;
+
+  using const_iterator = OpsArray::const_iterator;
+  const_iterator begin() const { return Ops.begin(); }
+  const_iterator end() const { return Ops.end(); }
+
+  ISD::CondCode CCode;
+
+  unsigned CommonPos{Size};
+  unsigned DifferPos{Size};
+
+  // Sets CommonPos and DifferPos based on incoming position
+  // of common operand CPos.
+  void setPositions(const_iterator CPos) {
+    assert(CPos != Ops.end() && "Common operand has to be in OpsArray.\n");
+    CommonPos = CPos == Ops.begin() ? 0 : 1;
+    DifferPos = 1 - CommonPos;
+    assert((DifferPos == 0 || DifferPos == 1) &&
+           "Positions can be only 0 or 1.");
+  }
+
+  // Private constructor of comparison info based on comparison operator.
+  // It is private because CmpOpInfo only reasonable relative to other
+  // comparison operator. Therefore, infos about comparison operation
+  // have to be collected simultaneously via CmpOpInfo::getInfoAbout().
+  CmpOpInfo(const SDValue &CmpOp)
+      : Ops{CmpOp.getOperand(0), CmpOp.getOperand(1)},
+        CCode{cast<CondCodeSDNode>(CmpOp.getOperand(2))->get()} {}
+
+  // Finds common operand of Op1 and Op2 and finishes filling CmpOpInfos.
+  // Returns true if common operand is found. Otherwise - false.
+  static bool establishCorrespondence(CmpOpInfo &Op1, CmpOpInfo &Op2) {
+    const auto CommonOpIt1 =
+        std::find_first_of(Op1.begin(), Op1.end(), Op2.begin(), Op2.end());
+    if (CommonOpIt1 == Op1.end())
+      return false;
+
+    const auto CommonOpIt2 = std::find(Op2.begin(), Op2.end(), *CommonOpIt1);
+    assert(CommonOpIt2 != Op2.end() &&
+           "Cannot find common operand in the second comparison operation.");
+
+    Op1.setPositions(CommonOpIt1);
+    Op2.setPositions(CommonOpIt2);
+
+    return true;
+  }
+
+public:
+  CmpOpInfo(const CmpOpInfo &) = default;
+  CmpOpInfo(CmpOpInfo &&) = default;
+
+  SDValue const &operator[](unsigned Pos) const {
+    assert(Pos < Size && "Out of range\n");
+    return Ops[Pos];
+  }
+
+  // Creates infos about comparison operations CmpOp0 and CmpOp1.
+  // If there is no common operand returns None. Otherwise, returns
+  // correspondence info about comparison operations.
+  static std::optional<std::pair<CmpOpInfo, CmpOpInfo>>
+  getInfoAbout(SDValue const &CmpOp0, SDValue const &CmpOp1) {
+    CmpOpInfo Op0{CmpOp0};
+    CmpOpInfo Op1{CmpOp1};
+    if (!establishCorrespondence(Op0, Op1))
+      return std::nullopt;
+    return std::make_pair(Op0, Op1);
+  }
+
+  // Returns position of common operand.
+  unsigned getCPos() const { return CommonPos; }
+
+  // Returns position of differ operand.
+  unsigned getDPos() const { return DifferPos; }
+
+  // Returns common operand.
+  SDValue const &getCOp() const { return operator[](CommonPos); }
+
+  // Returns differ operand.
+  SDValue const &getDOp() const { return operator[](DifferPos); }
+
+  // Returns consition code of comparison operation.
+  ISD::CondCode getCondCode() const { return CCode; }
+};
+
+// Verifies conditions to apply an optimization.
+// Returns Reference comparison code and three operands A, B, C.
+// Conditions for optimization:
+//   One operand of the compasions has to be common.
+//   This operand is written to C.
+//   Two others operands are differend. They are written to A and B.
+//   Comparisons has to be similar with respect to common operand C.
+//     e.g. A < C; C > B are similar
+//      but A < C; B > C are not.
+//   Reference comparison code is the comparison code if
+//   common operand is right placed.
+//     e.g. C > A will be swapped to A < C.
+static std::optional<std::tuple<ISD::CondCode, SDValue, SDValue, SDValue>>
+verifyCompareConds(SDNode *N, SelectionDAG &DAG) {
+  LLVM_DEBUG(
+      dbgs() << "Checking conditions for comparison operation combining.\n";);
+
+  SDValue V0 = N->getOperand(0);
+  SDValue V1 = N->getOperand(1);
+  assert(V0.getValueType() == V1.getValueType() &&
+         "Operations must have the same value type.");
+
+  // Condition 1. Operations have to be used only in logic operation.
+  if (!V0.hasOneUse() || !V1.hasOneUse())
+    return std::nullopt;
+
+  // Condition 2. Operands have to be comparison operations.
+  if (V0.getOpcode() != ISD::SETCC || V1.getOpcode() != ISD::SETCC)
+    return std::nullopt;
+
+  // Condition 3.1. Operations only with integers.
+  if (!V0.getOperand(0).getValueType().isInteger())
+    return std::nullopt;
+
+  const auto ComparisonInfo = CmpOpInfo::getInfoAbout(V0, V1);
+  // Condition 3.2. Common operand has to be in comparison.
+  if (!ComparisonInfo)
+    return std::nullopt;
+
+  const auto [Op0, Op1] = ComparisonInfo.value();
+
+  LLVM_DEBUG(dbgs() << "Shared operands are on positions: " << Op0.getCPos()
+                    << " and " << Op1.getCPos() << '\n';);
+  // If common operand at the first position then swap operation to convert to
+  // strict pattern. Common operand has to be right hand side.
+  ISD::CondCode RefCond = Op0.getCondCode();
+  ISD::CondCode AssistCode = Op1.getCondCode();
+  if (!Op0.getCPos())
+    RefCond = ISD::getSetCCSwappedOperands(RefCond);
+  if (!Op1.getCPos())
+    AssistCode = ISD::getSetCCSwappedOperands(AssistCode);
+  LLVM_DEBUG(dbgs() << "Reference condition is: " << RefCond << '\n';);
+  // If there are different comparison operations then do not perform an
+  // optimization. a < c; c < b -> will be changed to b > c.
+  if (RefCond != AssistCode)
+    return std::nullopt;
+
+  // Conditions can be only similar to Less or Greater. (>, >=, <, <=)
+  // Applying this mask to the operation will determine Less and Greater
+  // operations.
+  const unsigned CmpMask = 0b110;
+  const unsigned MaskedOpcode = CmpMask & RefCond;
+  // If masking gave 0b110, then this is an operation NE, O or TRUE.
+  if (MaskedOpcode == CmpMask)
+    return std::nullopt;
+  // If masking gave 00000, then this is an operation E, O or FALSE.
+  if (MaskedOpcode == 0)
+    return std::nullopt;
+  // Everything else is similar to Less or Greater.
+
+  SDValue A = Op0.getDOp();
+  SDValue B = Op1.getDOp();
+  SDValue C = Op0.getCOp();
+
+  LLVM_DEBUG(
+      dbgs() << "The conditions for combining comparisons are satisfied.\n";);
+  return std::make_tuple(RefCond, A, B, C);
+}
+
+static ISD::NodeType getSelectionCode(bool IsUnsigned, bool IsAnd,
+                                      bool IsGreaterOp) {
+  // Codes of selection operation. The first index selects signed or unsigned,
+  // the second index selects MIN/MAX.
+  static constexpr ISD::NodeType SelectionCodes[2][2] = {
+      {ISD::SMIN, ISD::SMAX}, {ISD::UMIN, ISD::UMAX}};
+  const bool ChooseSelCode = IsAnd ^ IsGreaterOp;
+  return SelectionCodes[IsUnsigned][ChooseSelCode];
+}
+
+// Combines two comparison operation and logic operation to one selection
+// operation(min, max) and logic operation. Returns new constructed Node if
+// conditions for optimization are satisfied.
+static SDValue combineCmpOp(SDNode *N, SelectionDAG &DAG,
+                            const RISCVSubtarget &Subtarget) {
+  if (!Subtarget.hasStdExtZbb())
+    return SDValue();
+
+  const unsigned BitOpcode = N->getOpcode();
+  assert((BitOpcode == ISD::AND || BitOpcode == ISD::OR) &&
+         "This optimization can be used only with AND/OR operations");
+
+  const auto Props = verifyCompareConds(N, DAG);
+  // If conditions are invalidated then do not perform an optimization.
+  if (!Props)
+    return SDValue();
+
+  const auto [RefOpcode, A, B, C] = Props.value();
+  const EVT CmpOpVT = A.getValueType();
+
+  const bool IsGreaterOp = RefOpcode & 0b10;
+  const bool IsUnsigned = ISD::isUnsignedIntSetCC(RefOpcode);
+  assert((IsUnsigned || ISD::isSignedIntSetCC(RefOpcode)) &&
+         "Operation neither with signed or unsigned integers.");
+
+  const bool IsAnd = BitOpcode == ISD::AND;
+  const ISD::NodeType PickCode =
+      getSelectionCode(IsUnsigned, IsAnd, IsGreaterOp);
+
+  SDLoc DL(N);
+  SDValue Pick = DAG.getNode(PickCode, DL, CmpOpVT, A, B);
+  SDValue Cmp =
+      DAG.getSetCC(DL, N->getOperand(0).getValueType(), Pick, C, RefOpcode);
+
+  return Cmp;
+}
+
 static SDValue performANDCombine(SDNode *N,
                                  TargetLowering::DAGCombinerInfo &DCI,
                                  const RISCVSubtarget &Subtarget) {
@@ -8477,6 +8709,9 @@ static SDValue performANDCombine(SDNode *N,
     return DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, And);
   }
 
+  if (SDValue V = combineCmpOp(N, DAG, Subtarget))
+    return V;
+
   if (SDValue V = combineBinOpToReduce(N, DAG, Subtarget))
     return V;
 
@@ -8492,6 +8727,9 @@ static SDValue performANDCombine(SDNode *N,
 static SDValue performORCombine(SDNode *N, TargetLowering::DAGCombinerInfo &DCI,
                                 const RISCVSubtarget &Subtarget) {
   SelectionDAG &DAG = DCI.DAG;
+
+  if (SDValue V = combineCmpOp(N, DAG, Subtarget))
+    return V;
 
   if (SDValue V = combineBinOpToReduce(N, DAG, Subtarget))
     return V;
@@ -9527,6 +9765,19 @@ static SDValue tryDemorganOfBooleanCondition(SDValue Cond, SelectionDAG &DAG) {
 static bool combine_CC(SDValue &LHS, SDValue &RHS, SDValue &CC, const SDLoc &DL,
                        SelectionDAG &DAG, const RISCVSubtarget &Subtarget) {
   ISD::CondCode CCVal = cast<CondCodeSDNode>(CC)->get();
+
+  // As far as arithmetic right shift always saves the sign,
+  // shift can be omitted.
+  // Fold setlt (sra X, N), 0 -> setlt X, 0 and
+  // setge (sra X, N), 0 -> setge X, 0
+  if (auto *RHSConst = dyn_cast<ConstantSDNode>(RHS.getNode())) {
+    if ((CCVal == ISD::SETGE || CCVal == ISD::SETLT) &&
+        LHS.getOpcode() == ISD::SRA && RHSConst->isZero()) {
+      LHS = LHS.getOperand(0);
+      return true;
+    }
+  }
+
   if (!ISD::isIntEqualitySetCC(CCVal))
     return false;
 
@@ -9599,6 +9850,65 @@ static bool combine_CC(SDValue &LHS, SDValue &RHS, SDValue &CC, const SDLoc &DL,
   }
 
   return false;
+}
+
+// Fold
+// (select C, (add Y, X), Y) -> (add Y, (select C, X, 0)).
+// (select C, (sub Y, X), Y) -> (sub Y, (select C, X, 0)).
+// (select C, (or Y, X), Y)  -> (or Y, (select C, X, 0)).
+// (select C, (xor Y, X), Y) -> (xor Y, (select C, X, 0)).
+static SDValue tryFoldSelectIntoOp(SDNode *N, SelectionDAG &DAG,
+                                   SDValue TrueVal, SDValue FalseVal,
+                                   bool Swapped) {
+  bool Commutative = true;
+  switch (TrueVal.getOpcode()) {
+  default:
+    return SDValue();
+  case ISD::SUB:
+    Commutative = false;
+    break;
+  case ISD::ADD:
+  case ISD::OR:
+  case ISD::XOR:
+    break;
+  }
+
+  if (!TrueVal.hasOneUse() || isa<ConstantSDNode>(FalseVal))
+    return SDValue();
+
+  unsigned OpToFold;
+  if (FalseVal == TrueVal.getOperand(0))
+    OpToFold = 0;
+  else if (Commutative && FalseVal == TrueVal.getOperand(1))
+    OpToFold = 1;
+  else
+    return SDValue();
+
+  EVT VT = N->getValueType(0);
+  SDLoc DL(N);
+  SDValue Zero = DAG.getConstant(0, DL, VT);
+  SDValue OtherOp = TrueVal.getOperand(1 - OpToFold);
+
+  if (Swapped)
+    std::swap(OtherOp, Zero);
+  SDValue NewSel = DAG.getSelect(DL, VT, N->getOperand(0), OtherOp, Zero);
+  return DAG.getNode(TrueVal.getOpcode(), DL, VT, FalseVal, NewSel);
+}
+
+static SDValue performSELECTCombine(SDNode *N, SelectionDAG &DAG,
+                                    const RISCVSubtarget &Subtarget) {
+  if (Subtarget.hasShortForwardBranchOpt())
+    return SDValue();
+
+  // Only support XLenVT.
+  if (N->getValueType(0) != Subtarget.getXLenVT())
+    return SDValue();
+
+  SDValue TrueVal = N->getOperand(1);
+  SDValue FalseVal = N->getOperand(2);
+  if (SDValue V = tryFoldSelectIntoOp(N, DAG, TrueVal, FalseVal, /*Swapped*/false))
+    return V;
+  return tryFoldSelectIntoOp(N, DAG, FalseVal, TrueVal, /*Swapped*/true);
 }
 
 SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
@@ -9770,6 +10080,8 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
     return SDValue();
   case ISD::TRUNCATE:
     return performTRUNCATECombine(N, DAG, Subtarget);
+  case ISD::SELECT:
+    return performSELECTCombine(N, DAG, Subtarget);
   case RISCVISD::SELECT_CC: {
     // Transform
     SDValue LHS = N->getOperand(0);
@@ -9784,62 +10096,6 @@ SDValue RISCVTargetLowering::PerformDAGCombine(SDNode *N,
     // If the True and False values are the same, we don't need a select_cc.
     if (TrueV == FalseV)
       return TrueV;
-
-    // (select (x in [0,1] == 0), y, (z ^ y) ) -> (-x & z ) ^ y
-    // (select (x in [0,1] != 0), (z ^ y), y ) -> (-x & z ) ^ y
-    // (select (x in [0,1] == 0), y, (z | y) ) -> (-x & z ) | y
-    // (select (x in [0,1] != 0), (z | y), y ) -> (-x & z ) | y
-    // NOTE: We only do this if the target does not have the short forward
-    // branch optimization.
-    APInt Mask = APInt::getBitsSetFrom(LHS.getValueSizeInBits(), 1);
-    if (!Subtarget.hasShortForwardBranchOpt() && isNullConstant(RHS) &&
-        ISD::isIntEqualitySetCC(CCVal) && DAG.MaskedValueIsZero(LHS, Mask)) {
-      unsigned Opcode;
-      SDValue Src1, Src2;
-      // true if FalseV is XOR or OR operator and one of its operands
-      // is equal to Op1
-      // ( a , a op b) || ( b , a op b)
-      auto isOrXorPattern = [&]() {
-        if (CCVal == ISD::SETEQ &&
-            (FalseV.getOpcode() == ISD::XOR || FalseV.getOpcode() == ISD::OR) &&
-            (FalseV.getOperand(0) == TrueV || FalseV.getOperand(1) == TrueV)) {
-          Src1 = FalseV.getOperand(0) == TrueV ?
-            FalseV.getOperand(1) : FalseV.getOperand(0);
-          Src2 = TrueV;
-          Opcode = FalseV.getOpcode();
-          return true;
-        }
-        if (CCVal == ISD::SETNE &&
-            (TrueV.getOpcode() == ISD::XOR || TrueV.getOpcode() == ISD::OR) &&
-            (TrueV.getOperand(0) == FalseV || TrueV.getOperand(1) == FalseV)) {
-          Src1 = TrueV.getOperand(0) == FalseV ?
-            TrueV.getOperand(1) : TrueV.getOperand(0);
-          Src2 = FalseV;
-          Opcode = TrueV.getOpcode();
-          return true;
-        }
-
-        return false;
-      };
-
-      if (isOrXorPattern()) {
-        SDValue Neg;
-        unsigned CmpSz = LHS.getSimpleValueType().getSizeInBits();
-        // We need mask of all zeros or ones with same size of the other
-        // operands.
-        if (CmpSz > VT.getSizeInBits())
-          Neg = DAG.getNode(ISD::TRUNCATE, DL, VT, LHS);
-        else if (CmpSz < VT.getSizeInBits())
-          Neg = DAG.getNode(ISD::AND, DL, VT,
-                            DAG.getNode(ISD::ANY_EXTEND, DL, VT, LHS),
-                            DAG.getConstant(1, DL, VT));
-        else
-          Neg = LHS;
-        SDValue Mask = DAG.getNegative(Neg, DL, VT);               // -x
-        SDValue And = DAG.getNode(ISD::AND, DL, VT, Mask, Src1); // Mask & z
-        return DAG.getNode(Opcode, DL, VT, And, Src2);           // And Op y
-      }
-    }
 
     // (select (x < 0), y, z)  -> x >> (XLEN - 1) & (y - z) + z
     // (select (x >= 0), y, z) -> x >> (XLEN - 1) & (z - y) + y
@@ -10470,6 +10726,14 @@ unsigned RISCVTargetLowering::ComputeNumSignBitsForTargetNode(
         DAG.ComputeNumSignBits(Op.getOperand(4), DemandedElts, Depth + 1);
     return std::min(Tmp, Tmp2);
   }
+  case RISCVISD::ABSW: {
+    // We expand this at isel to negw+max. The result will have 33 sign bits
+    // if the input has at least 33 sign bits.
+    unsigned Tmp =
+        DAG.ComputeNumSignBits(Op.getOperand(0), DemandedElts, Depth + 1);
+    if (Tmp < 33) return 1;
+    return 33;
+  }
   case RISCVISD::SLLW:
   case RISCVISD::SRAW:
   case RISCVISD::SRLW:
@@ -10478,7 +10742,6 @@ unsigned RISCVTargetLowering::ComputeNumSignBitsForTargetNode(
   case RISCVISD::REMUW:
   case RISCVISD::ROLW:
   case RISCVISD::RORW:
-  case RISCVISD::ABSW:
   case RISCVISD::FCVT_W_RV64:
   case RISCVISD::FCVT_WU_RV64:
   case RISCVISD::STRICT_FCVT_W_RV64:

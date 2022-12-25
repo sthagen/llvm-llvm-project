@@ -50,7 +50,6 @@ struct DenormalMode;
 class DISubprogram;
 class LLVMContext;
 class Module;
-template <typename T> class Optional;
 class raw_ostream;
 class Type;
 class User;
@@ -918,7 +917,7 @@ public:
   DISubprogram *getSubprogram() const;
 
   /// Returns true if we should emit debug info for profiling.
-  bool isDebugInfoForProfiling() const;
+  bool shouldEmitDebugInfoForProfiling() const;
 
   /// Check if null pointer dereferencing is considered undefined behavior for
   /// the function.

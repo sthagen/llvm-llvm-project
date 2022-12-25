@@ -134,7 +134,7 @@ llvm::Constant *CodeGenModule::getBuiltinLibFunction(const FunctionDecl *FD,
                  AIXLongDouble64Builtins.end())
       Name = AIXLongDouble64Builtins[BuiltinID];
     else
-      Name = Context.BuiltinInfo.getName(BuiltinID) + 10;
+      Name = Context.BuiltinInfo.getName(BuiltinID).substr(10);
   }
 
   llvm::FunctionType *Ty =
@@ -3091,7 +3091,11 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   case Builtin::BI__builtin_elementwise_trunc:
     return RValue::get(
         emitUnaryBuiltin(*this, E, llvm::Intrinsic::trunc, "elt.trunc"));
-
+  case Builtin::BI__builtin_elementwise_canonicalize:
+    return RValue::get(
+        emitUnaryBuiltin(*this, E, llvm::Intrinsic::canonicalize, "elt.trunc"));
+  case Builtin::BI__builtin_elementwise_copysign:
+    return RValue::get(emitBinaryBuiltin(*this, E, llvm::Intrinsic::copysign));
   case Builtin::BI__builtin_elementwise_add_sat:
   case Builtin::BI__builtin_elementwise_sub_sat: {
     Value *Op0 = EmitScalarExpr(E->getArg(0));
@@ -5298,7 +5302,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     LargestVectorWidth = std::max(LargestVectorWidth, VectorWidth);
 
   // See if we have a target specific intrinsic.
-  const char *Name = getContext().BuiltinInfo.getName(BuiltinID);
+  StringRef Name = getContext().BuiltinInfo.getName(BuiltinID);
   Intrinsic::ID IntrinsicID = Intrinsic::not_intrinsic;
   StringRef Prefix =
       llvm::Triple::getArchTypePrefix(getTarget().getTriple().getArch());
@@ -12955,7 +12959,7 @@ Value *CodeGenFunction::EmitX86CpuIs(StringRef CPUStr) {
   .Case(ALIAS, {2u, static_cast<unsigned>(llvm::X86::ENUM)})
 #define X86_CPU_SUBTYPE(ENUM, STR)                                             \
   .Case(STR, {2u, static_cast<unsigned>(llvm::X86::ENUM)})
-#include "llvm/Support/X86TargetParser.def"
+#include "llvm/TargetParser/X86TargetParser.def"
                                .Default({0, 0});
   assert(Value != 0 && "Invalid CPUStr passed to CpuIs");
 
@@ -14737,6 +14741,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_reduce_fadd_ph128: {
     Function *F =
         CGM.getIntrinsic(Intrinsic::vector_reduce_fadd, Ops[1]->getType());
+    IRBuilder<>::FastMathFlagGuard FMFGuard(Builder);
     Builder.getFastMathFlags().setAllowReassoc();
     return Builder.CreateCall(F, {Ops[0], Ops[1]});
   }
@@ -14747,6 +14752,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_reduce_fmul_ph128: {
     Function *F =
         CGM.getIntrinsic(Intrinsic::vector_reduce_fmul, Ops[1]->getType());
+    IRBuilder<>::FastMathFlagGuard FMFGuard(Builder);
     Builder.getFastMathFlags().setAllowReassoc();
     return Builder.CreateCall(F, {Ops[0], Ops[1]});
   }
@@ -14757,6 +14763,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_reduce_fmax_ph128: {
     Function *F =
         CGM.getIntrinsic(Intrinsic::vector_reduce_fmax, Ops[0]->getType());
+    IRBuilder<>::FastMathFlagGuard FMFGuard(Builder);
     Builder.getFastMathFlags().setNoNaNs();
     return Builder.CreateCall(F, {Ops[0]});
   }
@@ -14767,6 +14774,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
   case X86::BI__builtin_ia32_reduce_fmin_ph128: {
     Function *F =
         CGM.getIntrinsic(Intrinsic::vector_reduce_fmin, Ops[0]->getType());
+    IRBuilder<>::FastMathFlagGuard FMFGuard(Builder);
     Builder.getFastMathFlags().setNoNaNs();
     return Builder.CreateCall(F, {Ops[0]});
   }
@@ -19438,6 +19446,7 @@ Value *CodeGenFunction::EmitRISCVBuiltinExpr(unsigned BuiltinID,
   constexpr unsigned TAIL_AGNOSTIC = 1;
   constexpr unsigned TAIL_AGNOSTIC_MASK_AGNOSTIC = 3;
   int DefaultPolicy = TAIL_UNDISTURBED;
+  bool IsMasked = false;
 
   // Required for overloaded intrinsics.
   llvm::SmallVector<llvm::Type *, 2> IntrinsicTypes;
@@ -19718,6 +19727,21 @@ Value *CodeGenFunction::EmitLoongArchBuiltinExpr(unsigned BuiltinID,
     break;
   case LoongArch::BI__builtin_loongarch_iocsrwr_d:
     ID = Intrinsic::loongarch_iocsrwr_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_cpucfg:
+    ID = Intrinsic::loongarch_cpucfg;
+    break;
+  case LoongArch::BI__builtin_loongarch_asrtle_d:
+    ID = Intrinsic::loongarch_asrtle_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_asrtgt_d:
+    ID = Intrinsic::loongarch_asrtgt_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_lddir_d:
+    ID = Intrinsic::loongarch_lddir_d;
+    break;
+  case LoongArch::BI__builtin_loongarch_ldpte_d:
+    ID = Intrinsic::loongarch_ldpte_d;
     break;
     // TODO: Support more Intrinsics.
   }

@@ -775,9 +775,6 @@ void CodeGenModule::Release() {
                               1);
   }
 
-  if (CodeGenOpts.IBTSeal)
-    getModule().addModuleFlag(llvm::Module::Min, "ibt-seal", 1);
-
   if (CodeGenOpts.FunctionReturnThunks)
     getModule().addModuleFlag(llvm::Module::Override, "function_return_thunk_extern", 1);
 
@@ -4056,7 +4053,7 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     }
 
     llvm::Constant *BC = llvm::ConstantExpr::getBitCast(
-        F, Entry->getValueType()->getPointerTo());
+        F, Entry->getValueType()->getPointerTo(Entry->getAddressSpace()));
     addGlobalValReplacement(Entry, BC);
   }
 
@@ -4120,8 +4117,8 @@ llvm::Constant *CodeGenModule::GetOrCreateLLVMFunction(
     return F;
   }
 
-  llvm::Type *PTy = llvm::PointerType::getUnqual(Ty);
-  return llvm::ConstantExpr::getBitCast(F, PTy);
+  return llvm::ConstantExpr::getBitCast(F,
+                                        Ty->getPointerTo(F->getAddressSpace()));
 }
 
 /// GetAddrOfFunction - Return the address of the given function.  If Ty is
@@ -4170,8 +4167,9 @@ llvm::Constant *CodeGenModule::GetFunctionStart(const ValueDecl *Decl) {
   llvm::GlobalValue *F =
       cast<llvm::GlobalValue>(GetAddrOfFunction(Decl)->stripPointerCasts());
 
-  return llvm::ConstantExpr::getBitCast(llvm::NoCFIValue::get(F),
-                                        llvm::Type::getInt8PtrTy(VMContext));
+  return llvm::ConstantExpr::getBitCast(
+      llvm::NoCFIValue::get(F),
+      llvm::Type::getInt8PtrTy(VMContext, F->getAddressSpace()));
 }
 
 static const FunctionDecl *

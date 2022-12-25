@@ -17,7 +17,6 @@
 #include <hsa.h>
 #include <hsa_ext_amd.h>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <unistd.h>
 #include <unordered_map>
@@ -120,6 +119,8 @@ struct AMDGPUResourceRef : public GenericDeviceResourceRef {
 
   /// Create a reference to an existing resource.
   AMDGPUResourceRef(ResourceTy *Resource) : Resource(Resource) {}
+
+  virtual ~AMDGPUResourceRef() {}
 
   /// Create a new resource and save the reference. The reference must be empty
   /// before calling to this function.
@@ -398,6 +399,10 @@ struct AMDGPUKernelTy : public GenericKernelTy {
         return Err;
     }
 
+    // Account for user requested dynamic shared memory.
+    // TODO: This should be read from a per-kernel state flag.
+    GroupSize += Device.getDynamicMemorySize();
+
     // Make sure it is a kernel symbol.
     if (SymbolType != HSA_SYMBOL_KIND_KERNEL)
       return Plugin::error("Symbol %s is not a kernel function");
@@ -539,6 +544,10 @@ struct AMDGPUQueueTy {
     // the addition of other packets to the queue. The following piece of code
     // should be lightweight; do not block the thread, allocate memory, etc.
     std::lock_guard<std::mutex> Lock(Mutex);
+
+    // Avoid defining the input dependency if already satisfied.
+    if (InputSignal && !InputSignal->load())
+      InputSignal = nullptr;
 
     // Add a barrier packet before the kernel packet in case there is a pending
     // preceding operation. The barrier packet will delay the processing of
@@ -786,8 +795,18 @@ private:
         return Plugin::success();
 
       // Perform the action.
-      if (auto Err = (*ActionFunction)(&ActionArgs))
-        return Err;
+      if (ActionFunction == memcpyAction) {
+        if (auto Err = memcpyAction(&ActionArgs))
+          return Err;
+      } else if (ActionFunction == releaseBufferAction) {
+        if (auto Err = releaseBufferAction(&ActionArgs))
+          return Err;
+      } else if (ActionFunction == releaseSignalAction) {
+        if (auto Err = releaseSignalAction(&ActionArgs))
+          return Err;
+      } else {
+        return Plugin::error("Unknown action function!");
+      }
 
       // Invalidate the action.
       ActionFunction = nullptr;
@@ -989,10 +1008,6 @@ public:
 
     // Consume stream slot and compute dependencies.
     auto [Curr, InputSignal] = consume(OutputSignal);
-
-    // Avoid defining the input dependency if already satisfied.
-    if (InputSignal && !InputSignal->load())
-      InputSignal = nullptr;
 
     // Setup the post action to release the kernel args buffer.
     if (auto Err = Slots[Curr].schedReleaseBuffer(KernelArgs, MemoryManager))
@@ -1485,8 +1500,9 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
   AMDGPUDeviceTy(int32_t DeviceId, int32_t NumDevices,
                  AMDHostDeviceTy &HostDevice, hsa_agent_t Agent)
       : GenericDeviceTy(DeviceId, NumDevices, {0}), AMDGenericDeviceTy(),
-        OMPX_NumQueues("LIBOMPTARGET_AMDGPU_NUM_HSA_QUEUES", 8),
-        OMPX_QueueSize("LIBOMPTARGET_AMDGPU_HSA_QUEUE_SIZE", 1024),
+        OMPX_NumQueues("LIBOMPTARGET_AMDGPU_NUM_HSA_QUEUES", 4),
+        OMPX_QueueSize("LIBOMPTARGET_AMDGPU_HSA_QUEUE_SIZE", 512),
+        OMPX_DefaultTeamsPerCU("LIBOMPTARGET_AMDGPU_TEAMS_PER_CU", 4),
         OMPX_MaxAsyncCopyBytes("LIBOMPTARGET_AMDGPU_MAX_ASYNC_COPY_BYTES",
                                1 * 1024 * 1024), // 1MB
         OMPX_InitialNumSignals("LIBOMPTARGET_AMDGPU_NUM_INITIAL_HSA_SIGNALS",
@@ -1528,9 +1544,17 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     hsa_dim3_t GridMaxDim;
     if (auto Err = getDeviceAttr(HSA_AGENT_INFO_GRID_MAX_DIM, GridMaxDim))
       return Err;
+
     GridValues.GV_Max_Teams = GridMaxDim.x / GridValues.GV_Max_WG_Size;
     if (GridValues.GV_Max_Teams == 0)
       return Plugin::error("Maximum number of teams cannot be zero");
+
+    // Compute the default number of teams.
+    uint32_t ComputeUnits = 0;
+    if (auto Err =
+            getDeviceAttr(HSA_AMD_AGENT_INFO_COMPUTE_UNIT_COUNT, ComputeUnits))
+      return Err;
+    GridValues.GV_Default_Num_Teams = ComputeUnits * OMPX_DefaultTeamsPerCU;
 
     // Get maximum size of any device queues and maximum number of queues.
     uint32_t MaxQueueSize;
@@ -1696,15 +1720,6 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
       return OFFLOAD_FAIL;
     }
 
-    if (Kind == TARGET_ALLOC_HOST) {
-      std::lock_guard<std::shared_mutex> Lock(HostAllocationsMutex);
-      size_t Erased = HostAllocations.erase(TgtPtr);
-      if (!Erased) {
-        REPORT("Cannot find a host allocation in the map\n");
-        return OFFLOAD_FAIL;
-      }
-    }
-
     return OFFLOAD_SUCCESS;
   }
 
@@ -1754,7 +1769,7 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
                        AsyncInfoWrapperTy &AsyncInfoWrapper) override {
 
     // Use one-step asynchronous operation when host memory is already pinned.
-    if (isHostPinnedMemory(HstPtr)) {
+    if (isHostPinnedMemoryBuffer(HstPtr)) {
       AMDGPUStreamTy &Stream = getStream(AsyncInfoWrapper);
       return Stream.pushPinnedMemoryCopyAsync(TgtPtr, HstPtr, Size);
     }
@@ -1808,7 +1823,9 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
   /// Retrieve data from the device (device to host transfer).
   Error dataRetrieveImpl(void *HstPtr, const void *TgtPtr, int64_t Size,
                          AsyncInfoWrapperTy &AsyncInfoWrapper) override {
-    if (isHostPinnedMemory(HstPtr)) {
+
+    // Use one-step asynchronous operation when host memory is already pinned.
+    if (isHostPinnedMemoryBuffer(HstPtr)) {
       // Use one-step asynchronous operation when host memory is already pinned.
       AMDGPUStreamTy &Stream = getStream(AsyncInfoWrapper);
       return Stream.pushPinnedMemoryCopyAsync(HstPtr, TgtPtr, Size);
@@ -1980,23 +1997,6 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     return Queues[Current % Queues.size()];
   }
 
-  /// Check whether a buffer is a host pinned buffer.
-  bool isHostPinnedMemory(const void *Ptr) const {
-    bool Found = false;
-    HostAllocationsMutex.lock_shared();
-    if (!HostAllocations.empty()) {
-      auto It = HostAllocations.lower_bound((const void *)Ptr);
-      if (It != HostAllocations.end() && It->first == Ptr) {
-        Found = true;
-      } else if (It != HostAllocations.begin()) {
-        --It;
-        Found = ((const char *)It->first + It->second > (const char *)Ptr);
-      }
-    }
-    HostAllocationsMutex.unlock_shared();
-    return Found;
-  }
-
 private:
   using AMDGPUStreamRef = AMDGPUResourceRef<AMDGPUStreamTy>;
   using AMDGPUEventRef = AMDGPUResourceRef<AMDGPUEventTy>;
@@ -2013,6 +2013,11 @@ private:
   /// packets that can be pushed into each queue without waiting the driver to
   /// process them.
   UInt32Envar OMPX_QueueSize;
+
+  /// Envar for controlling the default number of teams relative to the number
+  /// of compute units (CUs) the device has:
+  ///   #default_teams = OMPX_DefaultTeamsPerCU * #CUs.
+  UInt32Envar OMPX_DefaultTeamsPerCU;
 
   /// Envar specifying the maximum size in bytes where the memory copies are
   /// asynchronous operations. Up to this transfer size, the memory copies are
@@ -2043,12 +2048,6 @@ private:
 
   /// List of device packet queues.
   std::vector<AMDGPUQueueTy> Queues;
-
-  /// Map of host pinned allocations. We track these pinned allocations so that
-  /// memory transfers involving these allocations do not need a two-step copy
-  /// with an intermediate pinned buffer.
-  std::map<const void *, size_t> HostAllocations;
-  mutable std::shared_mutex HostAllocationsMutex;
 };
 
 Error AMDGPUDeviceImageTy::loadExecutable(const AMDGPUDeviceTy &Device) {
@@ -2226,9 +2225,9 @@ struct AMDGPUPluginTy final : public GenericPluginTy {
       // Classify the agents into kernel (GPU) and host (CPU) kernels.
       if (DeviceType == HSA_DEVICE_TYPE_GPU) {
         // Ensure that the GPU agent supports kernel dispatch packets.
-        hsa_agent_feature_t features;
-        Status = hsa_agent_get_info(Agent, HSA_AGENT_INFO_FEATURE, &features);
-        if (features & HSA_AGENT_FEATURE_KERNEL_DISPATCH)
+        hsa_agent_feature_t Features;
+        Status = hsa_agent_get_info(Agent, HSA_AGENT_INFO_FEATURE, &Features);
+        if (Features & HSA_AGENT_FEATURE_KERNEL_DISPATCH)
           KernelAgents.push_back(Agent);
       } else if (DeviceType == HSA_DEVICE_TYPE_CPU) {
         HostAgents.push_back(Agent);
@@ -2405,11 +2404,11 @@ Error AMDGPUKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
   std::memset(ImplArgs, 0, ImplicitArgsSize);
 
   // Copy the explicit arguments.
-  for (int32_t ArgId = 0; ArgId < NumKernelArgs; ++ArgId) {
-    void *Dst = (char *)AllArgs + sizeof(void *) * ArgId;
-    void *Src = *((void **)KernelArgs + ArgId);
-    std::memcpy(Dst, Src, sizeof(void *));
-  }
+  // TODO: We should expose the args memory manager alloc to the common part as
+  // 	   alternative to copying them twice.
+  if (NumKernelArgs)
+    std::memcpy(AllArgs, *static_cast<void **>(KernelArgs),
+                sizeof(void *) * NumKernelArgs);
 
   AMDGPUDeviceTy &AMDGPUDevice = static_cast<AMDGPUDeviceTy &>(GenericDevice);
   AMDGPUStreamTy &Stream = AMDGPUDevice.getStream(AsyncInfoWrapper);
@@ -2505,11 +2504,8 @@ void *AMDGPUDeviceTy::allocate(size_t Size, void *, TargetAllocTy Kind) {
     // Enable all kernel agents to access the host pinned buffer.
     if (auto Err = MemoryPool->enableAccess(Alloc, Size, KernelAgents)) {
       REPORT("%s\n", toString(std::move(Err)).data());
+      return nullptr;
     }
-
-    // Keep track of the host pinned allocations for optimizations in transfers.
-    std::lock_guard<std::shared_mutex> Lock(HostAllocationsMutex);
-    HostAllocations.insert({Alloc, Size});
   }
 
   return Alloc;

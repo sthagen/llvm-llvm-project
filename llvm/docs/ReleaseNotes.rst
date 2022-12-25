@@ -104,11 +104,22 @@ Changes to the LLVM IR
 
   * ``fneg``
 
+* Target extension types have been added, which allow targets to have
+  types that need to be preserved through the optimizer, but otherwise are not
+  introspectable by target-independent optimizations.
+
 Changes to building LLVM
 ------------------------
 
 Changes to TableGen
 -------------------
+
+Changes to Interprocedural Optimizations
+----------------------------------------
+
+* Function Specialization has been integrated into IPSCCP.
+* Specialization of functions has been enabled by default at all
+  optimization levels except Os, Oz.
 
 Changes to the AArch64 Backend
 ------------------------------
