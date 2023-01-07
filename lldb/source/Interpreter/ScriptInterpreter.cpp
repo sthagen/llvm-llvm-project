@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 
 using namespace lldb;
@@ -82,7 +83,7 @@ ScriptInterpreter::GetDataExtractorFromSBData(const lldb::SBData &data) const {
 Status
 ScriptInterpreter::GetStatusFromSBError(const lldb::SBError &error) const {
   if (error.m_opaque_up)
-    return *error.m_opaque_up.get();
+    return *error.m_opaque_up;
 
   return Status();
 }

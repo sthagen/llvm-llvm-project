@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "VPlanTransforms.h"
+#include "VPlanCFG.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Analysis/IVDescriptors.h"
@@ -119,7 +120,7 @@ bool VPlanTransforms::sinkScalarOperands(VPlan &Plan) {
         continue;
       for (VPValue *Op : RepR->operands())
         if (auto *Def = Op->getDefiningRecipe())
-          WorkList.insert(std::make_pair(RepR->getParent(), Def));
+          WorkList.insert(std::make_pair(VPBB, Def));
     }
   }
 
@@ -223,21 +224,17 @@ static VPBasicBlock *getPredicatedThenBlock(VPRegionBlock *R) {
   return nullptr;
 }
 
-bool VPlanTransforms::mergeReplicateRegions(VPlan &Plan) {
+bool VPlanTransforms::mergeReplicateRegionsIntoSuccessors(VPlan &Plan) {
   SetVector<VPRegionBlock *> DeletedRegions;
-  bool Changed = false;
 
-  // Collect region blocks to process up-front, to avoid iterator invalidation
-  // issues while merging regions.
-  SmallVector<VPRegionBlock *, 8> CandidateRegions(
-      VPBlockUtils::blocksOnly<VPRegionBlock>(depth_first(
-          VPBlockRecursiveTraversalWrapper<VPBlockBase *>(Plan.getEntry()))));
-
-  // Check if Base is a predicated triangle, followed by an empty block,
-  // followed by another predicate triangle. If that's the case, move the
-  // recipes from the first to the second triangle.
-  for (VPRegionBlock *Region1 : CandidateRegions) {
-    if (DeletedRegions.contains(Region1))
+  // Collect replicate regions followed by an empty block, followed by another
+  // replicate region with matching masks to process front. This is to avoid
+  // iterator invalidation issues while merging regions.
+  SmallVector<VPRegionBlock *, 8> WorkList;
+  for (VPRegionBlock *Region1 :
+       VPBlockUtils::blocksOnly<VPRegionBlock>(depth_first(
+           VPBlockRecursiveTraversalWrapper<VPBlockBase *>(Plan.getEntry())))) {
+    if (!Region1->isReplicator())
       continue;
     auto *MiddleBasicBlock =
         dyn_cast_or_null<VPBasicBlock>(Region1->getSingleSuccessor());
@@ -246,19 +243,29 @@ bool VPlanTransforms::mergeReplicateRegions(VPlan &Plan) {
 
     auto *Region2 =
         dyn_cast_or_null<VPRegionBlock>(MiddleBasicBlock->getSingleSuccessor());
-    if (!Region2)
+    if (!Region2 || !Region2->isReplicator())
       continue;
 
     VPValue *Mask1 = getPredicatedMask(Region1);
     VPValue *Mask2 = getPredicatedMask(Region2);
     if (!Mask1 || Mask1 != Mask2)
       continue;
+
+    assert(Mask1 && Mask2 && "both region must have conditions");
+    WorkList.push_back(Region1);
+  }
+
+  // Move recipes from Region1 to its successor region, if both are triangles.
+  for (VPRegionBlock *Region1 : WorkList) {
+    if (DeletedRegions.contains(Region1))
+      continue;
+    auto *MiddleBasicBlock = cast<VPBasicBlock>(Region1->getSingleSuccessor());
+    auto *Region2 = cast<VPRegionBlock>(MiddleBasicBlock->getSingleSuccessor());
+
     VPBasicBlock *Then1 = getPredicatedThenBlock(Region1);
     VPBasicBlock *Then2 = getPredicatedThenBlock(Region2);
     if (!Then1 || !Then2)
       continue;
-
-    assert(Mask1 && Mask2 && "both region must have conditions");
 
     // Note: No fusion-preventing memory dependencies are expected in either
     // region. Such dependencies should be rejected during earlier dependence
@@ -304,7 +311,35 @@ bool VPlanTransforms::mergeReplicateRegions(VPlan &Plan) {
 
   for (VPRegionBlock *ToDelete : DeletedRegions)
     delete ToDelete;
-  return Changed;
+  return !DeletedRegions.empty();
+}
+
+bool VPlanTransforms::mergeBlocksIntoPredecessors(VPlan &Plan) {
+  SmallVector<VPBasicBlock *> WorkList;
+  for (VPBasicBlock *VPBB : VPBlockUtils::blocksOnly<VPBasicBlock>(depth_first(
+           VPBlockRecursiveTraversalWrapper<VPBlockBase *>(Plan.getEntry())))) {
+    auto *PredVPBB =
+        dyn_cast_or_null<VPBasicBlock>(VPBB->getSinglePredecessor());
+    if (PredVPBB && PredVPBB->getNumSuccessors() == 1)
+      WorkList.push_back(VPBB);
+  }
+
+  for (VPBasicBlock *VPBB : WorkList) {
+    VPBasicBlock *PredVPBB = cast<VPBasicBlock>(VPBB->getSinglePredecessor());
+    for (VPRecipeBase &R : make_early_inc_range(*VPBB))
+      R.moveBefore(*PredVPBB, PredVPBB->end());
+    VPBlockUtils::disconnectBlocks(PredVPBB, VPBB);
+    auto *ParentRegion = cast_or_null<VPRegionBlock>(VPBB->getParent());
+    if (ParentRegion && ParentRegion->getExiting() == VPBB)
+      ParentRegion->setExiting(PredVPBB);
+    SmallVector<VPBlockBase *> Successors(VPBB->successors());
+    for (auto *Succ : Successors) {
+      VPBlockUtils::disconnectBlocks(VPBB, Succ);
+      VPBlockUtils::connectBlocks(PredVPBB, Succ);
+    }
+    delete VPBB;
+  }
+  return !WorkList.empty();
 }
 
 void VPlanTransforms::removeRedundantInductionCasts(VPlan &Plan) {

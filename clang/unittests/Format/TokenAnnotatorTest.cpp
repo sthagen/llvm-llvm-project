@@ -339,6 +339,14 @@ TEST_F(TokenAnnotatorTest, UnderstandsTemplatesInMacros) {
   EXPECT_TOKEN(Tokens[19], tok::greater, TT_TemplateCloser);
 }
 
+TEST_F(TokenAnnotatorTest, UnderstandsGreaterAfterTemplateCloser) {
+  auto Tokens = annotate("if (std::tuple_size_v<T> > 0)");
+  ASSERT_EQ(Tokens.size(), 12u) << Tokens;
+  EXPECT_TOKEN(Tokens[5], tok::less, TT_TemplateOpener);
+  EXPECT_TOKEN(Tokens[7], tok::greater, TT_TemplateCloser);
+  EXPECT_TOKEN(Tokens[8], tok::greater, TT_BinaryOperator);
+}
+
 TEST_F(TokenAnnotatorTest, UnderstandsWhitespaceSensitiveMacros) {
   FormatStyle Style = getLLVMStyle();
   Style.WhitespaceSensitiveMacros.push_back("FOO");
@@ -579,6 +587,14 @@ TEST_F(TokenAnnotatorTest, UnderstandsRequiresClausesAndConcepts) {
   EXPECT_TOKEN(Tokens[5], tok::kw_requires, TT_RequiresClause);
   EXPECT_TRUE(Tokens[9]->ClosesRequiresClause);
   EXPECT_TOKEN(Tokens[11], tok::identifier, TT_FunctionDeclarationName);
+
+  Tokens = annotate("template <typename T>\n"
+                    "requires Bar<T>\n"
+                    "decltype(auto) foo(T) { return false; }");
+  ASSERT_EQ(Tokens.size(), 24u) << Tokens;
+  EXPECT_TOKEN(Tokens[5], tok::kw_requires, TT_RequiresClause);
+  EXPECT_TRUE(Tokens[9]->ClosesRequiresClause);
+  EXPECT_TOKEN(Tokens[14], tok::identifier, TT_FunctionDeclarationName);
 
   Tokens = annotate("template <typename T>\n"
                     "struct S {\n"

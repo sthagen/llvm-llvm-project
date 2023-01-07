@@ -69,20 +69,18 @@ IntegerLiteralSeparatorFixer::process(const Environment &Env,
   if (SkipBinary && SkipDecimal && SkipHex)
     return {};
 
-  const auto ID = Env.getFileID();
   const auto &SourceMgr = Env.getSourceManager();
   AffectedRangeManager AffectedRangeMgr(SourceMgr, Env.getCharRanges());
 
-  std::unique_ptr<Lexer> Lex;
-  Lex.reset(new Lexer(ID, SourceMgr.getBufferOrFake(ID), SourceMgr,
-                      getFormattingLangOpts(Style)));
-  Lex->SetCommentRetentionState(true);
+  const auto ID = Env.getFileID();
+  const auto LangOpts = getFormattingLangOpts(Style);
+  Lexer Lex(ID, SourceMgr.getBufferOrFake(ID), SourceMgr, LangOpts);
+  Lex.SetCommentRetentionState(true);
 
   Token Tok;
-  Lex->LexFromRawLexer(Tok);
-
   tooling::Replacements Result;
-  for (bool Skip = false; Tok.isNot(tok::eof); Lex->LexFromRawLexer(Tok)) {
+
+  for (bool Skip = false; !Lex.LexFromRawLexer(Tok);) {
     auto Length = Tok.getLength();
     if (Length < 2)
       continue;
@@ -96,8 +94,8 @@ IntegerLiteralSeparatorFixer::process(const Environment &Env,
       continue;
     }
     if (Skip || Tok.isNot(tok::numeric_constant) || Text[0] == '.' ||
-        !AffectedRangeMgr.affectsCharSourceRange(CharSourceRange::getCharRange(
-            Location, Location.getLocWithOffset(Length)))) {
+        !AffectedRangeMgr.affectsCharSourceRange(
+            CharSourceRange::getCharRange(Location, Tok.getEndLoc()))) {
       continue;
     }
     const auto B = getBase(Text);

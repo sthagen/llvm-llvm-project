@@ -1762,6 +1762,41 @@ the configuration (without a prefix: ``Auto``).
                            }
 
 
+**BreakAfterAttributes** (``AttributeBreakingStyle``) :versionbadge:`clang-format 16`
+  Break after a group of C++11 attributes before a function
+  declaration/definition name.
+
+  Possible values:
+
+  * ``ABS_Always`` (in configuration: ``Always``)
+    Always break after attributes.
+
+    .. code-block:: c++
+
+      [[nodiscard]]
+      inline int f();
+      [[gnu::const]] [[nodiscard]]
+      int g();
+
+  * ``ABS_Leave`` (in configuration: ``Leave``)
+    Leave the line breaking after attributes as is.
+
+    .. code-block:: c++
+
+      [[nodiscard]] inline int f();
+      [[gnu::const]] [[nodiscard]]
+      int g();
+
+  * ``ABS_Never`` (in configuration: ``Never``)
+    Never break after attributes.
+
+    .. code-block:: c++
+
+      [[nodiscard]] inline int f();
+      [[gnu::const]] [[nodiscard]] int g();
+
+
+
 **BreakAfterJavaFieldAnnotations** (``Boolean``) :versionbadge:`clang-format 3.8`
   Break after each annotation on a field in Java files.
 
@@ -3127,6 +3162,9 @@ the configuration (without a prefix: ``Auto``).
       --i;                                      --i;
     while (i);                                } while (i);
 
+**InsertNewlineAtEOF** (``Boolean``) :versionbadge:`clang-format 16`
+  Insert a newline at end of file if missing.
+
 **InsertTrailingCommas** (``TrailingCommaStyle``) :versionbadge:`clang-format 11`
   If set to ``TCS_Wrapped`` will insert trailing commas in container
   literals (arrays and objects) that wrap across multiple lines.
@@ -3166,9 +3204,9 @@ the configuration (without a prefix: ``Auto``).
   Nested configuration flags:
 
   Separator format of integer literals of different bases.
-  <0: Remove separators.
-   0: Leave the literal as is.
-  >0: Insert separators between digits, starting from the rightmost digit.
+  If <0: Remove separators.
+  If  0: Leave the literal as is.
+  If >0: Insert separators between digits starting from the rightmost digit.
 
   * ``int8_t Binary`` .. code-block:: c++
 
