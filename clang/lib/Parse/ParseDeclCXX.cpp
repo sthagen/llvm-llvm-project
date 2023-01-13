@@ -2073,7 +2073,7 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
         DSC == DeclSpecContext::DSC_type_specifier,
         DSC == DeclSpecContext::DSC_template_param ||
             DSC == DeclSpecContext::DSC_template_type_arg,
-        &SkipBody);
+        OffsetOfState, &SkipBody);
 
     // If ActOnTag said the type was dependent, try again with the
     // less common call.
@@ -3191,7 +3191,11 @@ ExprResult Parser::ParseCXXMemberInitializer(Decl *D, bool IsFunction,
          "Data member initializer not starting with '=' or '{'");
 
   EnterExpressionEvaluationContext Context(
-      Actions, Sema::ExpressionEvaluationContext::PotentiallyEvaluated, D);
+      Actions,
+      isa_and_present<FieldDecl>(D)
+          ? Sema::ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed
+          : Sema::ExpressionEvaluationContext::PotentiallyEvaluated,
+      D);
   if (TryConsumeToken(tok::equal, EqualLoc)) {
     if (Tok.is(tok::kw_delete)) {
       // In principle, an initializer of '= delete p;' is legal, but it will

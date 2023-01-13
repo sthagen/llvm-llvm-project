@@ -39,6 +39,7 @@ static cl::opt<unsigned> SVEGatherOverhead("sve-gather-overhead", cl::init(10),
 static cl::opt<unsigned> SVEScatterOverhead("sve-scatter-overhead",
                                             cl::init(10), cl::Hidden);
 
+namespace {
 class TailFoldingKind {
 private:
   uint8_t Bits = 0; // Currently defaults to disabled.
@@ -89,6 +90,7 @@ public:
   void add(uint8_t Flag) { Bits |= Flag; }
   void remove(uint8_t Flag) { Bits &= ~Flag; }
 };
+} // namespace
 
 TailFoldingKind TailFoldingKindLoc;
 
@@ -2199,9 +2201,9 @@ InstructionCost AArch64TTIImpl::getArithmeticInstrCost(
       if (TLI->isOperationLegalOrCustom(ISD, LT.second) && ST->hasSVE()) {
         // SDIV/UDIV operations are lowered using SVE, then we can have less
         // costs.
-        if (isa<FixedVectorType>(Ty) &&
-            cast<FixedVectorType>(Ty)->getPrimitiveSizeInBits().getFixedSize() <
-                128) {
+        if (isa<FixedVectorType>(Ty) && cast<FixedVectorType>(Ty)
+                                                ->getPrimitiveSizeInBits()
+                                                .getFixedValue() < 128) {
           EVT VT = TLI->getValueType(DL, Ty);
           static const CostTblEntry DivTbl[]{
               {ISD::SDIV, MVT::v2i8, 5},  {ISD::SDIV, MVT::v4i8, 8},

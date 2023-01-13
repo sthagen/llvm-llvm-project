@@ -114,11 +114,21 @@ Changes to building LLVM
 Changes to TableGen
 -------------------
 
+Changes to Interprocedural Optimizations
+----------------------------------------
+
+* Function Specialization has been integrated into IPSCCP.
+* Specialization of functions has been enabled by default at all
+  optimization levels except Os, Oz. This has exposed a mis-compilation
+  in SPEC/CINT2017rate/502.gcc_r when built via the LLVM Test Suite with
+  both LTO and PGO enabled, but without the option -fno-strict-aliasing.
+
 Changes to the AArch64 Backend
 ------------------------------
 
 * Added support for the Cortex-A715 CPU.
 * Added support for the Cortex-X3 CPU.
+* Added support for the Neoverse V2 CPU.
 * Added support for assembly for RME MEC (Memory Encryption Contexts).
 
 Changes to the AMDGPU Backend

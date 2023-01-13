@@ -2025,6 +2025,33 @@ bool Sema::CheckTSBuiltinFunctionCall(const TargetInfo &TI, unsigned BuiltinID,
   }
 }
 
+// Check if \p Ty is a valid type for the elementwise math builtins. If it is
+// not a valid type, emit an error message and return true. Otherwise return
+// false.
+static bool checkMathBuiltinElementType(Sema &S, SourceLocation Loc,
+                                        QualType Ty) {
+  if (!Ty->getAs<VectorType>() && !ConstantMatrixType::isValidElementType(Ty)) {
+    return S.Diag(Loc, diag::err_builtin_invalid_arg_type)
+           << 1 << /* vector, integer or float ty*/ 0 << Ty;
+  }
+
+  return false;
+}
+
+static bool checkFPMathBuiltinElementType(Sema &S, SourceLocation Loc,
+                                          QualType ArgTy, int ArgIndex) {
+  QualType EltTy = ArgTy;
+  if (auto *VecTy = EltTy->getAs<VectorType>())
+    EltTy = VecTy->getElementType();
+
+  if (!EltTy->isRealFloatingType()) {
+    return S.Diag(Loc, diag::err_builtin_invalid_arg_type)
+           << ArgIndex << /* vector or float ty*/ 5 << ArgTy;
+  }
+
+  return false;
+}
+
 ExprResult
 Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
                                CallExpr *TheCall) {
@@ -2621,10 +2648,38 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
 
   case Builtin::BI__builtin_elementwise_min:
   case Builtin::BI__builtin_elementwise_max:
-  case Builtin::BI__builtin_elementwise_copysign:
     if (SemaBuiltinElementwiseMath(TheCall))
       return ExprError();
     break;
+  case Builtin::BI__builtin_elementwise_copysign: {
+    if (checkArgCount(*this, TheCall, 2))
+      return ExprError();
+
+    ExprResult Magnitude = UsualUnaryConversions(TheCall->getArg(0));
+    ExprResult Sign = UsualUnaryConversions(TheCall->getArg(1));
+    if (Magnitude.isInvalid() || Sign.isInvalid())
+      return ExprError();
+
+    QualType MagnitudeTy = Magnitude.get()->getType();
+    QualType SignTy = Sign.get()->getType();
+    if (checkFPMathBuiltinElementType(*this, TheCall->getArg(0)->getBeginLoc(),
+                                      MagnitudeTy, 1) ||
+        checkFPMathBuiltinElementType(*this, TheCall->getArg(1)->getBeginLoc(),
+                                      SignTy, 2)) {
+      return ExprError();
+    }
+
+    if (MagnitudeTy.getCanonicalType() != SignTy.getCanonicalType()) {
+      return Diag(Sign.get()->getBeginLoc(),
+                  diag::err_typecheck_call_different_arg_types)
+             << MagnitudeTy << SignTy;
+    }
+
+    TheCall->setArg(0, Magnitude.get());
+    TheCall->setArg(1, Sign.get());
+    TheCall->setType(Magnitude.get()->getType());
+    break;
+  }
   case Builtin::BI__builtin_reduce_max:
   case Builtin::BI__builtin_reduce_min: {
     if (PrepareBuiltinReduceMathOneArgCall(TheCall))
@@ -6000,7 +6055,7 @@ bool Sema::CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall,
                       ThisTypeFromDecl);
   }
 
-  checkCall(FDecl, Proto, ImplicitThis, llvm::makeArrayRef(Args, NumArgs),
+  checkCall(FDecl, Proto, ImplicitThis, llvm::ArrayRef(Args, NumArgs),
             IsMemberFunction, TheCall->getRParenLoc(),
             TheCall->getCallee()->getSourceRange(), CallType);
 
@@ -6081,7 +6136,7 @@ bool Sema::CheckPointerCall(NamedDecl *NDecl, CallExpr *TheCall,
   }
 
   checkCall(NDecl, Proto, /*ThisArg=*/nullptr,
-            llvm::makeArrayRef(TheCall->getArgs(), TheCall->getNumArgs()),
+            llvm::ArrayRef(TheCall->getArgs(), TheCall->getNumArgs()),
             /*IsMemberFunction=*/false, TheCall->getRParenLoc(),
             TheCall->getCallee()->getSourceRange(), CallType);
 
@@ -6094,7 +6149,7 @@ bool Sema::CheckOtherCall(CallExpr *TheCall, const FunctionProtoType *Proto) {
   VariadicCallType CallType = getVariadicCallType(/*FDecl=*/nullptr, Proto,
                                                   TheCall->getCallee());
   checkCall(/*FDecl=*/nullptr, Proto, /*ThisArg=*/nullptr,
-            llvm::makeArrayRef(TheCall->getArgs(), TheCall->getNumArgs()),
+            llvm::ArrayRef(TheCall->getArgs(), TheCall->getNumArgs()),
             /*IsMemberFunction=*/false, TheCall->getRParenLoc(),
             TheCall->getCallee()->getSourceRange(), CallType);
 
@@ -13453,8 +13508,13 @@ static void DiagnoseFloatingImpCast(Sema &S, Expr *E, QualType T,
   }
 }
 
+static void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
+                                    SourceLocation CC,
+                                    bool *ICContext = nullptr,
+                                    bool IsListInit = false);
+
 /// Analyze the given compound assignment for the possible losing of
-/// floating-point precision.
+/// floating-point precision and for implicit conversions for integral operands.
 static void AnalyzeCompoundAssignment(Sema &S, BinaryOperator *E) {
   assert(isa<CompoundAssignOperator>(E) &&
          "Must be compound assignment operation");
@@ -13471,8 +13531,17 @@ static void AnalyzeCompoundAssignment(Sema &S, BinaryOperator *E) {
                         ->getComputationResultType()
                         ->getAs<BuiltinType>();
 
+  // Check for implicit conversions for compound assignment statements with
+  // intergral operands.
+  // FIXME: should this handle floating-point as well?
+  if (E->getLHS()->getType()->isIntegerType() &&
+      E->getRHS()->getType()->isIntegerType() && !E->isShiftAssignOp())
+    CheckImplicitConversion(S, E->getRHS(), E->getType(),
+                            E->getRHS()->getExprLoc());
+
   // The below checks assume source is floating point.
-  if (!ResultBT || !RBT || !RBT->isFloatingPoint()) return;
+  if (!ResultBT || !RBT || !RBT->isFloatingPoint())
+    return;
 
   // If source is floating point but target is an integer.
   if (ResultBT->isInteger())
@@ -13761,9 +13830,8 @@ static void DiagnoseIntInBoolContext(Sema &S, Expr *E) {
 }
 
 static void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
-                                    SourceLocation CC,
-                                    bool *ICContext = nullptr,
-                                    bool IsListInit = false) {
+                                    SourceLocation CC, bool *ICContext,
+                                    bool IsListInit) {
   if (E->isTypeDependent() || E->isValueDependent()) return;
 
   const Type *Source = S.Context.getCanonicalType(E->getType()).getTypePtr();
@@ -17667,19 +17735,6 @@ void Sema::CheckAddressOfPackedMember(Expr *rhs) {
   RefersToMemberWithReducedAlignment(
       rhs, std::bind(&Sema::AddPotentialMisalignedMembers, std::ref(*this), _1,
                      _2, _3, _4));
-}
-
-// Check if \p Ty is a valid type for the elementwise math builtins. If it is
-// not a valid type, emit an error message and return true. Otherwise return
-// false.
-static bool checkMathBuiltinElementType(Sema &S, SourceLocation Loc,
-                                        QualType Ty) {
-  if (!Ty->getAs<VectorType>() && !ConstantMatrixType::isValidElementType(Ty)) {
-    S.Diag(Loc, diag::err_builtin_invalid_arg_type)
-        << 1 << /* vector, integer or float ty*/ 0 << Ty;
-    return true;
-  }
-  return false;
 }
 
 bool Sema::PrepareBuiltinElementwiseMathOneArgCall(CallExpr *TheCall) {

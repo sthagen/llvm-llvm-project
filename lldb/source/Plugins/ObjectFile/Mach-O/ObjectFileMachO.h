@@ -143,6 +143,8 @@ public:
 
   bool GetIsDynamicLinkEditor() override;
 
+  bool CanTrustAddressRanges() override;
+
   static bool ParseHeader(lldb_private::DataExtractor &data,
                           lldb::offset_t *data_offset_ptr,
                           llvm::MachO::mach_header &header);
@@ -267,8 +269,8 @@ protected:
   llvm::MachO::dysymtab_command m_dysymtab;
   std::vector<llvm::MachO::segment_command_64> m_mach_segments;
   std::vector<llvm::MachO::section_64> m_mach_sections;
-  llvm::Optional<llvm::VersionTuple> m_min_os_version;
-  llvm::Optional<llvm::VersionTuple> m_sdk_versions;
+  std::optional<llvm::VersionTuple> m_min_os_version;
+  std::optional<llvm::VersionTuple> m_sdk_versions;
   typedef lldb_private::RangeVector<uint32_t, uint32_t> FileRangeArray;
   lldb_private::Address m_entry_point_address;
   FileRangeArray m_thread_context_offsets;

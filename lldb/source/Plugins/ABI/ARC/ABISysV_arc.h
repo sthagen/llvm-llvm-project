@@ -10,7 +10,6 @@
 #define liblldb_ABISysV_arc_h_
 
 // Other libraries and framework includes
-#include <llvm/ADT/Optional.h>
 #include <optional>
 
 // Project includes
@@ -98,7 +97,7 @@ private:
 
   using lldb_private::RegInfoBasedABI::RegInfoBasedABI; // Call CreateInstance instead.
 
-  using RegisterFileFlag = llvm::Optional<bool>;
+  using RegisterFileFlag = std::optional<bool>;
   mutable RegisterFileFlag m_is_reg_file_reduced;
 };
 

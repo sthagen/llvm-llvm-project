@@ -384,7 +384,7 @@ static Operation *tileAndFuseFirstExtractUseThroughContainingOpBlockArgument(
     return nullptr;
   }
 
-  BlockAndValueMapping bvm;
+  IRMapping bvm;
   bvm.map(destinationTensors[resultNumber], bbArg);
   auto tileableProducerClone =
       cast<TilingInterface>(rewriter.clone(*tileableProducer, bvm));
@@ -1760,6 +1760,8 @@ void transform::TileToForeachThreadOp::getEffects(
   consumesHandle(getTarget(), effects);
   onlyReadsHandle(getTileSizes(), effects);
   onlyReadsHandle(getNumThreads(), effects);
+  onlyReadsHandle(getPackedNumThreads(), effects);
+  onlyReadsHandle(getPackedTileSizes(), effects);
   producesHandle(getResults(), effects);
 }
 

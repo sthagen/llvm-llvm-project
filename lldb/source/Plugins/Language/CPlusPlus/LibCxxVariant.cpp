@@ -12,7 +12,6 @@
 #include "lldb/Symbol/CompilerType.h"
 #include "lldb/Utility/LLDBAssert.h"
 
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/ScopeExit.h"
 #include <optional>
 
@@ -99,7 +98,7 @@ LibcxxVariantGetIndexValidity(ValueObjectSP &impl_sp) {
   // the byte size.
   CompilerType index_type = index_sp->GetCompilerType();
 
-  llvm::Optional<uint64_t> index_type_bytes = index_type.GetByteSize(nullptr);
+  std::optional<uint64_t> index_type_bytes = index_type.GetByteSize(nullptr);
   if (!index_type_bytes)
     return LibcxxVariantIndexValidity::Invalid;
 
@@ -112,7 +111,7 @@ LibcxxVariantGetIndexValidity(ValueObjectSP &impl_sp) {
   return LibcxxVariantIndexValidity::Valid;
 }
 
-llvm::Optional<uint64_t> LibcxxVariantIndexValue(ValueObjectSP &impl_sp) {
+std::optional<uint64_t> LibcxxVariantIndexValue(ValueObjectSP &impl_sp) {
   ValueObjectSP index_sp(
       impl_sp->GetChildMemberWithName(ConstString("__index"), true));
 
