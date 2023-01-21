@@ -239,8 +239,10 @@ enum NodeType : unsigned {
   VFCVT_RTZ_X_F_VL,
   VFCVT_RTZ_XU_F_VL,
   VFCVT_X_F_VL,
+  VFCVT_XU_F_VL,
   VFROUND_NOEXCEPT_VL,
   VFCVT_RM_X_F_VL, // Has a rounding mode operand.
+  VFCVT_RM_XU_F_VL, // Has a rounding mode operand.
   SINT_TO_FP_VL,
   UINT_TO_FP_VL,
   VFCVT_RM_F_XU_VL, // Has a rounding mode operand.
@@ -483,11 +485,15 @@ public:
     return ISD::SIGN_EXTEND;
   }
 
-  bool shouldExpandShift(SelectionDAG &DAG, SDNode *N) const override {
+  TargetLowering::ShiftLegalizationStrategy
+  preferredShiftLegalizationStrategy(SelectionDAG &DAG, SDNode *N,
+                                     unsigned ExpansionFactor) const override {
     if (DAG.getMachineFunction().getFunction().hasMinSize())
-      return false;
-    return true;
+      return ShiftLegalizationStrategy::LowerToLibcall;
+    return TargetLowering::preferredShiftLegalizationStrategy(DAG, N,
+                                                              ExpansionFactor);
   }
+
   bool isDesirableToCommuteWithShift(const SDNode *N,
                                      CombineLevel Level) const override;
 

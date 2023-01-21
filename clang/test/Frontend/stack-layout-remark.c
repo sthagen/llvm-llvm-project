@@ -21,7 +21,7 @@ extern int rand(void);
 // YAML: --- !Analysis
 // YAML: Pass:            stack-frame-layout
 // YAML: Name:            StackLayout
-// YAML: DebugLoc:        { File: '{{.*}}stack-layout-remark.c', Line: [[# @LINE + 24]],
+// YAML: DebugLoc:        { File: '{{.*}}stack-layout-remark.c',{{[[:space:]]*}}Line: [[# @LINE + 24]],
 // YAML: Function:        foo
 // YAML: Args:
 // YAML:   - Offset:          '-40'
@@ -221,7 +221,7 @@ struct Array *gen_array(int size) {
 // YAML: --- !Analysis
 // YAML: Pass:            stack-frame-layout
 // YAML: Name:            StackLayout
-// YAML: DebugLoc:        { File: '{{.*}}stack-layout-remark.c', Line: [[# @LINE + 59]]
+// YAML: DebugLoc:        { File: '{{.*}}stack-layout-remark.c',{{[[:space:]]*}}Line: [[# @LINE + 59]],
 // YAML: Function:        caller
 // YAML: Args:
 // YAML:   - Offset:          '-8'

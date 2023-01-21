@@ -1530,7 +1530,7 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     char GPUName[64];
     if (auto Err = getDeviceAttr(HSA_AGENT_INFO_NAME, GPUName))
       return Err;
-    Arch = GPUName;
+    ComputeUnitKind = GPUName;
 
     // Get the wavefront size.
     uint32_t WavefrontSize = 0;
@@ -1669,7 +1669,7 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
     INFO(OMP_INFOTYPE_PLUGIN_KERNEL, getDeviceId(),
          "Using `%s` to link JITed amdgcn ouput.", LLDPath.c_str());
 
-    std::string MCPU = "-plugin-opt=mcpu=" + getArch();
+    std::string MCPU = "-plugin-opt=mcpu=" + getComputeUnitKind();
 
     StringRef Args[] = {LLDPath,
                         "-flavor",
@@ -1692,7 +1692,8 @@ struct AMDGPUDeviceTy : public GenericDeviceTy, AMDGenericDeviceTy {
         MemoryBuffer::getFileOrSTDIN(LinkerOutputFilePath.data()).get());
   }
 
-  std::string getArch() const override { return Arch; }
+  /// See GenericDeviceTy::getComputeUnitKind().
+  std::string getComputeUnitKind() const override { return ComputeUnitKind; }
 
   /// Allocate and construct an AMDGPU kernel.
   Expected<GenericKernelTy *>
@@ -2096,7 +2097,7 @@ private:
   hsa_agent_t Agent;
 
   /// The GPU architecture.
-  std::string Arch;
+  std::string ComputeUnitKind;
 
   /// Reference to the host device.
   AMDHostDeviceTy &HostDevice;
@@ -2232,7 +2233,7 @@ private:
                                  GlobalTy &ImageGlobal) override {
     // The global's address in AMDGPU is computed as the image begin + the ELF
     // symbol value. Notice we do not add the ELF section offset.
-    ImageGlobal.setPtr((char *)Image.getStart() + Symbol.st_value);
+    ImageGlobal.setPtr(advanceVoidPtr(Image.getStart(), Symbol.st_value));
 
     // Set the global's size.
     ImageGlobal.setSize(Symbol.st_size);
@@ -2244,7 +2245,9 @@ private:
 /// Class implementing the AMDGPU-specific functionalities of the plugin.
 struct AMDGPUPluginTy final : public GenericPluginTy {
   /// Create an AMDGPU plugin and initialize the AMDGPU driver.
-  AMDGPUPluginTy() : GenericPluginTy(), HostDevice(nullptr) {}
+  AMDGPUPluginTy()
+      : GenericPluginTy(getTripleArch()), Initialized(false),
+        HostDevice(nullptr) {}
 
   /// This class should not be copied.
   AMDGPUPluginTy(const AMDGPUPluginTy &) = delete;
@@ -2255,9 +2258,13 @@ struct AMDGPUPluginTy final : public GenericPluginTy {
     hsa_status_t Status = hsa_init();
     if (Status != HSA_STATUS_SUCCESS) {
       // Cannot call hsa_success_string.
-      DP("Failed initialize AMDGPU's HSA library\n");
+      DP("Failed to initialize AMDGPU's HSA library\n");
       return 0;
     }
+
+    // The initialization of HSA was successful. It should be safe to call
+    // HSA functions from now on, e.g., hsa_shut_down.
+    Initialized = true;
 
     // Register event handler to detect memory errors on the devices.
     Status = hsa_amd_register_system_event_handler(eventHandler, nullptr);
@@ -2318,8 +2325,14 @@ struct AMDGPUPluginTy final : public GenericPluginTy {
 
   /// Deinitialize the plugin.
   Error deinitImpl() override {
-    if (auto Err = HostDevice->deinit())
-      return Err;
+    // The HSA runtime was not initialized, so nothing from the plugin was
+    // actually initialized.
+    if (!Initialized)
+      return Plugin::success();
+
+    if (HostDevice)
+      if (auto Err = HostDevice->deinit())
+        return Err;
 
     // Finalize the HSA runtime.
     hsa_status_t Status = hsa_shut_down();
@@ -2426,6 +2439,11 @@ private:
     return HSA_STATUS_ERROR;
   }
 
+  /// Indicate whether the HSA runtime was correctly initialized. Even if there
+  /// is no available devices this boolean will be true. It indicates whether
+  /// we can safely call HSA functions (e.g., hsa_shut_down).
+  bool Initialized;
+
   /// Arrays of the available GPU and CPU agents. These arrays of handles should
   /// not be here but in the AMDGPUDeviceTy structures directly. However, the
   /// HSA standard does not provide API functions to retirve agents directly,
@@ -2462,7 +2480,7 @@ Error AMDGPUKernelTy::launchImpl(GenericDeviceTy &GenericDevice,
   // Initialize implicit arguments.
   utils::AMDGPUImplicitArgsTy *ImplArgs =
       reinterpret_cast<utils::AMDGPUImplicitArgsTy *>(
-          static_cast<char *>(AllArgs) + KernelArgsSize);
+          advanceVoidPtr(AllArgs, KernelArgsSize));
 
   // Initialize the implicit arguments to zero.
   std::memset(ImplArgs, 0, ImplicitArgsSize);

@@ -47,6 +47,8 @@ Non-comprehensive list of changes in this release
    is not a constant in coroutines. This decision may cause unnecessary
    performance regressions and we plan to fix it in later versions.
 
+*  The LoongArch target is promoted to "official" (see below for more details).
+
 * ...
 
 Update on required toolchains to build LLVM
@@ -130,6 +132,7 @@ Changes to the AArch64 Backend
 * Added support for the Cortex-X3 CPU.
 * Added support for the Neoverse V2 CPU.
 * Added support for assembly for RME MEC (Memory Encryption Contexts).
+* Added codegen support for the Armv8.3 Complex Number extension.
 
 Changes to the AMDGPU Backend
 -----------------------------
@@ -140,6 +143,7 @@ Changes to the ARM Backend
 * Support for targeting armv2, armv2A, armv3 and armv3M has been removed.
   LLVM did not, and was not ever likely to generate correct code for those
   architecture versions so their presence was misleading.
+* Added codegen support for the complex arithmetic instructions in MVE.
 
 Changes to the AVR Backend
 --------------------------
@@ -153,6 +157,22 @@ Changes to the Hexagon Backend
 ------------------------------
 
 * ...
+
+Changes to the LoongArch Backend
+--------------------------------
+
+* The LoongArch target is no longer "experimental"! It's now built by default,
+  rather than needing to be enabled with ``LLVM_EXPERIMENTAL_TARGETS_TO_BUILD``.
+
+* The backend has full codegen support for the base (both integer and
+  floating-point) instruction set and it conforms to psABI v2. Testing has been
+  performed with Linux, including native compilation of a large corpus of Linux
+  applications.
+
+* Support GHC calling convention.
+
+* Initial JITLink support is added.
+  (`D141036 <https://reviews.llvm.org/D141036>`_)
 
 Changes to the MIPS Backend
 ---------------------------
@@ -262,6 +282,10 @@ Previously when emitting DWARF v4 and tuning for GDB, llc would use DWARF v2's
 Support for ``DW_AT_data_bit_offset`` was added in GDB 8.0. For earlier versions,
 you can use llc's ``-dwarf-version=3`` option to emit compatible DWARF.
 
+When emitting CodeView debug information, LLVM will now emit S_CONSTANT records
+for variables optimized into a constant via the SROA and SCCP passes.
+(`D138995 <https://reviews.llvm.org/D138995>`_)
+
 Changes to the LLVM tools
 ---------------------------------
 
@@ -279,12 +303,23 @@ Changes to the LLVM tools
 Changes to LLDB
 ---------------------------------
 
+* Initial support for debugging Linux LoongArch 64-bit binaries.
+
 Changes to Sanitizers
 ---------------------
 
+* Many Sanitizers (asan, fuzzer, lsan, safestack, scudo, tsan, ubsan) have
+  support for Linux LoongArch 64-bit variant. Some of them may be rudimentary.
 
 Other Changes
 -------------
+
+* lit no longer supports using substrings of the default target triple as
+  feature names in ``UNSUPPORTED:`` and ``XFAIL:`` directives. These have been
+  replaced by the ``target=<triple>`` feature, and tests can use regex
+  matching to achieve the same effect. For example, ``UNSUPPORTED: arm``
+  would now be ``UNSUPPORTED: target=arm{{.*}}`` and ``XFAIL: windows``
+  would now be ``XFAIL: target={{.*}}-windows{{.*}}``.
 
 External Open Source Projects Using LLVM 15
 ===========================================

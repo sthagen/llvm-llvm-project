@@ -192,6 +192,10 @@ code bases.
   these definitions were allowed.  Note that such definitions are ODR
   violations if the header is included more than once.
 
+- Clang now diagnoses if structs/unions with the same name are different in
+  different used modules. Behavior in C and Objective-C language modes now is
+  the same as in C++.
+
 What's New in Clang |release|?
 ==============================
 Some of the major new features and improvements to Clang are listed
@@ -348,12 +352,14 @@ Bug Fixes
 - Fix issue that the standard C++ modules importer will call global
   constructor/destructor for the global varaibles in the importing modules.
   This fixes `Issue 59765 <https://github.com/llvm/llvm-project/issues/59765>`_
+- Reject in-class defaulting of previosly declared comparison operators. Fixes
+  `Issue 51227 <https://github.com/llvm/llvm-project/issues/51227>`_.
+- Fix the bug of inserting the ``ZeroInitializationFixit`` before the template
+  argument list of ``VarTemplateSpecializationDecl``.
 
 Improvements to Clang's diagnostics
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-- Clang now supports implicit conversion warnings (``-Wsign-conversion``,
-  ``Wshorten-64-to-32``, etc) for compound assignment operators (like +=, -=, <<=, >>= etc) 
-  with integral operands.
+- Disabled FIT-IT suggested for a case of bad conversion in system headers.
 - Clang will now check compile-time determinable string literals as format strings.
   Fixes `Issue 55805: <https://github.com/llvm/llvm-project/issues/55805>`_.
 - ``-Wformat`` now recognizes ``%b`` for the ``printf``/``scanf`` family of
@@ -455,6 +461,11 @@ Improvements to Clang's diagnostics
 - Add ``-Wreturn-local-addr``, a GCC alias for ``-Wreturn-stack-address``.
 - Clang now suppresses ``-Wlogical-op-parentheses`` on ``(x && a || b)`` and ``(a || b && x)``
   only when ``x`` is a string literal.
+- Clang will now reject the GNU extension address of label in coroutines explicitly.
+  This fixes `Issue 56436 <https://github.com/llvm/llvm-project/issues/56436>`_.
+- Clang now automatically adds ``[[clang::lifetimebound]]`` to the parameters of
+  ``std::move, std::forward`` et al, this enables Clang to diagnose more cases
+  where the returned reference outlives the object.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -503,7 +514,8 @@ Non-comprehensive list of changes in this release
 - Clang can now generate a PCH when using ``-fdelayed-template-parsing`` for
   code with templates containing loop hint pragmas, OpenMP pragmas, and
   ``#pragma unused``.
-
+- Now diagnoses use of a member access expression or array subscript expression
+  within ``__builtin_offsetof`` and ``offsetof`` as being a Clang extension.
 
 New Compiler Flags
 ------------------
@@ -540,6 +552,11 @@ New Compiler Flags
       int b[0]; // NOT a flexible array member.
     };
 
+- Added ``-fmodule-output`` to enable the one-phase compilation model for
+  standard C++ modules. See
+  `Standard C++ Modules <https://clang.llvm.org/docs/StandardCPlusPlusModules.html>`_
+  for more information.
+
 - Added ``-Rpass-analysis=stack-frame-layout`` which will emit new diagnostic
   information about the layout of stack frames through the remarks
   infrastructure. Since it uses remarks the diagnostic information is available
@@ -551,6 +568,10 @@ Deprecated Compiler Flags
   has been deprecated. The flag will be removed in Clang 18.
   ``-ftrivial-auto-var-init=zero`` is now available unconditionally, to be
   compatible with GCC.
+- ``-fcoroutines-ts`` has been deprecated. The flag will be removed in Clang 17.
+  Please use ``-std=c++20`` or higher to use standard C++ coroutines instead.
+- ``-fmodules-ts`` has been deprecated. The flag will be removed in Clang 17.
+  Please use ``-std=c++20`` or higher to use standard C++ modules instead.
 
 Modified Compiler Flags
 -----------------------
@@ -678,9 +699,12 @@ C2x Feature Support
       va_start(list); // Invalid in C17 and earlier, valid in C2x and later.
       va_end(list);
     }
-    
-- Reject type definitions in the ``type`` argument of ``__builtin_offsetof`` 
-  according to `WG14 N2350 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2350.htm>`_.
+
+- Diagnose type definitions in the ``type`` argument of ``__builtin_offsetof``
+  as a conforming C extension according to
+  `WG14 N2350 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n2350.htm>`_.
+  Also documents the builtin appropriately. Note, a type definition in C++
+  continues to be rejected.
 
 C++ Language Changes in Clang
 -----------------------------
@@ -758,6 +782,9 @@ C++20 Feature Support
   and `P1975R0: <https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2019/p1975r0.html>`_,
   which allows parenthesized aggregate-initialization.
 
+- Fixed an issue with concept requirement evaluation, where we incorrectly allowed implicit
+  conversions to bool for a requirement.  This fixes `GH54524 <https://github.com/llvm/llvm-project/issues/54524>`_.
+
 C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -805,6 +832,19 @@ CUDA Support in Clang
 
 - Clang now supports CUDA SDK up to 11.8
 - Added support for targeting sm_{87,89,90} GPUs.
+
+LoongArch Support in Clang
+--------------------------
+- Clang now supports LoongArch. Along with the backend, clang is able to build a
+  large corpus of Linux applications. Test-suite 100% pass.
+- Support basic option ``-march=`` which is used to select the target
+  architecture, i.e. the basic set of ISA modules to be enabled. Possible values
+  are ``loongarch64`` and ``la464``.
+- Support basic option ``-mabi=`` which is used to select the base ABI type.
+  Possible values are ``lp64d``, ``lp64f``, ``lp64s``, ``ilp32d``, ``ilp32f``
+  and ``ilp32s``.
+- Support extended options: ``-msoft-float``, ``-msingle-float``, ``-mdouble-float`` and ``mfpu=``.
+  See `LoongArch toolchain conventions <https://loongson.github.io/LoongArch-Documentation/LoongArch-toolchain-conventions-EN.html>`_.
 
 RISC-V Support in Clang
 -----------------------
@@ -917,6 +957,7 @@ clang-format
 - Add ``BreakAfterAttributes`` option for breaking after a group of C++11
   attributes before a function declaration/definition name.
 - Add ``InsertNewlineAtEOF`` option for inserting a newline at EOF if missing.
+- Add ``LineEnding`` option to deprecate ``DeriveLineEnding`` and ``UseCRLF``.
 
 clang-extdef-mapping
 --------------------
