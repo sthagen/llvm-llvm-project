@@ -3831,7 +3831,7 @@ MachineSDNode *X86DAGToDAGISel::matchBEXTRFromAndImm(SDNode *Node) {
     return nullptr;
 
   uint64_t Shift = ShiftCst->getZExtValue();
-  uint64_t MaskSize = countPopulation(Mask);
+  uint64_t MaskSize = llvm::popcount(Mask);
 
   // Don't interfere with something that can be handled by extracting AH.
   // TODO: If we are able to fold a load, BEXTR might still be better than AH.
@@ -4181,7 +4181,7 @@ bool X86DAGToDAGISel::tryShrinkShlLogicImm(SDNode *N) {
   if (Opcode == ISD::AND) {
     // Find the smallest zext this could possibly be.
     unsigned ZExtWidth = Cst->getAPIntValue().getActiveBits();
-    ZExtWidth = PowerOf2Ceil(std::max(ZExtWidth, 8U));
+    ZExtWidth = llvm::bit_ceil(std::max(ZExtWidth, 8U));
 
     // Figure out which bits need to be zero to achieve that mask.
     APInt NeededMask = APInt::getLowBitsSet(NVT.getSizeInBits(),

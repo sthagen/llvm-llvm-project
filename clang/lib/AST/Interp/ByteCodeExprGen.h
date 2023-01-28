@@ -44,9 +44,6 @@ protected:
   using LabelTy = typename Emitter::LabelTy;
   using AddrTy = typename Emitter::AddrTy;
 
-  // Reference to a function generating the pointer of an initialized object.s
-  using InitFnRef = std::function<bool()>;
-
   /// Current compilation context.
   Context &Ctx;
   /// Program to link to.
@@ -61,11 +58,14 @@ public:
   // Expression visitors - result returned on interp stack.
   bool VisitCastExpr(const CastExpr *E);
   bool VisitIntegerLiteral(const IntegerLiteral *E);
+  bool VisitFloatingLiteral(const FloatingLiteral *E);
   bool VisitParenExpr(const ParenExpr *E);
   bool VisitBinaryOperator(const BinaryOperator *E);
+  bool VisitLogicalBinOp(const BinaryOperator *E);
   bool VisitPointerArithBinOp(const BinaryOperator *E);
   bool VisitCXXDefaultArgExpr(const CXXDefaultArgExpr *E);
   bool VisitCallExpr(const CallExpr *E);
+  bool VisitBuiltinCallExpr(const CallExpr *E);
   bool VisitCXXMemberCallExpr(const CXXMemberCallExpr *E);
   bool VisitCXXDefaultInitExpr(const CXXDefaultInitExpr *E);
   bool VisitCXXBoolLiteralExpr(const CXXBoolLiteralExpr *E);
@@ -86,6 +86,7 @@ public:
   bool VisitStringLiteral(const StringLiteral *E);
   bool VisitCharacterLiteral(const CharacterLiteral *E);
   bool VisitCompoundAssignOperator(const CompoundAssignOperator *E);
+  bool VisitFloatCompoundAssignOperator(const CompoundAssignOperator *E);
 
 protected:
   bool visitExpr(const Expr *E) override;
@@ -221,12 +222,6 @@ private:
   /// Emits an integer constant.
   template <typename T> bool emitConst(T Value, const Expr *E);
 
-  /// Emits the initialized pointer.
-  bool emitInitFn() {
-    assert(InitFn && "missing initializer");
-    return (*InitFn)();
-  }
-
   /// Returns the CXXRecordDecl for the type of the given expression,
   /// or nullptr if no such decl exists.
   const CXXRecordDecl *getRecordDecl(const Expr *E) const {
@@ -240,6 +235,15 @@ private:
   /// given VarDecl.
   bool shouldBeGloballyIndexed(const VarDecl *VD) const {
     return VD->hasGlobalStorage() || VD->isConstexpr();
+  }
+
+  llvm::RoundingMode getRoundingMode(const Expr *E) const {
+    FPOptions FPO = E->getFPFeaturesInEffect(Ctx.getLangOpts());
+
+    if (FPO.getRoundingMode() == llvm::RoundingMode::Dynamic)
+      return llvm::RoundingMode::NearestTiesToEven;
+
+    return FPO.getRoundingMode();
   }
 
 protected:
@@ -257,9 +261,6 @@ protected:
 
   /// Flag indicating if return value is to be discarded.
   bool DiscardResult = false;
-
-  /// Expression being initialized.
-  std::optional<InitFnRef> InitFn = {};
 };
 
 extern template class ByteCodeExprGen<ByteCodeEmitter>;

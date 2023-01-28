@@ -3146,12 +3146,15 @@ public:
   /// fragments and imports.  If we are not parsing a C++20 TU, or we find
   /// an error in state transition, the state is set to NotACXX20Module.
   enum class ModuleImportState {
-    FirstDecl,       ///< Parsing the first decl in a TU.
-    GlobalFragment,  ///< after 'module;' but before 'module X;'
-    ImportAllowed,   ///< after 'module X;' but before any non-import decl.
-    ImportFinished,  ///< after any non-import decl.
-    PrivateFragment, ///< after 'module :private;'.
-    NotACXX20Module  ///< Not a C++20 TU, or an invalid state was found.
+    FirstDecl,      ///< Parsing the first decl in a TU.
+    GlobalFragment, ///< after 'module;' but before 'module X;'
+    ImportAllowed,  ///< after 'module X;' but before any non-import decl.
+    ImportFinished, ///< after any non-import decl.
+    PrivateFragmentImportAllowed,  ///< after 'module :private;' but before any
+                                   ///< non-import decl.
+    PrivateFragmentImportFinished, ///< after 'module :private;' but a
+                                   ///< non-import decl has already been seen.
+    NotACXX20Module ///< Not a C++20 TU, or an invalid state was found.
   };
 
 private:
@@ -3324,9 +3327,7 @@ public:
                       SourceLocation ScopedEnumKWLoc,
                       bool ScopedEnumUsesClassTag, TypeResult UnderlyingType,
                       bool IsTypeSpecifier, bool IsTemplateParamOrArg,
-                      OffsetOfKind OOK,
-                      UsingShadowDecl*& FoundUsingShadow,
-                      SkipBodyInfo *SkipBody = nullptr);
+                      OffsetOfKind OOK, SkipBodyInfo *SkipBody = nullptr);
 
   DeclResult ActOnTemplatedFriendTag(Scope *S, SourceLocation FriendLoc,
                                      unsigned TagSpec, SourceLocation TagLoc,
@@ -7278,24 +7279,34 @@ private:
 
 private:
   // The current stack of constraint satisfactions, so we can exit-early.
-  llvm::SmallVector<llvm::FoldingSetNodeID, 10> SatisfactionStack;
+  using SatisfactionStackEntryTy =
+      std::pair<const NamedDecl *, llvm::FoldingSetNodeID>;
+  llvm::SmallVector<SatisfactionStackEntryTy, 10>
+      SatisfactionStack;
 
 public:
-  void PushSatisfactionStackEntry(const llvm::FoldingSetNodeID &ID) {
-    SatisfactionStack.push_back(ID);
+  void PushSatisfactionStackEntry(const NamedDecl *D,
+                                  const llvm::FoldingSetNodeID &ID) {
+    const NamedDecl *Can = cast<NamedDecl>(D->getCanonicalDecl());
+    SatisfactionStack.emplace_back(Can, ID);
   }
 
   void PopSatisfactionStackEntry() { SatisfactionStack.pop_back(); }
 
-  bool SatisfactionStackContains(const llvm::FoldingSetNodeID &ID) const {
-    return llvm::find(SatisfactionStack, ID) != SatisfactionStack.end();
+  bool SatisfactionStackContains(const NamedDecl *D,
+                                 const llvm::FoldingSetNodeID &ID) const {
+    const NamedDecl *Can = cast<NamedDecl>(D->getCanonicalDecl());
+    return llvm::find(SatisfactionStack,
+                      SatisfactionStackEntryTy{Can, ID}) !=
+           SatisfactionStack.end();
   }
 
   // Resets the current SatisfactionStack for cases where we are instantiating
   // constraints as a 'side effect' of normal instantiation in a way that is not
   // indicative of recursive definition.
   class SatisfactionStackResetRAII {
-    llvm::SmallVector<llvm::FoldingSetNodeID, 10> BackupSatisfactionStack;
+    llvm::SmallVector<SatisfactionStackEntryTy, 10>
+        BackupSatisfactionStack;
     Sema &SemaRef;
 
   public:
@@ -7308,8 +7319,8 @@ public:
     }
   };
 
-  void
-  SwapSatisfactionStack(llvm::SmallVectorImpl<llvm::FoldingSetNodeID> &NewSS) {
+  void SwapSatisfactionStack(
+      llvm::SmallVectorImpl<SatisfactionStackEntryTy> &NewSS) {
     SatisfactionStack.swap(NewSS);
   }
 
@@ -12176,6 +12187,11 @@ public:
                                    SourceLocation StartLoc,
                                    SourceLocation LParenLoc,
                                    SourceLocation EndLoc);
+
+  /// Called on a well-formed 'ompx_dyn_cgroup_mem' clause.
+  OMPClause *ActOnOpenMPXDynCGroupMemClause(Expr *Size, SourceLocation StartLoc,
+                                            SourceLocation LParenLoc,
+                                            SourceLocation EndLoc);
 
   /// The kind of conversion being performed.
   enum CheckedConversionKind {

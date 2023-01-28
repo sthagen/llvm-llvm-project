@@ -815,7 +815,7 @@ void OpenMPIRBuilder::emitOffloadingEntry(Constant *Addr, StringRef Name,
 OpenMPIRBuilder::InsertPointTy OpenMPIRBuilder::emitTargetKernel(
     const LocationDescription &Loc, Value *&Return, Value *Ident,
     Value *DeviceID, Value *NumTeams, Value *NumThreads, Value *HostPtr,
-    ArrayRef<Value *> KernelArgs, ArrayRef<Value *> NoWaitArgs) {
+    ArrayRef<Value *> KernelArgs) {
   if (!updateToLocation(Loc))
     return Loc.IP;
 
@@ -829,16 +829,11 @@ OpenMPIRBuilder::InsertPointTy OpenMPIRBuilder::emitTargetKernel(
         M.getDataLayout().getPrefTypeAlign(KernelArgs[I]->getType()));
   }
 
-  bool HasNoWait = !NoWaitArgs.empty();
   SmallVector<Value *> OffloadingArgs{Ident,      DeviceID, NumTeams,
                                       NumThreads, HostPtr,  KernelArgsPtr};
-  if (HasNoWait)
-    OffloadingArgs.append(NoWaitArgs.begin(), NoWaitArgs.end());
 
   Return = Builder.CreateCall(
-      HasNoWait
-          ? getOrCreateRuntimeFunction(M, OMPRTL___tgt_target_kernel_nowait)
-          : getOrCreateRuntimeFunction(M, OMPRTL___tgt_target_kernel),
+      getOrCreateRuntimeFunction(M, OMPRTL___tgt_target_kernel),
       OffloadingArgs);
 
   return Builder.saveIP();
@@ -3058,6 +3053,23 @@ void OpenMPIRBuilder::createIfVersion(CanonicalLoopInfo *CanonicalLoop,
   Builder.CreateBr(NewBlocks.front());
 }
 
+unsigned
+OpenMPIRBuilder::getOpenMPDefaultSimdAlign(const Triple &TargetTriple,
+                                           const StringMap<bool> &Features) {
+  if (TargetTriple.isX86()) {
+    if (Features.lookup("avx512f"))
+      return 512;
+    else if (Features.lookup("avx"))
+      return 256;
+    return 128;
+  }
+  if (TargetTriple.isPPC())
+    return 128;
+  if (TargetTriple.isWasm())
+    return 128;
+  return 0;
+}
+
 void OpenMPIRBuilder::applySimd(CanonicalLoopInfo *CanonicalLoop,
                                 MapVector<Value *, Value *> AlignedVars,
                                 Value *IfCond, OrderKind Order,
@@ -4353,6 +4365,7 @@ OpenMPIRBuilder::InsertPointTy OpenMPIRBuilder::createAtomicUpdate(
   return Builder.saveIP();
 }
 
+// FIXME: Duplicating AtomicExpand
 Value *OpenMPIRBuilder::emitRMWOpAsInstruction(Value *Src1, Value *Src2,
                                                AtomicRMWInst::BinOp RMWOp) {
   switch (RMWOp) {
@@ -4378,6 +4391,8 @@ Value *OpenMPIRBuilder::emitRMWOpAsInstruction(Value *Src1, Value *Src2,
   case AtomicRMWInst::UMin:
   case AtomicRMWInst::FMax:
   case AtomicRMWInst::FMin:
+  case AtomicRMWInst::UIncWrap:
+  case AtomicRMWInst::UDecWrap:
     llvm_unreachable("Unsupported atomic update operation");
   }
   llvm_unreachable("Unsupported atomic update operation");
@@ -4739,10 +4754,10 @@ void OpenMPIRBuilder::initializeTypes(Module &M) {
 #define OMP_FUNCTION_TYPE(VarName, IsVarArg, ReturnType, ...)                  \
   VarName = FunctionType::get(ReturnType, {__VA_ARGS__}, IsVarArg);            \
   VarName##Ptr = PointerType::getUnqual(VarName);
-#define OMP_STRUCT_TYPE(VarName, StructName, ...)                              \
+#define OMP_STRUCT_TYPE(VarName, StructName, Packed, ...)                      \
   T = StructType::getTypeByName(Ctx, StructName);                              \
   if (!T)                                                                      \
-    T = StructType::create(Ctx, {__VA_ARGS__}, StructName);                    \
+    T = StructType::create(Ctx, {__VA_ARGS__}, StructName, Packed);            \
   VarName = T;                                                                 \
   VarName##Ptr = PointerType::getUnqual(T);
 #include "llvm/Frontend/OpenMP/OMPKinds.def"

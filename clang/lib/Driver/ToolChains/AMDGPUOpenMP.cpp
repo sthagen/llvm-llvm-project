@@ -35,7 +35,7 @@ AMDGPUOpenMPToolChain::AMDGPUOpenMPToolChain(const Driver &D,
                                              const ArgList &Args)
     : ROCMToolChain(D, Triple, Args), HostTC(HostTC) {
   // Lookup binaries into the driver directory, this is used to
-  // discover the clang-offload-bundler executable.
+  // discover the 'amdgpu-arch' executable.
   getProgramPaths().push_back(getDriver().Dir);
 }
 
@@ -66,8 +66,6 @@ void AMDGPUOpenMPToolChain::addClangTargetOptions(
   // Link the bitcode library late if we're using device LTO.
   if (getDriver().isUsingLTO(/* IsOffload */ true))
     return;
-
-  addOpenMPDeviceRTL(getDriver(), DriverArgs, CC1Args, GPUArch, getTriple());
 }
 
 llvm::opt::DerivedArgList *AMDGPUOpenMPToolChain::TranslateArgs(
