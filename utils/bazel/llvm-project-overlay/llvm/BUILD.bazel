@@ -502,6 +502,7 @@ cc_library(
         ":BinaryFormat",
         ":DebugInfoCodeView",
         ":Support",
+        ":TargetParser",
         ":config",
         ":ir_headers",
     ],
@@ -824,6 +825,7 @@ cc_library(
     textual_hdrs = glob(["include/llvm/IR/*.def"]),
     deps = [
         ":BinaryFormat",
+        ":Demangle",
         ":Remarks",
         ":Support",
         ":attributes_gen",
@@ -933,6 +935,7 @@ cc_library(
         ":MC",
         ":MCParser",
         ":Support",
+        ":TargetParser",
         ":TextAPI",
         ":config",
     ],

@@ -150,8 +150,18 @@ unsigned getAmdhsaCodeObjectVersion() {
   return AmdhsaCodeObjectVersion;
 }
 
-unsigned getMultigridSyncArgImplicitArgPosition() {
-  switch (AmdhsaCodeObjectVersion) {
+unsigned getCodeObjectVersion(const Module &M) {
+  if (auto Ver = mdconst::extract_or_null<ConstantInt>(
+      M.getModuleFlag("amdgpu_code_object_version"))) {
+    return (unsigned)Ver->getZExtValue() / 100;
+  }
+
+  // Default code object version.
+  return 4;
+}
+
+unsigned getMultigridSyncArgImplicitArgPosition(unsigned COV) {
+  switch (COV) {
   case 2:
   case 3:
   case 4:
@@ -167,8 +177,8 @@ unsigned getMultigridSyncArgImplicitArgPosition() {
 
 // FIXME: All such magic numbers about the ABI should be in a
 // central TD file.
-unsigned getHostcallImplicitArgPosition() {
-  switch (AmdhsaCodeObjectVersion) {
+unsigned getHostcallImplicitArgPosition(unsigned COV) {
+  switch (COV) {
   case 2:
   case 3:
   case 4:
@@ -181,8 +191,8 @@ unsigned getHostcallImplicitArgPosition() {
   }
 }
 
-unsigned getDefaultQueueImplicitArgPosition() {
-  switch (AmdhsaCodeObjectVersion) {
+unsigned getDefaultQueueImplicitArgPosition(unsigned COV) {
+  switch (COV) {
   case 2:
   case 3:
   case 4:
@@ -193,8 +203,8 @@ unsigned getDefaultQueueImplicitArgPosition() {
   }
 }
 
-unsigned getCompletionActionImplicitArgPosition() {
-  switch (AmdhsaCodeObjectVersion) {
+unsigned getCompletionActionImplicitArgPosition(unsigned COV) {
+  switch (COV) {
   case 2:
   case 3:
   case 4:
@@ -2634,7 +2644,13 @@ struct SourceOfDivergence {
 };
 const SourceOfDivergence *lookupSourceOfDivergence(unsigned Intr);
 
+struct AlwaysUniform {
+  unsigned Intr;
+};
+const AlwaysUniform *lookupAlwaysUniform(unsigned Intr);
+
 #define GET_SourcesOfDivergence_IMPL
+#define GET_UniformIntrinsics_IMPL
 #define GET_Gfx9BufferFormat_IMPL
 #define GET_Gfx10BufferFormat_IMPL
 #define GET_Gfx11PlusBufferFormat_IMPL
@@ -2644,6 +2660,10 @@ const SourceOfDivergence *lookupSourceOfDivergence(unsigned Intr);
 
 bool isIntrinsicSourceOfDivergence(unsigned IntrID) {
   return lookupSourceOfDivergence(IntrID);
+}
+
+bool isIntrinsicAlwaysUniform(unsigned IntrID) {
+  return lookupAlwaysUniform(IntrID);
 }
 
 const GcnBufferFormatInfo *getGcnBufferFormatInfo(uint8_t BitsPerComp,

@@ -14,6 +14,7 @@
 #include "mlir/Target/LLVMIR/ModuleImport.h"
 #include "mlir/Target/LLVMIR/Import.h"
 
+#include "AttrKindDetail.h"
 #include "DebugImporter.h"
 
 #include "mlir/Dialect/DLTI/DLTI.h"
@@ -71,6 +72,12 @@ static constexpr StringRef getGlobalDtorsVarName() {
   return "llvm.global_dtors";
 }
 
+/// Returns the symbol name for the module-level metadata operation. It must not
+/// conflict with the user namespace.
+static constexpr StringRef getGlobalMetadataOpName() {
+  return "__llvm_global_metadata";
+}
+
 /// Returns a supported MLIR floating point type of the given bit width or null
 /// if the bit width is not supported.
 static FloatType getDLFloatType(MLIRContext &ctx, int32_t bitwidth) {
@@ -87,127 +94,6 @@ static FloatType getDLFloatType(MLIRContext &ctx, int32_t bitwidth) {
     return FloatType::getF128(&ctx);
   default:
     return nullptr;
-  }
-}
-
-static ICmpPredicate getICmpPredicate(llvm::CmpInst::Predicate pred) {
-  switch (pred) {
-  default:
-    llvm_unreachable("incorrect comparison predicate");
-  case llvm::CmpInst::Predicate::ICMP_EQ:
-    return LLVM::ICmpPredicate::eq;
-  case llvm::CmpInst::Predicate::ICMP_NE:
-    return LLVM::ICmpPredicate::ne;
-  case llvm::CmpInst::Predicate::ICMP_SLT:
-    return LLVM::ICmpPredicate::slt;
-  case llvm::CmpInst::Predicate::ICMP_SLE:
-    return LLVM::ICmpPredicate::sle;
-  case llvm::CmpInst::Predicate::ICMP_SGT:
-    return LLVM::ICmpPredicate::sgt;
-  case llvm::CmpInst::Predicate::ICMP_SGE:
-    return LLVM::ICmpPredicate::sge;
-  case llvm::CmpInst::Predicate::ICMP_ULT:
-    return LLVM::ICmpPredicate::ult;
-  case llvm::CmpInst::Predicate::ICMP_ULE:
-    return LLVM::ICmpPredicate::ule;
-  case llvm::CmpInst::Predicate::ICMP_UGT:
-    return LLVM::ICmpPredicate::ugt;
-  case llvm::CmpInst::Predicate::ICMP_UGE:
-    return LLVM::ICmpPredicate::uge;
-  }
-  llvm_unreachable("incorrect integer comparison predicate");
-}
-
-static FCmpPredicate getFCmpPredicate(llvm::CmpInst::Predicate pred) {
-  switch (pred) {
-  default:
-    llvm_unreachable("incorrect comparison predicate");
-  case llvm::CmpInst::Predicate::FCMP_FALSE:
-    return LLVM::FCmpPredicate::_false;
-  case llvm::CmpInst::Predicate::FCMP_TRUE:
-    return LLVM::FCmpPredicate::_true;
-  case llvm::CmpInst::Predicate::FCMP_OEQ:
-    return LLVM::FCmpPredicate::oeq;
-  case llvm::CmpInst::Predicate::FCMP_ONE:
-    return LLVM::FCmpPredicate::one;
-  case llvm::CmpInst::Predicate::FCMP_OLT:
-    return LLVM::FCmpPredicate::olt;
-  case llvm::CmpInst::Predicate::FCMP_OLE:
-    return LLVM::FCmpPredicate::ole;
-  case llvm::CmpInst::Predicate::FCMP_OGT:
-    return LLVM::FCmpPredicate::ogt;
-  case llvm::CmpInst::Predicate::FCMP_OGE:
-    return LLVM::FCmpPredicate::oge;
-  case llvm::CmpInst::Predicate::FCMP_ORD:
-    return LLVM::FCmpPredicate::ord;
-  case llvm::CmpInst::Predicate::FCMP_ULT:
-    return LLVM::FCmpPredicate::ult;
-  case llvm::CmpInst::Predicate::FCMP_ULE:
-    return LLVM::FCmpPredicate::ule;
-  case llvm::CmpInst::Predicate::FCMP_UGT:
-    return LLVM::FCmpPredicate::ugt;
-  case llvm::CmpInst::Predicate::FCMP_UGE:
-    return LLVM::FCmpPredicate::uge;
-  case llvm::CmpInst::Predicate::FCMP_UNO:
-    return LLVM::FCmpPredicate::uno;
-  case llvm::CmpInst::Predicate::FCMP_UEQ:
-    return LLVM::FCmpPredicate::ueq;
-  case llvm::CmpInst::Predicate::FCMP_UNE:
-    return LLVM::FCmpPredicate::une;
-  }
-  llvm_unreachable("incorrect floating point comparison predicate");
-}
-
-static AtomicOrdering getLLVMAtomicOrdering(llvm::AtomicOrdering ordering) {
-  switch (ordering) {
-  case llvm::AtomicOrdering::NotAtomic:
-    return LLVM::AtomicOrdering::not_atomic;
-  case llvm::AtomicOrdering::Unordered:
-    return LLVM::AtomicOrdering::unordered;
-  case llvm::AtomicOrdering::Monotonic:
-    return LLVM::AtomicOrdering::monotonic;
-  case llvm::AtomicOrdering::Acquire:
-    return LLVM::AtomicOrdering::acquire;
-  case llvm::AtomicOrdering::Release:
-    return LLVM::AtomicOrdering::release;
-  case llvm::AtomicOrdering::AcquireRelease:
-    return LLVM::AtomicOrdering::acq_rel;
-  case llvm::AtomicOrdering::SequentiallyConsistent:
-    return LLVM::AtomicOrdering::seq_cst;
-  }
-  llvm_unreachable("incorrect atomic ordering");
-}
-
-static AtomicBinOp getLLVMAtomicBinOp(llvm::AtomicRMWInst::BinOp binOp) {
-  switch (binOp) {
-  case llvm::AtomicRMWInst::Xchg:
-    return LLVM::AtomicBinOp::xchg;
-  case llvm::AtomicRMWInst::Add:
-    return LLVM::AtomicBinOp::add;
-  case llvm::AtomicRMWInst::Sub:
-    return LLVM::AtomicBinOp::sub;
-  case llvm::AtomicRMWInst::And:
-    return LLVM::AtomicBinOp::_and;
-  case llvm::AtomicRMWInst::Nand:
-    return LLVM::AtomicBinOp::nand;
-  case llvm::AtomicRMWInst::Or:
-    return LLVM::AtomicBinOp::_or;
-  case llvm::AtomicRMWInst::Xor:
-    return LLVM::AtomicBinOp::_xor;
-  case llvm::AtomicRMWInst::Max:
-    return LLVM::AtomicBinOp::max;
-  case llvm::AtomicRMWInst::Min:
-    return LLVM::AtomicBinOp::min;
-  case llvm::AtomicRMWInst::UMax:
-    return LLVM::AtomicBinOp::umax;
-  case llvm::AtomicRMWInst::UMin:
-    return LLVM::AtomicBinOp::umin;
-  case llvm::AtomicRMWInst::FAdd:
-    return LLVM::AtomicBinOp::fadd;
-  case llvm::AtomicRMWInst::FSub:
-    return LLVM::AtomicBinOp::fsub;
-  default:
-    llvm_unreachable("unsupported atomic binary operation");
   }
 }
 
@@ -359,23 +245,14 @@ ModuleImport::ModuleImport(ModuleOp mlirModule,
   builder.setInsertionPointToStart(mlirModule.getBody());
 }
 
-MetadataOp ModuleImport::getTBAAMetadataOp() {
-  if (tbaaMetadataOp)
-    return tbaaMetadataOp;
+MetadataOp ModuleImport::getGlobalMetadataOp() {
+  if (globalMetadataOp)
+    return globalMetadataOp;
 
   OpBuilder::InsertionGuard guard(builder);
-  Location loc = mlirModule.getLoc();
-
   builder.setInsertionPointToEnd(mlirModule.getBody());
-  tbaaMetadataOp = builder.create<MetadataOp>(loc, getTBAAMetadataOpName());
-
-  return tbaaMetadataOp;
-}
-
-std::string ModuleImport::getNewTBAANodeName(StringRef basename) {
-  return (Twine("tbaa_") + Twine(basename) + Twine('_') +
-          Twine(tbaaNodeCounter++))
-      .str();
+  return globalMetadataOp = builder.create<MetadataOp>(
+             mlirModule.getLoc(), getGlobalMetadataOpName());
 }
 
 LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
@@ -534,10 +411,18 @@ LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
     return true;
   };
 
+  // Helper to compute a unique symbol name that includes the given `baseName`.
+  // Uses the size of the mapping to unique the symbol name.
+  auto getUniqueSymbolName = [&](StringRef baseName) {
+    return (Twine("tbaa_") + Twine(baseName) + Twine('_') +
+            Twine(tbaaMapping.size()))
+        .str();
+  };
+
   // Insert new operations at the end of the MetadataOp.
   OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToEnd(&getTBAAMetadataOp().getBody().back());
-  StringAttr metadataOpName = SymbolTable::getSymbolName(getTBAAMetadataOp());
+  builder.setInsertionPointToEnd(&getGlobalMetadataOp().getBody().back());
+  StringAttr metadataOpName = SymbolTable::getSymbolName(getGlobalMetadataOp());
 
   // On the first walk, create SymbolRefAttr's and map them
   // to nodes in `nodesToConvert`.
@@ -550,7 +435,7 @@ LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
       // The root nodes do not have operands, so we can create
       // the TBAARootMetadataOp on the first walk.
       auto rootNode = builder.create<TBAARootMetadataOp>(
-          loc, getNewTBAANodeName("root"), identity.value());
+          loc, getUniqueSymbolName("root"), identity.value());
       tbaaMapping.try_emplace(current, FlatSymbolRefAttr::get(rootNode));
       continue;
     }
@@ -559,7 +444,7 @@ LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
         return failure();
       tbaaMapping.try_emplace(
           current, FlatSymbolRefAttr::get(builder.getContext(),
-                                          getNewTBAANodeName("type_desc")));
+                                          getUniqueSymbolName("type_desc")));
       continue;
     }
     if (std::optional<bool> isValid = isTagNode(current)) {
@@ -571,7 +456,7 @@ LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
           current, SymbolRefAttr::get(
                        builder.getContext(), metadataOpName,
                        FlatSymbolRefAttr::get(builder.getContext(),
-                                              getNewTBAANodeName("tag"))));
+                                              getUniqueSymbolName("tag"))));
       continue;
     }
     return emitError(loc) << "unsupported TBAA node format: "
@@ -611,21 +496,62 @@ LogicalResult ModuleImport::processTBAAMetadata(const llvm::MDNode *node) {
   return success();
 }
 
+LogicalResult
+ModuleImport::processAccessGroupMetadata(const llvm::MDNode *node) {
+  // An access group node is either access group or an access group list. Start
+  // by collecting all access groups to translate.
+  SmallVector<const llvm::MDNode *> accessGroups;
+  if (!node->getNumOperands())
+    accessGroups.push_back(node);
+  for (const llvm::MDOperand &operand : node->operands())
+    accessGroups.push_back(cast<llvm::MDNode>(operand.get()));
+
+  // Convert all entries of the access group list to access group operations.
+  for (const llvm::MDNode *accessGroup : accessGroups) {
+    if (accessGroupMapping.count(accessGroup))
+      continue;
+    // Verify the access group node is distinct and empty.
+    Location loc = mlirModule.getLoc();
+    if (accessGroup->getNumOperands() != 0 || !accessGroup->isDistinct())
+      return emitError(loc) << "unsupported access group node: "
+                            << diagMD(accessGroup, llvmModule.get());
+
+    MetadataOp metadataOp = getGlobalMetadataOp();
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToEnd(&metadataOp.getBody().back());
+    auto groupOp = builder.create<AccessGroupMetadataOp>(
+        loc, (Twine("group_") + Twine(accessGroupMapping.size())).str());
+    // Add a mapping from the access group node to the symbol reference pointing
+    // to the newly created operation.
+    accessGroupMapping[accessGroup] = SymbolRefAttr::get(
+        builder.getContext(), metadataOp.getSymName(),
+        FlatSymbolRefAttr::get(builder.getContext(), groupOp.getSymName()));
+  }
+  return success();
+}
+
 LogicalResult ModuleImport::convertMetadata() {
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPointToEnd(mlirModule.getBody());
-  for (const llvm::Function &func : llvmModule->functions())
+  for (const llvm::Function &func : llvmModule->functions()) {
     for (const llvm::Instruction &inst : llvm::instructions(func)) {
-      llvm::AAMDNodes nodes = inst.getAAMetadata();
-      if (!nodes)
-        continue;
-
-      if (const llvm::MDNode *tbaaMD = nodes.TBAA)
-        if (failed(processTBAAMetadata(tbaaMD)))
+      // Convert access group metadata nodes.
+      if (llvm::MDNode *node =
+              inst.getMetadata(llvm::LLVMContext::MD_access_group))
+        if (failed(processAccessGroupMetadata(node)))
           return failure();
-      // TODO: only TBAA metadata is currently supported.
-    }
 
+      // Convert alias analysis metadata nodes.
+      llvm::AAMDNodes aliasAnalysisNodes = inst.getAAMetadata();
+      if (!aliasAnalysisNodes)
+        continue;
+      if (aliasAnalysisNodes.TBAA)
+        if (failed(processTBAAMetadata(aliasAnalysisNodes.TBAA)))
+          return failure();
+
+      // TODO: Support noalias and scope metadata nodes.
+    }
+  }
   return success();
 }
 
@@ -1490,24 +1416,8 @@ void ModuleImport::processFunctionAttributes(llvm::Function *func,
 DictionaryAttr
 ModuleImport::convertParameterAttribute(llvm::AttributeSet llvmParamAttrs,
                                         OpBuilder &builder) {
-  using ElemTy = std::pair<llvm::Attribute::AttrKind, StringRef>;
-  // Mapping from llvm attribute kinds to their corresponding MLIR name.
-  static const SmallVector<ElemTy> kindNamePairs = {
-      {llvm::Attribute::AttrKind::NoAlias, LLVMDialect::getNoAliasAttrName()},
-      {llvm::Attribute::AttrKind::ReadOnly, LLVMDialect::getReadonlyAttrName()},
-      {llvm::Attribute::AttrKind::Nest, LLVMDialect::getNestAttrName()},
-      {llvm::Attribute::AttrKind::SExt, LLVMDialect::getSExtAttrName()},
-      {llvm::Attribute::AttrKind::ZExt, LLVMDialect::getZExtAttrName()},
-      {llvm::Attribute::AttrKind::NoUndef, LLVMDialect::getNoUndefAttrName()},
-      {llvm::Attribute::AttrKind::StructRet,
-       LLVMDialect::getStructRetAttrName()},
-      {llvm::Attribute::AttrKind::ByVal, LLVMDialect::getByValAttrName()},
-      {llvm::Attribute::AttrKind::ByRef, LLVMDialect::getByRefAttrName()},
-      {llvm::Attribute::AttrKind::InAlloca, LLVMDialect::getInAllocaAttrName()},
-      {llvm::Attribute::AttrKind::Alignment, LLVMDialect::getAlignAttrName()}};
-
   SmallVector<NamedAttribute> paramAttrs;
-  for (auto [llvmKind, mlirName] : kindNamePairs) {
+  for (auto [llvmKind, mlirName] : getAttrKindToNameMapping()) {
     auto llvmAttr = llvmParamAttrs.getAttribute(llvmKind);
     // Skip attributes that are not attached.
     if (!llvmAttr.isValid())

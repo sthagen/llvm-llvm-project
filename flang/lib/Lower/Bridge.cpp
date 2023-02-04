@@ -204,9 +204,11 @@ public:
           info.loc, dtName,
           parent ? Fortran::lower::mangle::mangleName(*parent) : "");
       auto insertPt = builder.saveInsertionPoint();
-
+      const Fortran::semantics::Scope *scope = info.typeSpec->scope();
+      if (!scope)
+        scope = info.typeSpec->typeSymbol().scope();
       Fortran::semantics::SymbolVector bindings =
-          Fortran::semantics::CollectBindings(*info.typeSpec->scope());
+          Fortran::semantics::CollectBindings(*scope);
 
       if (!bindings.empty())
         builder.createBlock(&dt.getRegion());
@@ -734,6 +736,10 @@ public:
     return bridge.getKindMap();
   }
 
+  Fortran::lower::StatementContext &getFctCtx() override final {
+    return bridge.fctCtx();
+  }
+
   mlir::Value hostAssocTupleValue() override final { return hostAssocTuple; }
 
   /// Record a binding for the ssa-value of the tuple for this function.
@@ -942,10 +948,10 @@ private:
   ///
   /// Generate the cleanup block before the program exits
   void genExitRoutine() {
+
     if (blockIsUnterminated())
       builder->create<mlir::func::ReturnOp>(toLocation());
   }
-  void genFIR(const Fortran::parser::EndProgramStmt &) { genExitRoutine(); }
 
   /// END of procedure-like constructs
   ///
@@ -977,6 +983,7 @@ private:
             resultRef = builder->createConvert(loc, resultRefType, resultRef);
           return builder->create<fir::LoadOp>(loc, resultRef);
         });
+    bridge.fctCtx().finalizeAndPop();
     builder->create<mlir::func::ReturnOp>(loc, resultVal);
   }
 
@@ -1003,8 +1010,10 @@ private:
     } else if (Fortran::semantics::HasAlternateReturns(symbol)) {
       mlir::Value retval = builder->create<fir::LoadOp>(
           toLocation(), getAltReturnResult(symbol));
+      bridge.fctCtx().finalizeAndPop();
       builder->create<mlir::func::ReturnOp>(toLocation(), retval);
     } else {
+      bridge.fctCtx().finalizeAndPop();
       genExitRoutine();
     }
   }
@@ -2764,9 +2773,11 @@ private:
               std::optional<Fortran::evaluate::DynamicType> lhsType =
                   assign.lhs.GetType();
               assert(lhsType && "lhs cannot be typeless");
+
               // Assignment to polymorphic allocatables may require changing the
               // variable dynamic type (See Fortran 2018 10.2.1.3 p3).
-              if (lhsType->IsPolymorphic() &&
+              if ((lhsType->IsPolymorphic() ||
+                   lhsType->IsUnlimitedPolymorphic()) &&
                   Fortran::lower::isWholeAllocatable(assign.lhs)) {
                 mlir::Value lhs = genExprMutableBox(loc, assign.lhs).getAddr();
                 mlir::Value rhs =
@@ -2781,6 +2792,10 @@ private:
               // the pointer variable.
 
               if (assign.lhs.Rank() > 0 || explicitIterationSpace()) {
+                if (isDerivedCategory(lhsType->category()) &&
+                    Fortran::semantics::IsFinalizable(
+                        lhsType->GetDerivedTypeSpec()))
+                  TODO(loc, "derived-type finalization with array assignment");
                 // Array assignment
                 // See Fortran 2018 10.2.1.3 p5, p6, and p7
                 genArrayAssignment(assign, stmtCtx);
@@ -2797,9 +2812,33 @@ private:
                   Fortran::lower::isWholeAllocatable(assign.lhs);
               std::optional<fir::factory::MutableBoxReallocation> lhsRealloc;
               std::optional<fir::MutableBoxValue> lhsMutableBox;
+
+              // Set flag to know if the LHS needs finalization. Polymorphic,
+              // unlimited polymorphic assignment will be done with genAssign.
+              // Assign runtime function performs the finalization.
+              bool needFinalization = !lhsType->IsPolymorphic() &&
+                                      !lhsType->IsUnlimitedPolymorphic() &&
+                                      (isDerivedCategory(lhsType->category()) &&
+                                       Fortran::semantics::IsFinalizable(
+                                           lhsType->GetDerivedTypeSpec()));
+
               auto lhs = [&]() -> fir::ExtendedValue {
                 if (lhsIsWholeAllocatable) {
                   lhsMutableBox = genExprMutableBox(loc, assign.lhs);
+                  // Finalize if needed.
+                  if (needFinalization) {
+                    mlir::Value isAllocated =
+                        fir::factory::genIsAllocatedOrAssociatedTest(
+                            *builder, loc, *lhsMutableBox);
+                    builder->genIfThen(loc, isAllocated)
+                        .genThen([&]() {
+                          fir::runtime::genDerivedTypeDestroy(
+                              *builder, loc, fir::getBase(*lhsMutableBox));
+                        })
+                        .end();
+                    needFinalization = false;
+                  }
+
                   llvm::SmallVector<mlir::Value> lengthParams;
                   if (const fir::CharBoxValue *charBox = rhs.getCharBox())
                     lengthParams.push_back(charBox->getLen());
@@ -2842,7 +2881,8 @@ private:
               } else if (isDerivedCategory(lhsType->category())) {
                 // Fortran 2018 10.2.1.3 p13 and p14
                 // Recursively gen an assignment on each element pair.
-                fir::factory::genRecordAssignment(*builder, loc, lhs, rhs);
+                fir::factory::genRecordAssignment(*builder, loc, lhs, rhs,
+                                                  needFinalization);
               } else {
                 llvm_unreachable("unknown category");
               }
@@ -3020,6 +3060,7 @@ private:
         getEval().getOwningProcedure();
     assert(funit && "not inside main program, function or subroutine");
     if (funit->isMainProgram()) {
+      bridge.fctCtx().finalizeAndKeep();
       genExitRoutine();
       return;
     }
@@ -3075,6 +3116,7 @@ private:
   void genFIR(const Fortran::parser::EndFunctionStmt &) {}     // nop
   void genFIR(const Fortran::parser::EndIfStmt &) {}           // nop
   void genFIR(const Fortran::parser::EndMpSubprogramStmt &) {} // nop
+  void genFIR(const Fortran::parser::EndProgramStmt &) {}      // nop
   void genFIR(const Fortran::parser::EndSelectStmt &) {}       // nop
   void genFIR(const Fortran::parser::EndSubroutineStmt &) {}   // nop
   void genFIR(const Fortran::parser::EntryStmt &) {}           // nop
@@ -3213,6 +3255,7 @@ private:
   /// Start translation of a function.
   void startNewFunction(Fortran::lower::pft::FunctionLikeUnit &funit) {
     assert(!builder && "expected nullptr");
+    bridge.fctCtx().pushScope();
     const Fortran::semantics::Scope &scope = funit.getScope();
     LLVM_DEBUG(llvm::dbgs() << "\n[bridge - startNewFunction]";
                if (auto *sym = scope.symbol()) llvm::dbgs() << " " << *sym;
@@ -3397,10 +3440,12 @@ private:
   /// Finish translation of a function.
   void endNewFunction(Fortran::lower::pft::FunctionLikeUnit &funit) {
     setCurrentPosition(Fortran::lower::pft::stmtSourceLoc(funit.endStmt));
-    if (funit.isMainProgram())
+    if (funit.isMainProgram()) {
+      bridge.fctCtx().finalizeAndPop();
       genExitRoutine();
-    else
+    } else {
       genFIRProcedureExit(funit, funit.getSubprogramSymbol());
+    }
     funit.finalBlock = nullptr;
     LLVM_DEBUG(llvm::dbgs() << "\n[bridge - endNewFunction";
                if (auto *sym = funit.scope->symbol()) llvm::dbgs()

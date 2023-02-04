@@ -129,6 +129,14 @@ module m
     !CHECK: warning: ACHAR(I=4294967296) is out of range for CHARACTER(KIND=4)
     character(kind=4), parameter :: bada42 = achar(4294967296_8,kind=4)
   end subroutine
+  subroutine s11
+    character(:), allocatable :: x1
+    !CHECK: error: Invalid specification expression: non-constant inquiry function 'len' not allowed for local object
+    character(len(x1)) :: x2
+    real, allocatable :: x3(:)
+    !CHECK: error: Invalid specification expression: non-constant descriptor inquiry not allowed for local object
+    real :: x4(size(x3))
+  end
   subroutine s12(x,y)
     class(t), intent(in) :: x
     class(*), intent(in) :: y
@@ -136,6 +144,10 @@ module m
     integer, parameter :: bad1 = storage_size(x)
     !CHERK: error: Must be a constant value
     integer, parameter :: bad2 = storage_size(y)
+  end subroutine
+  subroutine s13
+    !CHECK: portability: Result of REPEAT() is too large to compute at compilation time (1.1259e+15 characters)
+    print *, repeat(repeat(' ', 2**20), 2**30)
   end subroutine
   subroutine warnings
     real, parameter :: ok1 = scale(0.0, 99999) ! 0.0

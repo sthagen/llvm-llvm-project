@@ -295,10 +295,10 @@ Instruction *InstCombinerImpl::foldCmpLoadFromIndexedGlobal(
   // We need to erase the highest countTrailingZeros(ElementSize) bits of Idx.
   unsigned ElementSize =
       DL.getTypeAllocSize(Init->getType()->getArrayElementType());
-  auto MaskIdx = [&](Value* Idx){
-    if (!GEP->isInBounds() && countTrailingZeros(ElementSize) != 0) {
+  auto MaskIdx = [&](Value *Idx) {
+    if (!GEP->isInBounds() && llvm::countr_zero(ElementSize) != 0) {
       Value *Mask = ConstantInt::get(Idx->getType(), -1);
-      Mask = Builder.CreateLShr(Mask, countTrailingZeros(ElementSize));
+      Mask = Builder.CreateLShr(Mask, llvm::countr_zero(ElementSize));
       Idx = Builder.CreateAnd(Idx, Mask);
     }
     return Idx;
@@ -1886,6 +1886,30 @@ Instruction *InstCombinerImpl::foldICmpAndConstant(ICmpInst &Cmp,
     auto NewPred =
         Pred == CmpInst::ICMP_EQ ? CmpInst::ICMP_UGT : CmpInst::ICMP_ULE;
     return new ICmpInst(NewPred, X, SubOne(cast<Constant>(Cmp.getOperand(1))));
+  }
+
+  // If we are testing the intersection of 2 select-of-nonzero-constants with no
+  // common bits set, it's the same as checking if exactly one select condition
+  // is set:
+  // ((A ? TC : FC) & (B ? TC : FC)) == 0 --> xor A, B
+  // ((A ? TC : FC) & (B ? TC : FC)) != 0 --> not(xor A, B)
+  // TODO: Generalize for non-constant values.
+  // TODO: Handle signed/unsigned predicates.
+  // TODO: Handle other bitwise logic connectors.
+  // TODO: Extend to handle a non-zero compare constant.
+  if (C.isZero() && (Pred == CmpInst::ICMP_EQ || And->hasOneUse())) {
+    assert(Cmp.isEquality() && "Not expecting non-equality predicates");
+    Value *A, *B;
+    const APInt *TC, *FC;
+    if (match(X, m_Select(m_Value(A), m_APInt(TC), m_APInt(FC))) &&
+        match(Y,
+              m_Select(m_Value(B), m_SpecificInt(*TC), m_SpecificInt(*FC))) &&
+        !TC->isZero() && !FC->isZero() && !TC->intersects(*FC)) {
+      Value *R = Builder.CreateXor(A, B);
+      if (Pred == CmpInst::ICMP_NE)
+        R = Builder.CreateNot(R);
+      return replaceInstUsesWith(Cmp, R);
+    }
   }
 
   // ((zext i1 X) & Y) == 0 --> !((trunc Y) & X)

@@ -8665,7 +8665,8 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
     return;
   }
 
-  if (!NewVD->hasLocalStorage() && T->isSizelessType()) {
+  if (!NewVD->hasLocalStorage() && T->isSizelessType() &&
+      !T->isWebAssemblyReferenceType()) {
     Diag(NewVD->getLocation(), diag::err_sizeless_nonlocal) << T;
     NewVD->setInvalidDecl();
     return;
@@ -9556,6 +9557,7 @@ static bool isStdBuiltin(ASTContext &Ctx, FunctionDecl *FD,
   case Builtin::BIaddressof:
   case Builtin::BI__addressof:
   case Builtin::BIforward:
+  case Builtin::BIforward_like:
   case Builtin::BImove:
   case Builtin::BImove_if_noexcept:
   case Builtin::BIas_const: {
@@ -13088,9 +13090,10 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
   // C++ [module.import/6] external definitions are not permitted in header
   // units.
   if (getLangOpts().CPlusPlusModules && currentModuleIsHeaderUnit() &&
-      VDecl->isThisDeclarationADefinition() &&
+      !VDecl->isInvalidDecl() && VDecl->isThisDeclarationADefinition() &&
       VDecl->getFormalLinkage() == Linkage::ExternalLinkage &&
-      !VDecl->isInline()) {
+      !VDecl->isInline() && !VDecl->isTemplated() &&
+      !isa<VarTemplateSpecializationDecl>(VDecl)) {
     Diag(VDecl->getLocation(), diag::err_extern_def_in_header_unit);
     VDecl->setInvalidDecl();
   }
@@ -15259,9 +15262,10 @@ Decl *Sema::ActOnStartOfFunctionDef(Scope *FnBodyScope, Decl *D,
   // FIXME: Consider an alternate location for the test where the inlined()
   // state is complete.
   if (getLangOpts().CPlusPlusModules && currentModuleIsHeaderUnit() &&
+      !FD->isInvalidDecl() && !FD->isInlined() &&
+      BodyKind != FnBodyKind::Delete && BodyKind != FnBodyKind::Default &&
       FD->getFormalLinkage() == Linkage::ExternalLinkage &&
-      !FD->isInvalidDecl() && BodyKind != FnBodyKind::Delete &&
-      BodyKind != FnBodyKind::Default && !FD->isInlined()) {
+      !FD->isTemplated() && !FD->isTemplateInstantiation()) {
     assert(FD->isThisDeclarationADefinition());
     Diag(FD->getLocation(), diag::err_extern_def_in_header_unit);
     FD->setInvalidDecl();
@@ -16196,6 +16200,7 @@ void Sema::AddKnownFunctionAttributes(FunctionDecl *FD) {
     case Builtin::BI__builtin_addressof:
     case Builtin::BIas_const:
     case Builtin::BIforward:
+    case Builtin::BIforward_like:
     case Builtin::BImove:
     case Builtin::BImove_if_noexcept:
       if (ParmVarDecl *P = FD->getParamDecl(0u);

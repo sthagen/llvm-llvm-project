@@ -2535,9 +2535,8 @@ static unsigned getTestUnderMaskCond(unsigned BitSize, unsigned CCMask,
     return 0;
 
   // Work out the masks for the lowest and highest bits.
-  unsigned HighShift = 63 - countLeadingZeros(Mask);
-  uint64_t High = uint64_t(1) << HighShift;
-  uint64_t Low = uint64_t(1) << countTrailingZeros(Mask);
+  uint64_t High = llvm::bit_floor(Mask);
+  uint64_t Low = uint64_t(1) << llvm::countr_zero(Mask);
 
   // Signed ordered comparisons are effectively unsigned if the sign
   // bit is dropped.
@@ -7442,6 +7441,18 @@ SystemZTargetLowering::ComputeNumSignBitsForTargetNode(
   }
 
   return 1;
+}
+
+bool SystemZTargetLowering::
+isGuaranteedNotToBeUndefOrPoisonForTargetNode(SDValue Op,
+         const APInt &DemandedElts, const SelectionDAG &DAG,
+         bool PoisonOnly, unsigned Depth) const {
+  switch (Op->getOpcode()) {
+  case SystemZISD::PCREL_WRAPPER:
+  case SystemZISD::PCREL_OFFSET:
+    return true;
+  }
+  return false;
 }
 
 unsigned

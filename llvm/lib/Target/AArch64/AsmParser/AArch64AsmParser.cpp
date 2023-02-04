@@ -48,7 +48,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SMLoc.h"
-#include "llvm/Support/AArch64TargetParser.h"
 #include "llvm/Support/TargetParser.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/AArch64TargetParser.h"
@@ -4939,7 +4938,7 @@ bool AArch64AsmParser::parseOperand(OperandVector &Operands, bool isCondCode,
     if (isa<MCConstantExpr>(SubExprVal)) {
       uint64_t Imm = (cast<MCConstantExpr>(SubExprVal))->getValue();
       uint32_t ShiftAmt = 0, MaxShiftAmt = IsXReg ? 48 : 16;
-      while(Imm > 0xFFFF && countTrailingZeros(Imm) >= 16) {
+      while (Imm > 0xFFFF && llvm::countr_zero(Imm) >= 16) {
         ShiftAmt += 16;
         Imm >>= 16;
       }

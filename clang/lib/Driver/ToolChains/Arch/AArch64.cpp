@@ -12,9 +12,9 @@
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
 #include "llvm/Option/ArgList.h"
-#include "llvm/Support/AArch64TargetParser.h"
-#include "llvm/Support/TargetParser.h"
 #include "llvm/Support/Host.h"
+#include "llvm/Support/TargetParser.h"
+#include "llvm/TargetParser/AArch64TargetParser.h"
 
 using namespace clang::driver;
 using namespace clang::driver::tools;
@@ -407,9 +407,10 @@ void aarch64::getAArch64TargetFeatures(const Driver &D,
     else if (*I == "+crypto") {
       HasCrypto = true;
       HasNoCrypto = false;
-    } else if (*I == "-crypto") {
+    } else if (*I == "-crypto" || *I == "-neon") {
       HasCrypto = false;
       HasNoCrypto = true;
+      HasSM4 = HasSHA2 = HasSHA3 = HasAES = false;
     }
     // Register the iterator position if this is an architecture feature
     if (ArchFeatPos == -1 && (V8Version != -1 || V9Version != -1))

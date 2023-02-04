@@ -370,7 +370,7 @@ func.func @generic_atomic_rmw(%I : memref<10xi32>, %i : index) {
   // CHECK-NEXT: llvm.br ^bb1([[init]] : i32)
   // CHECK-NEXT: ^bb1([[loaded:%.*]]: i32):
   // CHECK-NEXT: [[pair:%.*]] = llvm.cmpxchg %{{.*}}, [[loaded]], [[loaded]]
-  // CHECK-SAME:                    acq_rel monotonic : i32
+  // CHECK-SAME:                    acq_rel monotonic : !llvm.ptr<i32>, i32
   // CHECK-NEXT: [[new:%.*]] = llvm.extractvalue [[pair]][0]
   // CHECK-NEXT: [[ok:%.*]] = llvm.extractvalue [[pair]][1]
   // CHECK-NEXT: llvm.cond_br [[ok]], ^bb2, ^bb1([[new]] : i32)
@@ -536,4 +536,25 @@ func.func @extract_strided_metadata(
        index, index
 
   return
+}
+
+// -----
+
+// CHECK-LABEL: func @load_non_temporal(
+func.func @load_non_temporal(%arg0 : memref<32xf32, affine_map<(d0) -> (d0)>>) {  
+  %1 = arith.constant 7 : index
+  // CHECK: llvm.load %{{.*}} {nontemporal} : !llvm.ptr<f32>
+  %2 = memref.load %arg0[%1] {nontemporal = true} : memref<32xf32, affine_map<(d0) -> (d0)>>
+  func.return
+}
+
+// -----
+
+// CHECK-LABEL: func @store_non_temporal(
+func.func @store_non_temporal(%input : memref<32xf32, affine_map<(d0) -> (d0)>>, %output : memref<32xf32, affine_map<(d0) -> (d0)>>) {
+  %1 = arith.constant 7 : index
+  %2 = memref.load %input[%1] {nontemporal = true} : memref<32xf32, affine_map<(d0) -> (d0)>>
+  // CHECK: llvm.store %{{.*}}, %{{.*}}  {nontemporal} : !llvm.ptr<f32>
+  memref.store %2, %output[%1] {nontemporal = true} : memref<32xf32, affine_map<(d0) -> (d0)>>
+  func.return
 }

@@ -111,6 +111,9 @@ ModuleDepCollector::makeInvocationForModuleBuildWithoutOutputs(
   CI.getDependencyOutputOpts().Targets.clear();
 
   CI.getFrontendOpts().ProgramAction = frontend::GenerateModule;
+  CI.getFrontendOpts().ARCMTAction = FrontendOptions::ARCMT_None;
+  CI.getFrontendOpts().ObjCMTAction = FrontendOptions::ObjCMT_None;
+  CI.getFrontendOpts().MTMigrateDir.clear();
   CI.getLangOpts()->ModuleName = Deps.ID.ModuleName;
   CI.getFrontendOpts().IsSystemModule = Deps.IsSystem;
 
@@ -264,13 +267,12 @@ static std::string getModuleContextHash(const ModuleDeps &MD,
   HashBuilder.add(serialization::VERSION_MAJOR, serialization::VERSION_MINOR);
 
   // Hash the BuildInvocation without any input files.
-  SmallVector<const char *, 32> DummyArgs;
-  CI.generateCC1CommandLine(DummyArgs, [&](const Twine &Arg) {
-    Scratch.clear();
-    StringRef Str = Arg.toStringRef(Scratch);
-    HashBuilder.add(Str);
-    return "<unused>";
-  });
+  SmallVector<const char *, 32> Args;
+  llvm::BumpPtrAllocator Alloc;
+  llvm::StringSaver Saver(Alloc);
+  CI.generateCC1CommandLine(
+      Args, [&](const Twine &Arg) { return Saver.save(Arg).data(); });
+  HashBuilder.addRange(Args);
 
   // Hash the module dependencies. These paths may differ even if the invocation
   // is identical if they depend on the contents of the files in the TU -- for

@@ -61,7 +61,8 @@ public:
   static constexpr int64_t kNoLimit = -1;
 
   /// Only ops within the scope are added to the worklist. If no scope is
-  /// specified, the closest enclosing region is used as a scope.
+  /// specified, the closest enclosing region around the initial list of ops
+  /// is used as a scope.
   Region *scope = nullptr;
 
   /// Strict mode can restrict the ops that are added to the worklist during
@@ -138,17 +139,6 @@ applyOpPatternsAndFold(ArrayRef<Operation *> ops,
                        const FrozenRewritePatternSet &patterns,
                        GreedyRewriteConfig config = GreedyRewriteConfig(),
                        bool *changed = nullptr, bool *allErased = nullptr);
-
-/// Applies the specified patterns on `op` while also trying to fold it.
-/// This function is a shortcut for the ArrayRef<Operation *> overload and
-/// behaves the same way.
-inline LogicalResult
-applyOpPatternsAndFold(Operation *op, const FrozenRewritePatternSet &patterns,
-                       GreedyRewriteConfig config = GreedyRewriteConfig(),
-                       bool *erased = nullptr) {
-  return applyOpPatternsAndFold(ArrayRef(op), patterns, config,
-                                /*changed=*/nullptr, erased);
-}
 
 } // namespace mlir
 
