@@ -169,22 +169,32 @@ const char *SBDebugger::GetProgressFromEvent(const lldb::SBEvent &event,
 }
 
 lldb::SBStructuredData
+SBDebugger::GetProgressDataFromEvent(const lldb::SBEvent &event) {
+  LLDB_INSTRUMENT_VA(event);
+
+  StructuredData::DictionarySP dictionary_sp =
+      ProgressEventData::GetAsStructuredData(event.get());
+
+  if (!dictionary_sp)
+    return {};
+
+  SBStructuredData data;
+  data.m_impl_up->SetObjectSP(std::move(dictionary_sp));
+  return data;
+}
+
+lldb::SBStructuredData
 SBDebugger::GetDiagnosticFromEvent(const lldb::SBEvent &event) {
   LLDB_INSTRUMENT_VA(event);
 
-  const DiagnosticEventData *diagnostic_data =
-      DiagnosticEventData::GetEventDataFromEvent(event.get());
-  if (!diagnostic_data)
+  StructuredData::DictionarySP dictionary_sp =
+      DiagnosticEventData::GetAsStructuredData(event.get());
+
+  if (!dictionary_sp)
     return {};
 
-  auto dictionary = std::make_unique<StructuredData::Dictionary>();
-  dictionary->AddStringItem("message", diagnostic_data->GetMessage());
-  dictionary->AddStringItem("type", diagnostic_data->GetPrefix());
-  dictionary->AddBooleanItem("debugger_specific",
-                             diagnostic_data->IsDebuggerSpecific());
-
   SBStructuredData data;
-  data.m_impl_up->SetObjectSP(std::move(dictionary));
+  data.m_impl_up->SetObjectSP(std::move(dictionary_sp));
   return data;
 }
 

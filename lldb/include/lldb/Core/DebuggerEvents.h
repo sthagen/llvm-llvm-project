@@ -9,6 +9,7 @@
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/Event.h"
+#include "lldb/Utility/StructuredData.h"
 
 #include <string>
 
@@ -32,6 +33,10 @@ public:
   void Dump(Stream *s) const override;
 
   static const ProgressEventData *GetEventDataFromEvent(const Event *event_ptr);
+
+  static StructuredData::DictionarySP
+  GetAsStructuredData(const Event *event_ptr);
+
   uint64_t GetID() const { return m_id; }
   bool IsFinite() const { return m_total != UINT64_MAX; }
   uint64_t GetCompleted() const { return m_completed; }
@@ -74,6 +79,9 @@ public:
 
   static const DiagnosticEventData *
   GetEventDataFromEvent(const Event *event_ptr);
+
+  static StructuredData::DictionarySP
+  GetAsStructuredData(const Event *event_ptr);
 
 protected:
   std::string m_message;

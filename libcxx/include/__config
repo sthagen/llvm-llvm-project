@@ -134,6 +134,15 @@
 #    define _LIBCPP_ABI_DO_NOT_EXPORT_VECTOR_BASE_COMMON
 // According to the Standard, `bitset::operator[] const` returns bool
 #    define _LIBCPP_ABI_BITSET_VECTOR_BOOL_CONST_SUBSCRIPT_RETURN_BOOL
+// Fix the implementation of CityHash used for std::hash<fundamental-type>.
+// This is an ABI break because `std::hash` will return a different result,
+// which means that hashing the same object in translation units built against
+// different versions of libc++ can return inconsistent results. This is especially
+// tricky since std::hash is used in the implementation of unordered containers.
+//
+// The incorrect implementation of CityHash has the problem that it drops some
+// bits on the floor.
+#    define _LIBCPP_ABI_FIX_CITYHASH_IMPLEMENTATION
 // Remove the base 10 implementation of std::to_chars from the dylib.
 // The implementation moved to the header, but we still export the symbols from
 // the dylib for backwards compatibility.
@@ -830,9 +839,9 @@ _LIBCPP_BEGIN_NAMESPACE_STD _LIBCPP_END_NAMESPACE_STD
 #  endif
 
 #  if _LIBCPP_STD_VER <= 11
-#    define _LIBCPP_EXPLICIT_AFTER_CXX11
+#    define _LIBCPP_EXPLICIT_SINCE_CXX14
 #  else
-#    define _LIBCPP_EXPLICIT_AFTER_CXX11 explicit
+#    define _LIBCPP_EXPLICIT_SINCE_CXX14 explicit
 #  endif
 
 #  if _LIBCPP_STD_VER > 11
@@ -895,7 +904,7 @@ _LIBCPP_BEGIN_NAMESPACE_STD _LIBCPP_END_NAMESPACE_STD
 
 // Try to find out if RTTI is disabled.
 #  if !defined(__cpp_rtti) || __cpp_rtti < 199711L
-#    define _LIBCPP_NO_RTTI
+#    define _LIBCPP_HAS_NO_RTTI
 #  endif
 
 #  ifndef _LIBCPP_WEAK
