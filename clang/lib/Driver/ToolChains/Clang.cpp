@@ -3686,11 +3686,6 @@ static bool RenderModulesOptions(Compilation &C, const Driver &D,
   }
 
   HaveModules |= HaveClangModules;
-  if (Args.hasArg(options::OPT_fmodules_ts)) {
-    D.Diag(diag::warn_deprecated_fmodules_ts_flag);
-    CmdArgs.push_back("-fmodules-ts");
-    HaveModules = true;
-  }
 
   // -fmodule-maps enables implicit reading of module map files. By default,
   // this is enabled if we are using Clang's flavor of precompiled modules.
@@ -7035,6 +7030,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   for (const Arg *A : Args.filtered(options::OPT_fpass_plugin_EQ)) {
     CmdArgs.push_back(
         Args.MakeArgString(Twine("-fpass-plugin=") + A->getValue()));
+    A->claim();
+  }
+
+  // Forward --vfsoverlay to -cc1.
+  for (const Arg *A : Args.filtered(options::OPT_vfsoverlay)) {
+    CmdArgs.push_back("--vfsoverlay");
+    CmdArgs.push_back(A->getValue());
     A->claim();
   }
 

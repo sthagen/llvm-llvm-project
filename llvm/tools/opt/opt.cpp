@@ -368,7 +368,6 @@ static bool shouldPinPassToLegacyPM(StringRef Pass) {
       "verify-safepoint-ir",
       "atomic-expand",
       "expandvp",
-      "hardware-loops",
       "mve-tail-predication",
       "interleaved-access",
       "global-merge",
@@ -393,7 +392,8 @@ static bool shouldPinPassToLegacyPM(StringRef Pass) {
       "expand-large-div-rem",
       "structurizecfg",
       "fix-irreducible",
-      "expand-large-fp-convert"
+      "expand-large-fp-convert",
+      "callbrprepare",
   };
   for (const auto &P : PassNamePrefix)
     if (Pass.startswith(P))
@@ -445,6 +445,7 @@ int main(int argc, char **argv) {
   initializeExpandMemCmpPassPass(Registry);
   initializeScalarizeMaskedMemIntrinLegacyPassPass(Registry);
   initializeSelectOptimizePass(Registry);
+  initializeCallBrPreparePass(Registry);
   initializeCodeGenPreparePass(Registry);
   initializeAtomicExpandPass(Registry);
   initializeRewriteSymbolsLegacyPassPass(Registry);
@@ -462,7 +463,6 @@ int main(int argc, char **argv) {
   initializeExpandVectorPredicationPass(Registry);
   initializeWasmEHPreparePass(Registry);
   initializeWriteBitcodePassPass(Registry);
-  initializeHardwareLoopsPass(Registry);
   initializeReplaceWithVeclibLegacyPass(Registry);
   initializeJMCInstrumenterPass(Registry);
 
