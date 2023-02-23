@@ -209,6 +209,41 @@ func.func @store_malformed_elem_type(%foo: !llvm.ptr, %bar: f32) {
 
 // -----
 
+func.func @store_syncscope(%val : f32, %ptr : !llvm.ptr) {
+  // expected-error@below {{expected syncscope to be null for non-atomic access}}
+  "llvm.store"(%val, %ptr) {syncscope = "singlethread"} : (f32, !llvm.ptr) -> ()
+}
+
+// -----
+
+func.func @store_unsupported_ordering(%val : f32, %ptr : !llvm.ptr) {
+  // expected-error@below {{unsupported ordering 'acquire'}}
+  llvm.store %val, %ptr atomic acquire {alignment = 4 : i64} : f32, !llvm.ptr
+}
+
+// -----
+
+func.func @store_unsupported_type(%val : f80, %ptr : !llvm.ptr) {
+  // expected-error@below {{unsupported type 'f80' for atomic access}}
+  llvm.store %val, %ptr atomic monotonic {alignment = 16 : i64} : f80, !llvm.ptr
+}
+
+// -----
+
+func.func @store_unsupported_type(%val : i1, %ptr : !llvm.ptr) {
+  // expected-error@below {{unsupported type 'i1' for atomic access}}
+  llvm.store %val, %ptr atomic monotonic {alignment = 16 : i64} : i1, !llvm.ptr
+}
+
+// -----
+
+func.func @store_unaligned_atomic(%val : f32, %ptr : !llvm.ptr) {
+  // expected-error@below {{expected alignment for atomic access}}
+  llvm.store %val, %ptr atomic monotonic : f32, !llvm.ptr
+}
+
+// -----
+
 func.func @invalid_call() {
   // expected-error@+1 {{'llvm.call' op must have either a `callee` attribute or at least an operand}}
   "llvm.call"() : () -> ()
@@ -1245,7 +1280,7 @@ func.func @bitcast(%arg0: vector<2x3xf32>) {
 
 func.func @cp_async(%arg0: !llvm.ptr<i8, 3>, %arg1: !llvm.ptr<i8, 1>) {
   // expected-error @below {{expected byte size to be either 4, 8 or 16.}}
-  nvvm.cp.async.shared.global %arg0, %arg1, 32
+  nvvm.cp.async.shared.global %arg0, %arg1, 32 : !llvm.ptr<i8, 3>, !llvm.ptr<i8, 1>
   return
 }
 
@@ -1253,7 +1288,7 @@ func.func @cp_async(%arg0: !llvm.ptr<i8, 3>, %arg1: !llvm.ptr<i8, 1>) {
 
 func.func @cp_async(%arg0: !llvm.ptr<i8, 3>, %arg1: !llvm.ptr<i8, 1>) {
   // expected-error @below {{bypass l1 is only support for 16 bytes copy.}}
-  nvvm.cp.async.shared.global %arg0, %arg1, 8 {bypass_l1}
+  nvvm.cp.async.shared.global %arg0, %arg1, 8 {bypass_l1} : !llvm.ptr<i8, 3>, !llvm.ptr<i8, 1>
   return
 }
 

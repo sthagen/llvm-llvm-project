@@ -106,6 +106,8 @@ static const RISCVSupportedExtension SupportedExtensions[] = {
     {"zicsr", RISCVExtensionVersion{2, 0}},
     {"zifencei", RISCVExtensionVersion{2, 0}},
 
+    {"zawrs", RISCVExtensionVersion{1, 0}},
+
     {"svnapot", RISCVExtensionVersion{1, 0}},
     {"svpbmt", RISCVExtensionVersion{1, 0}},
     {"svinval", RISCVExtensionVersion{1, 0}},
@@ -114,7 +116,10 @@ static const RISCVSupportedExtension SupportedExtensions[] = {
     {"xtheadba", RISCVExtensionVersion{1, 0}},
     {"xtheadbb", RISCVExtensionVersion{1, 0}},
     {"xtheadbs", RISCVExtensionVersion{1, 0}},
+    {"xtheadcmo", RISCVExtensionVersion{1, 0}},
     {"xtheadmac", RISCVExtensionVersion{1, 0}},
+    {"xtheadmempair", RISCVExtensionVersion{1, 0}},
+    {"xtheadsync", RISCVExtensionVersion{1, 0}},
     {"xtheadvdot", RISCVExtensionVersion{1, 0}},
     {"xventanacondops", RISCVExtensionVersion{1, 0}},
 };
@@ -128,7 +133,6 @@ static const RISCVSupportedExtension SupportedExperimentalExtensions[] = {
     {"zcf", RISCVExtensionVersion{1, 0}},
     {"zfa", RISCVExtensionVersion{0, 1}},
     {"zvfh", RISCVExtensionVersion{0, 1}},
-    {"zawrs", RISCVExtensionVersion{1, 0}},
     {"ztso", RISCVExtensionVersion{0, 1}},
 };
 
