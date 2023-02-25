@@ -1607,7 +1607,7 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
                              TLI.getPointerTy(DAG.getDataLayout(), AS));
     }
 
-    if (match(C, m_VScale(DAG.getDataLayout())))
+    if (match(C, m_VScale()))
       return DAG.getVScale(getCurSDLoc(), VT, APInt(VT.getSizeInBits(), 1));
 
     if (const ConstantFP *CFP = dyn_cast<ConstantFP>(C))
@@ -5868,7 +5868,6 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
     visitTargetIntrinsic(I, Intrinsic);
     return;
   case Intrinsic::vscale: {
-    match(&I, m_VScale(DAG.getDataLayout()));
     EVT VT = TLI.getValueType(DAG.getDataLayout(), I.getType());
     setValue(&I, DAG.getVScale(sdl, VT, APInt(VT.getSizeInBits(), 1)));
     return;
@@ -6510,7 +6509,8 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
     const DataLayout DLayout = DAG.getDataLayout();
     EVT DestVT = TLI.getValueType(DLayout, I.getType());
     EVT ArgVT = TLI.getValueType(DLayout, I.getArgOperand(0)->getType());
-    unsigned Test = cast<ConstantInt>(I.getArgOperand(1))->getZExtValue();
+    FPClassTest Test = static_cast<FPClassTest>(
+        cast<ConstantInt>(I.getArgOperand(1))->getZExtValue());
     MachineFunction &MF = DAG.getMachineFunction();
     const Function &F = MF.getFunction();
     SDValue Op = getValue(I.getArgOperand(0));
