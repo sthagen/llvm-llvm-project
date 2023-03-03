@@ -34,7 +34,6 @@
 
 #include "InstCombineInternal.h"
 #include "llvm-c/Initialization.h"
-#include "llvm-c/Transforms/InstCombine.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -4238,23 +4237,6 @@ bool InstCombinerImpl::run() {
     if (!DebugCounter::shouldExecute(VisitCounter))
       continue;
 
-    // Instruction isn't dead, see if we can constant propagate it.
-    if (!I->use_empty() &&
-        (I->getNumOperands() == 0 || isa<Constant>(I->getOperand(0)))) {
-      if (Constant *C = ConstantFoldInstruction(I, DL, &TLI)) {
-        LLVM_DEBUG(dbgs() << "IC: ConstFold to: " << *C << " from: " << *I
-                          << '\n');
-
-        // Add operands to the worklist.
-        replaceInstUsesWith(*I, C);
-        ++NumConstProp;
-        if (isInstructionTriviallyDead(I, &TLI))
-          eraseInstFromFunction(*I);
-        MadeIRChange = true;
-        continue;
-      }
-    }
-
     // See if we can trivially sink this instruction to its user if we can
     // prove that the successor is not executed more frequently than our block.
     // Return the UserBlock if successful.
@@ -4776,8 +4758,4 @@ FunctionPass *llvm::createInstructionCombiningPass() {
 
 FunctionPass *llvm::createInstructionCombiningPass(unsigned MaxIterations) {
   return new InstructionCombiningPass(MaxIterations);
-}
-
-void LLVMAddInstructionCombiningPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createInstructionCombiningPass());
 }

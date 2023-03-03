@@ -834,47 +834,21 @@ Instruction *InstCombinerImpl::foldIntrinsicIsFPClass(IntrinsicInst &II) {
   Value *Src0 = II.getArgOperand(0);
   Value *Src1 = II.getArgOperand(1);
   const ConstantInt *CMask = cast<ConstantInt>(Src1);
-  uint32_t Mask = CMask->getZExtValue();
+  FPClassTest Mask = static_cast<FPClassTest>(CMask->getZExtValue());
+
   const bool IsStrict = II.isStrictFP();
 
   Value *FNegSrc;
   if (match(Src0, m_FNeg(m_Value(FNegSrc)))) {
     // is.fpclass (fneg x), mask -> is.fpclass x, (fneg mask)
-    unsigned NewMask = Mask & fcNan;
-    if (Mask & fcNegInf)
-      NewMask |= fcPosInf;
-    if (Mask & fcNegNormal)
-      NewMask |= fcPosNormal;
-    if (Mask & fcNegSubnormal)
-      NewMask |= fcPosSubnormal;
-    if (Mask & fcNegZero)
-      NewMask |= fcPosZero;
-    if (Mask & fcPosZero)
-      NewMask |= fcNegZero;
-    if (Mask & fcPosSubnormal)
-      NewMask |= fcNegSubnormal;
-    if (Mask & fcPosNormal)
-      NewMask |= fcNegNormal;
-    if (Mask & fcPosInf)
-      NewMask |= fcNegInf;
 
-    II.setArgOperand(1, ConstantInt::get(Src1->getType(), NewMask));
+    II.setArgOperand(1, ConstantInt::get(Src1->getType(), fneg(Mask)));
     return replaceOperand(II, 0, FNegSrc);
   }
 
   Value *FAbsSrc;
   if (match(Src0, m_FAbs(m_Value(FAbsSrc)))) {
-    unsigned NewMask = Mask & fcNan;
-    if (Mask & fcPosZero)
-      NewMask |= fcZero;
-    if (Mask & fcPosSubnormal)
-      NewMask |= fcSubnormal;
-    if (Mask & fcPosNormal)
-      NewMask |= fcNormal;
-    if (Mask & fcPosInf)
-      NewMask |= fcInf;
-
-    II.setArgOperand(1, ConstantInt::get(Src1->getType(), NewMask));
+    II.setArgOperand(1, ConstantInt::get(Src1->getType(), fabs(Mask)));
     return replaceOperand(II, 0, FAbsSrc);
   }
 
@@ -1082,7 +1056,8 @@ static Instruction *foldClampRangeOfTwo(IntrinsicInst *II,
 
 /// If this min/max has a constant operand and an operand that is a matching
 /// min/max with a constant operand, constant-fold the 2 constant operands.
-static Instruction *reassociateMinMaxWithConstants(IntrinsicInst *II) {
+static Value *reassociateMinMaxWithConstants(IntrinsicInst *II,
+                                             IRBuilderBase &Builder) {
   Intrinsic::ID MinMaxID = II->getIntrinsicID();
   auto *LHS = dyn_cast<IntrinsicInst>(II->getArgOperand(0));
   if (!LHS || LHS->getIntrinsicID() != MinMaxID)
@@ -1095,12 +1070,10 @@ static Instruction *reassociateMinMaxWithConstants(IntrinsicInst *II) {
 
   // max (max X, C0), C1 --> max X, (max C0, C1) --> max X, NewC
   ICmpInst::Predicate Pred = MinMaxIntrinsic::getPredicate(MinMaxID);
-  Constant *CondC = ConstantExpr::getICmp(Pred, C0, C1);
-  Constant *NewC = ConstantExpr::getSelect(CondC, C0, C1);
-
-  Module *Mod = II->getModule();
-  Function *MinMax = Intrinsic::getDeclaration(Mod, MinMaxID, II->getType());
-  return CallInst::Create(MinMax, {LHS->getArgOperand(0), NewC});
+  Value *CondC = Builder.CreateICmp(Pred, C0, C1);
+  Value *NewC = Builder.CreateSelect(CondC, C0, C1);
+  return Builder.CreateIntrinsic(MinMaxID, II->getType(),
+                                 {LHS->getArgOperand(0), NewC});
 }
 
 /// If this min/max has a matching min/max operand with a constant, try to push
@@ -1572,8 +1545,8 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
         if (Instruction *R = FoldOpIntoSelect(*II, Sel))
           return R;
 
-    if (Instruction *NewMinMax = reassociateMinMaxWithConstants(II))
-      return NewMinMax;
+    if (Value *NewMinMax = reassociateMinMaxWithConstants(II, Builder))
+      return replaceInstUsesWith(*II, NewMinMax);
 
     if (Instruction *R = reassociateMinMaxWithConstantInOperand(II, Builder))
       return R;
@@ -2515,6 +2488,27 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
 
       // TODO: apply nonnull return attributes to calls and invokes
       // TODO: apply range metadata for range check patterns?
+    }
+
+    // Separate storage assumptions apply to the underlying allocations, not any
+    // particular pointer within them. When evaluating the hints for AA purposes
+    // we getUnderlyingObject them; by precomputing the answers here we can
+    // avoid having to do so repeatedly there.
+    for (unsigned Idx = 0; Idx < II->getNumOperandBundles(); Idx++) {
+      OperandBundleUse OBU = II->getOperandBundleAt(Idx);
+      if (OBU.getTagName() == "separate_storage") {
+        assert(OBU.Inputs.size() == 2);
+        auto MaybeSimplifyHint = [&](const Use &U) {
+          Value *Hint = U.get();
+          // Not having a limit is safe because InstCombine removes unreachable
+          // code.
+          Value *UnderlyingObject = getUnderlyingObject(Hint, /*MaxLookup*/ 0);
+          if (Hint != UnderlyingObject)
+            replaceUse(const_cast<Use &>(U), UnderlyingObject);
+        };
+        MaybeSimplifyHint(OBU.Inputs[0]);
+        MaybeSimplifyHint(OBU.Inputs[1]);
+      }
     }
 
     // Convert nonnull assume like:

@@ -573,17 +573,17 @@ def ForallOp : SCF_Op<"forall", [
 
     /// Get lower bounds as values.
     SmallVector<Value> getLowerBound(OpBuilder &b) {
-      return getAsValues(b, getLoc(), getMixedLowerBound());
+      return getValueOrCreateConstantIndexOp(b, getLoc(), getMixedLowerBound());
     }
 
     /// Get upper bounds as values.
     SmallVector<Value> getUpperBound(OpBuilder &b) {
-      return getAsValues(b, getLoc(), getMixedUpperBound());
+      return getValueOrCreateConstantIndexOp(b, getLoc(), getMixedUpperBound());
     }
 
     /// Get steps as values.
     SmallVector<Value> getStep(OpBuilder &b) {
-      return getAsValues(b, getLoc(), getMixedStep());
+      return getValueOrCreateConstantIndexOp(b, getLoc(), getMixedStep());
     }
 
     int64_t getRank() { return getStaticLowerBound().size(); }
@@ -773,6 +773,8 @@ def IfOp : SCF_Op<"if", [DeclareOpInterfaceMethods<RegionBranchOpInterface, [
   let skipDefaultBuilders = 1;
   let builders = [
     OpBuilder<(ins "TypeRange":$resultTypes, "Value":$cond)>,
+    OpBuilder<(ins "TypeRange":$resultTypes, "Value":$cond,
+      "bool":$addThenBlock, "bool":$addElseBlock)>,
     OpBuilder<(ins "Value":$cond, "bool":$withElseRegion)>,
     OpBuilder<(ins "TypeRange":$resultTypes, "Value":$cond,
       "bool":$withElseRegion)>,
