@@ -580,8 +580,6 @@ public:
   ConstString DeclContextGetScopeQualifiedName(void *opaque_decl_ctx) override;
 
   bool DeclContextIsClassMethod(void *opaque_decl_ctx,
-                                lldb::LanguageType *language_ptr,
-                                bool *is_instance_method_ptr,
                                 ConstString *language_object_name_ptr) override;
 
   bool DeclContextIsContainedInLookup(void *opaque_decl_ctx,
@@ -657,8 +655,6 @@ public:
                                           const size_t index) override;
 
   bool IsFunctionPointerType(lldb::opaque_compiler_type_t type) override;
-
-  bool IsMemberFunctionPointerType(lldb::opaque_compiler_type_t type) override;
 
   bool IsBlockPointerType(lldb::opaque_compiler_type_t type,
                           CompilerType *function_pointer_type_ptr) override;
