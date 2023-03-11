@@ -190,12 +190,24 @@ private:
   Value genAddress(OpBuilder &builder, Location loc, size_t tid, size_t dim,
                    Value iv);
 
+  /// Generates the segment high for a non-unique level (to fast forward
+  /// duplicated coordinates).
+  Value genSegmentHigh(OpBuilder &builder, Location loc, size_t tid, size_t lvl,
+                       Value pos, Value pHi);
+
   /// Generates instructions to compute the coordinate of tensors[tid][lvl]
   /// under the current loop context.  The final argument is the
   /// collapsed-output level, whereas this function handles converting
   /// that to the uncollapsed-input level
   Value genSparseCrd(OpBuilder &builder, Location loc, size_t tid,
                      size_t dstLvl);
+
+  /// Generates a predicate to determine whether the tranformed coordinates are
+  /// in the given slice.
+  /// Returns std::pair<Transformed coordinates, Predicate>
+  std::pair<Value, Value> genSliceLegitPredicate(OpBuilder &builder,
+                                                 Location loc, Value crd,
+                                                 unsigned tid, unsigned lvl);
 
   bool isOutputTensor(size_t tid) {
     return hasOutput && tid == tensors.size() - 1;
@@ -262,6 +274,8 @@ private:
   /// are updated to remain current within the current loop.
   // TODO: we may want to rename "pidx(s)" to `posCursor(s)` or similar.
   std::vector<std::vector<Value>> pidxs;
+  // The segment upper bound for non-uniques level after de-duplication.
+  std::vector<std::vector<Value>> segHi;
   std::vector<std::vector<Value>> coord;
   std::vector<std::vector<Value>> highs;
   std::vector<std::vector<Value>> lvlSizes;
@@ -271,6 +285,9 @@ private:
 
   /// Whether the sparse input is a slice.
   std::vector<bool> isSparseSlices;
+  /// Values related to slices.
+  std::vector<std::vector<Value>> sliceOffsets;
+  std::vector<std::vector<Value>> sliceStrides;
 
   /// Loop Stack, stores the information of all the nested loops that are
   /// alive.

@@ -78,6 +78,8 @@ C++ Language Changes
 
 C++20 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
+- Support for out-of-line definitions of constrained templates has been improved.
+  This partially fixes `https://github.com/llvm/llvm-project/issues/49620`.
 
 C++2b Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
@@ -159,6 +161,9 @@ Improvements to Clang's diagnostics
   class if that class was first introduced with a forward declaration.
 - Diagnostic notes and fix-its are now generated for ``ifunc``/``alias`` attributes
   which point to functions whose names are mangled.
+- Diagnostics relating to macros on the command line of a preprocessed assembly
+  file are now reported as coming from the file ``<command line>`` instead of
+  ``<built-in>``.
 
 Bug Fixes in This Version
 -------------------------
@@ -267,6 +272,8 @@ Floating Point Support in Clang
 - Add ``__builtin_elementwise_log`` builtin for floating point types only.
 - Add ``__builtin_elementwise_log10`` builtin for floating point types only.
 - Add ``__builtin_elementwise_log2`` builtin for floating point types only.
+- Add ``__builtin_elementwise_exp`` builtin for floating point types only.
+- Add ``__builtin_elementwise_exp2`` builtin for floating point types only.
 
 AST Matchers
 ------------
@@ -290,6 +297,14 @@ libclang
 - Introduced the new function ``clang_CXXMethod_isExplicit``,
   which identifies whether a constructor or conversion function cursor
   was marked with the explicit identifier.
+
+- Introduced the new ``CXIndex`` constructor function
+  ``clang_createIndexWithOptions``, which allows overriding precompiled preamble
+  storage path.
+
+- Deprecated two functions ``clang_CXIndex_setGlobalOptions`` and
+  ``clang_CXIndex_setInvocationEmissionPathOption`` in favor of the new
+  function ``clang_createIndexWithOptions`` in order to improve thread safety.
 
 Static Analyzer
 ---------------

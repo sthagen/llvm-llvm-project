@@ -579,11 +579,12 @@ public:
 
   ConstString DeclContextGetScopeQualifiedName(void *opaque_decl_ctx) override;
 
-  bool DeclContextIsClassMethod(void *opaque_decl_ctx,
-                                ConstString *language_object_name_ptr) override;
+  bool DeclContextIsClassMethod(void *opaque_decl_ctx) override;
 
   bool DeclContextIsContainedInLookup(void *opaque_decl_ctx,
                                       void *other_opaque_decl_ctx) override;
+
+  lldb::LanguageType DeclContextGetLanguage(void *opaque_decl_ctx) override;
 
   // Clang specific clang::DeclContext functions
 
@@ -656,6 +657,8 @@ public:
 
   bool IsFunctionPointerType(lldb::opaque_compiler_type_t type) override;
 
+  bool IsMemberFunctionPointerType(lldb::opaque_compiler_type_t type) override;
+
   bool IsBlockPointerType(lldb::opaque_compiler_type_t type,
                           CompilerType *function_pointer_type_ptr) override;
 
@@ -707,6 +710,8 @@ public:
   bool CanPassInRegisters(const CompilerType &type) override;
 
   bool SupportsLanguage(lldb::LanguageType language) override;
+
+  ConstString GetInstanceVariableName(lldb::LanguageType language) override;
 
   static std::optional<std::string> GetCXXClassName(const CompilerType &type);
 

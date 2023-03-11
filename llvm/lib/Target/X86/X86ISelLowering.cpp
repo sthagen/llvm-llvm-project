@@ -29839,6 +29839,17 @@ static SDValue LowerMINMAX(SDValue Op, const X86Subtarget &Subtarget,
   if (VT == MVT::v32i16 || VT == MVT::v64i8)
     return splitVectorIntBinary(Op, DAG);
 
+  // umax(x,1) --> sub(x,cmpeq(x,0))
+  // TODO: Move this to expandIntMINMAX?
+  if (VT.isVector() && Op.getOpcode() == ISD::UMAX &&
+      llvm::isOneOrOneSplat(Op.getOperand(1), true)) {
+    SDLoc DL(Op);
+    SDValue X = DAG.getFreeze(Op.getOperand(0));
+    SDValue Zero = getZeroVector(VT, Subtarget, DAG, DL);
+    return DAG.getNode(ISD::SUB, DL, VT, X,
+                       DAG.getSetCC(DL, VT, X, Zero, ISD::SETEQ));
+  }
+
   // Default to expand.
   return SDValue();
 }
@@ -35398,9 +35409,9 @@ bool X86TargetLowering::isFMAFasterThanFMulAndFAdd(const MachineFunction &MF,
   return false;
 }
 
-bool X86TargetLowering::isNarrowingProfitable(EVT VT1, EVT VT2) const {
+bool X86TargetLowering::isNarrowingProfitable(EVT SrcVT, EVT DestVT) const {
   // i16 instructions are longer (0x66 prefix) and potentially slower.
-  return !(VT1 == MVT::i32 && VT2 == MVT::i16);
+  return !(SrcVT == MVT::i32 && DestVT == MVT::i16);
 }
 
 bool X86TargetLowering::shouldFoldSelectWithIdentityConstant(unsigned Opcode,
@@ -55882,7 +55893,7 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
   if (llvm::all_of(Ops, [Op0](SDValue Op) {
         return Op.getOpcode() == Op0.getOpcode();
       })) {
-    auto ConcatSubOperand = [&](MVT VT, ArrayRef<SDValue> SubOps, unsigned I) {
+    auto ConcatSubOperand = [&](EVT VT, ArrayRef<SDValue> SubOps, unsigned I) {
       SmallVector<SDValue> Subs;
       for (SDValue SubOp : SubOps)
         Subs.push_back(SubOp.getOperand(I));
@@ -56037,6 +56048,20 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
         }
       }
       break;
+    case ISD::TRUNCATE:
+      if (!IsSplat && NumOps == 2 && VT.is256BitVector()) {
+        EVT SrcVT = Ops[0].getOperand(0).getValueType();
+        if (SrcVT.is256BitVector() && SrcVT.isSimple() &&
+            SrcVT == Ops[1].getOperand(0).getValueType() &&
+            Subtarget.useAVX512Regs() &&
+            Subtarget.getPreferVectorWidth() >= 512 &&
+            (SrcVT.getScalarSizeInBits() > 16 || Subtarget.useBWIRegs())) {
+          EVT NewSrcVT = SrcVT.getDoubleNumVectorElementsVT(*DAG.getContext());
+          return DAG.getNode(ISD::TRUNCATE, DL, VT,
+                             ConcatSubOperand(NewSrcVT, Ops, 0));
+        }
+      }
+      break;
     case X86ISD::VSHLI:
     case X86ISD::VSRLI:
       // Special case: SHL/SRL AVX1 V4i64 by 32-bits can lower as a shuffle.
@@ -56106,6 +56131,20 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
         return DAG.getNode(Op0.getOpcode(), DL, VT,
                            ConcatSubOperand(VT, Ops, 0),
                            ConcatSubOperand(VT, Ops, 1), Op0.getOperand(2));
+      }
+      break;
+    case ISD::ADD:
+    case ISD::SUB:
+    case ISD::MUL:
+      if (!IsSplat && ((VT.is256BitVector() && Subtarget.hasInt256()) ||
+                       (VT.is512BitVector() && Subtarget.useAVX512Regs() &&
+                        (EltSizeInBits >= 32 || Subtarget.useBWIRegs())))) {
+        MVT SrcVT = Op0.getOperand(0).getSimpleValueType();
+        SrcVT = MVT::getVectorVT(SrcVT.getScalarType(),
+                                 NumOps * SrcVT.getVectorNumElements());
+        return DAG.getNode(Op0.getOpcode(), DL, VT,
+                           ConcatSubOperand(SrcVT, Ops, 0),
+                           ConcatSubOperand(SrcVT, Ops, 1));
       }
       break;
     case ISD::FADD:

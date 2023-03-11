@@ -73,7 +73,7 @@ public:
     DCHECK(isAligned(reinterpret_cast<uptr>(this), alignof(ThisT)));
     PossibleRegions.init();
     u32 Seed;
-    const u64 Time = getMonotonicTime();
+    const u64 Time = getMonotonicTimeFast();
     if (!getRandom(reinterpret_cast<void *>(&Seed), sizeof(Seed)))
       Seed = static_cast<u32>(
           Time ^ (reinterpret_cast<uptr>(SizeClassInfoArray) >> 6));
@@ -758,7 +758,7 @@ private:
         return 0;
       if (Sci->ReleaseInfo.LastReleaseAtNs +
               static_cast<u64>(IntervalMs) * 1000000 >
-          getMonotonicTime()) {
+          getMonotonicTimeFast()) {
         return 0; // Memory was returned recently.
       }
     }
@@ -775,7 +775,7 @@ private:
         compactPtrGroupBase(compactPtr(ClassId, Sci->CurrentRegion));
 
     ReleaseRecorder Recorder(Base);
-    PageReleaseContext Context(BlockSize, RegionSize, NumberOfRegions,
+    PageReleaseContext Context(BlockSize, NumberOfRegions,
                                /*ReleaseSize=*/RegionSize);
 
     auto DecompactPtr = [](CompactPtrT CompactPtr) {
@@ -787,10 +787,13 @@ private:
       if (PushedBytesDelta * BlockSize < PageSize)
         continue;
 
-      uptr AllocatedGroupSize =
-          decompactGroupBase(BG.CompactPtrGroupBase) == CurGroupBase
-              ? Sci->CurrentRegionAllocated
-              : GroupSize;
+      const uptr GroupBase = decompactGroupBase(BG.CompactPtrGroupBase);
+      // The `GroupSize` may not be divided by `BlockSize`, which means there is
+      // an unused space at the end of Region. Exclude that space to avoid
+      // unused page map entry.
+      uptr AllocatedGroupSize = GroupBase == CurGroupBase
+                                    ? Sci->CurrentRegionAllocated
+                                    : roundDownSlow(GroupSize, BlockSize);
       if (AllocatedGroupSize == 0)
         continue;
 
@@ -810,34 +813,25 @@ private:
       BG.PushedBlocksAtLastCheckpoint = BG.PushedBlocks;
 
       const uptr MaxContainedBlocks = AllocatedGroupSize / BlockSize;
-      // The first condition to do range marking is that all the blocks in the
-      // range need to be from the same region. In SizeClassAllocator32, this is
-      // true when GroupSize and RegionSize are the same. Another tricky case,
-      // while range marking, the last block in a region needs the logic to mark
-      // the last page. However, in SizeClassAllocator32, the RegionSize
-      // recorded in PageReleaseContext may be different from
-      // `CurrentRegionAllocated` of the current region. This exception excludes
-      // the chance of doing range marking for the current region.
-      const bool CanDoRangeMark =
-          GroupSize == RegionSize &&
-          decompactGroupBase(BG.CompactPtrGroupBase) != CurGroupBase;
+      const uptr RegionIndex = (GroupBase - Base) / RegionSize;
 
-      if (CanDoRangeMark && NumBlocks == MaxContainedBlocks) {
+      if (NumBlocks == MaxContainedBlocks) {
         for (const auto &It : BG.Batches)
           for (u16 I = 0; I < It.getCount(); ++I)
             DCHECK_EQ(compactPtrGroupBase(It.get(I)), BG.CompactPtrGroupBase);
 
-        const uptr From = decompactGroupBase(BG.CompactPtrGroupBase);
-        const uptr To = From + AllocatedGroupSize;
-        Context.markRangeAsAllCounted(From, To, Base);
+        const uptr To = GroupBase + AllocatedGroupSize;
+        Context.markRangeAsAllCounted(GroupBase, To, GroupBase, RegionIndex,
+                                      AllocatedGroupSize);
       } else {
-        if (CanDoRangeMark)
-          DCHECK_LT(NumBlocks, MaxContainedBlocks);
+        DCHECK_LT(NumBlocks, MaxContainedBlocks);
 
         // Note that we don't always visit blocks in each BatchGroup so that we
         // may miss the chance of releasing certain pages that cross
         // BatchGroups.
-        Context.markFreeBlocks(BG.Batches, DecompactPtr, Base);
+        Context.markFreeBlocksInRegion(BG.Batches, DecompactPtr, GroupBase,
+                                       RegionIndex, AllocatedGroupSize,
+                                       /*MayContainLastBlockInRegion=*/true);
       }
     }
 
@@ -856,7 +850,7 @@ private:
       Sci->ReleaseInfo.LastReleasedBytes = Recorder.getReleasedBytes();
       TotalReleasedBytes += Sci->ReleaseInfo.LastReleasedBytes;
     }
-    Sci->ReleaseInfo.LastReleaseAtNs = getMonotonicTime();
+    Sci->ReleaseInfo.LastReleaseAtNs = getMonotonicTimeFast();
 
     return TotalReleasedBytes;
   }

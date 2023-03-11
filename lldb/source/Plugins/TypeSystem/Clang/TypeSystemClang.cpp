@@ -8,6 +8,8 @@
 
 #include "TypeSystemClang.h"
 
+#include "clang/AST/DeclBase.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -3194,6 +3196,15 @@ bool TypeSystemClang::IsTypeImpl(
   return false;
 }
 
+bool TypeSystemClang::IsMemberFunctionPointerType(
+    lldb::opaque_compiler_type_t type) {
+  auto isMemberFunctionPointerType = [](clang::QualType qual_type) {
+    return qual_type->isMemberFunctionPointerType();
+  };
+
+  return IsTypeImpl(type, isMemberFunctionPointerType);
+}
+
 bool TypeSystemClang::IsFunctionPointerType(lldb::opaque_compiler_type_t type) {
   auto isFunctionPointerType = [](clang::QualType qual_type) {
     return qual_type->isFunctionPointerType();
@@ -3714,6 +3725,22 @@ bool TypeSystemClang::CanPassInRegisters(const CompilerType &type) {
 
 bool TypeSystemClang::SupportsLanguage(lldb::LanguageType language) {
   return TypeSystemClangSupportsLanguage(language);
+}
+
+ConstString
+TypeSystemClang::GetInstanceVariableName(lldb::LanguageType language) {
+  switch (language) {
+  case LanguageType::eLanguageTypeC_plus_plus:
+  case LanguageType::eLanguageTypeC_plus_plus_03:
+  case LanguageType::eLanguageTypeC_plus_plus_11:
+  case LanguageType::eLanguageTypeC_plus_plus_14:
+    return ConstString("this");
+  case LanguageType::eLanguageTypeObjC:
+  case LanguageType::eLanguageTypeObjC_plus_plus:
+    return ConstString("self");
+  default:
+    return {};
+  }
 }
 
 std::optional<std::string>
@@ -4976,6 +5003,7 @@ lldb::Encoding TypeSystemClang::GetEncoding(lldb::opaque_compiler_type_t type,
 
     // ARM -- Scalable Vector Extension
     case clang::BuiltinType::SveBool:
+    case clang::BuiltinType::SveCount:
     case clang::BuiltinType::SveInt8:
     case clang::BuiltinType::SveInt8x2:
     case clang::BuiltinType::SveInt8x3:
@@ -5277,7 +5305,7 @@ lldb::Format TypeSystemClang::GetFormat(lldb::opaque_compiler_type_t type) {
   case clang::Type::RValueReference:
     return lldb::eFormatHex;
   case clang::Type::MemberPointer:
-    break;
+    return lldb::eFormatHex;
   case clang::Type::Complex: {
     if (qual_type->isComplexType())
       return lldb::eFormatComplex;
@@ -9741,32 +9769,21 @@ TypeSystemClang::DeclContextGetScopeQualifiedName(void *opaque_decl_ctx) {
   return ConstString();
 }
 
-bool TypeSystemClang::DeclContextIsClassMethod(
-    void *opaque_decl_ctx, ConstString *language_object_name_ptr) {
-  if (opaque_decl_ctx) {
-    clang::DeclContext *decl_ctx = (clang::DeclContext *)opaque_decl_ctx;
-    if (ObjCMethodDecl *objc_method =
-            llvm::dyn_cast<clang::ObjCMethodDecl>(decl_ctx)) {
-      if (objc_method->isInstanceMethod())
-        if (language_object_name_ptr)
-          language_object_name_ptr->SetCString("self");
-      return true;
-    } else if (CXXMethodDecl *cxx_method =
-                   llvm::dyn_cast<clang::CXXMethodDecl>(decl_ctx)) {
-      if (cxx_method->isInstance())
-        if (language_object_name_ptr)
-          language_object_name_ptr->SetCString("this");
-      return true;
-    } else if (clang::FunctionDecl *function_decl =
-                   llvm::dyn_cast<clang::FunctionDecl>(decl_ctx)) {
-      ClangASTMetadata *metadata = GetMetadata(function_decl);
-      if (metadata && metadata->HasObjectPtr()) {
-        if (language_object_name_ptr)
-          language_object_name_ptr->SetCString(metadata->GetObjectPtrName());
-        return true;
-      }
-    }
+bool TypeSystemClang::DeclContextIsClassMethod(void *opaque_decl_ctx) {
+  if (!opaque_decl_ctx)
+    return false;
+
+  clang::DeclContext *decl_ctx = (clang::DeclContext *)opaque_decl_ctx;
+  if (llvm::isa<clang::ObjCMethodDecl>(decl_ctx)) {
+    return true;
+  } else if (llvm::isa<clang::CXXMethodDecl>(decl_ctx)) {
+    return true;
+  } else if (clang::FunctionDecl *fun_decl =
+                 llvm::dyn_cast<clang::FunctionDecl>(decl_ctx)) {
+    if (ClangASTMetadata *metadata = GetMetadata(fun_decl))
+      return metadata->HasObjectPtr();
   }
+
   return false;
 }
 
@@ -9785,6 +9802,24 @@ bool TypeSystemClang::DeclContextIsContainedInLookup(
   } while (other->isInlineNamespace() && (other = other->getParent()));
 
   return false;
+}
+
+lldb::LanguageType
+TypeSystemClang::DeclContextGetLanguage(void *opaque_decl_ctx) {
+  if (!opaque_decl_ctx)
+    return eLanguageTypeUnknown;
+
+  auto *decl_ctx = (clang::DeclContext *)opaque_decl_ctx;
+  if (llvm::isa<clang::ObjCMethodDecl>(decl_ctx)) {
+    return eLanguageTypeObjC;
+  } else if (llvm::isa<clang::CXXMethodDecl>(decl_ctx)) {
+    return eLanguageTypeC_plus_plus;
+  } else if (auto *fun_decl = llvm::dyn_cast<clang::FunctionDecl>(decl_ctx)) {
+    if (ClangASTMetadata *metadata = GetMetadata(fun_decl))
+      return metadata->GetObjectPtrLanguage();
+  }
+
+  return eLanguageTypeUnknown;
 }
 
 static bool IsClangDeclContext(const CompilerDeclContext &dc) {
