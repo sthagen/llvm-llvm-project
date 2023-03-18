@@ -47,6 +47,11 @@ Non-comprehensive list of changes in this release
 Update on required toolchains to build LLVM
 -------------------------------------------
 
+With LLVM 17.x we raised the version requirement of CMake used to build LLVM.
+The new requirements are as follows:
+
+* CMake >= 3.20.0
+
 Changes to the LLVM IR
 ----------------------
 
@@ -204,6 +209,9 @@ Changes to the Debug Info
 Changes to the LLVM tools
 ---------------------------------
 * llvm-lib now supports the /def option for generating a Windows import library from a definition file.
+
+* Made significant changes to JSON output format of `llvm-readobj`/`llvm-readelf`
+  to improve correctness and clarity.
 
 Changes to LLDB
 ---------------------------------
