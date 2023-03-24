@@ -41,7 +41,7 @@ static constexpr StringLiteral AllStdExts = "mafdqlcbkjtpvnh";
 
 static const RISCVSupportedExtension SupportedExtensions[] = {
     {"i", RISCVExtensionVersion{2, 0}},
-    {"e", RISCVExtensionVersion{1, 9}},
+    {"e", RISCVExtensionVersion{2, 0}},
     {"m", RISCVExtensionVersion{2, 0}},
     {"a", RISCVExtensionVersion{2, 0}},
     {"f", RISCVExtensionVersion{2, 0}},
@@ -266,78 +266,70 @@ bool RISCVISAInfo::hasExtension(StringRef Ext) const {
   return Exts.count(Ext.str()) != 0;
 }
 
+// We rank extensions in the following order:
+// -Single letter extensions in canonical order.
+// -Unknown single letter extensions in alphabetical order.
+// -Multi-letter extensions starting with 's' in alphabetical order.
+// -Multi-letter extensions starting with 'z' sorted by canonical order of
+//  the second letter then sorted alphabetically.
+// -X extensions in alphabetical order.
+// These flags are used to indicate the category. The first 6 bits store the
+// single letter extension rank for single letter and multi-letter extensions
+// starting with 'z'.
+enum RankFlags {
+  RF_S_EXTENSION = 1 << 6,
+  RF_Z_EXTENSION = 1 << 7,
+  RF_X_EXTENSION = 1 << 8,
+};
+
 // Get the rank for single-letter extension, lower value meaning higher
 // priority.
-static int singleLetterExtensionRank(char Ext) {
+static unsigned singleLetterExtensionRank(char Ext) {
+  assert(Ext >= 'a' && Ext <= 'z');
   switch (Ext) {
   case 'i':
-    return -2;
+    return 0;
   case 'e':
-    return -1;
-  default:
-    break;
+    return 1;
   }
 
   size_t Pos = AllStdExts.find(Ext);
-  int Rank;
-  if (Pos == StringRef::npos)
-    // If we got an unknown extension letter, then give it an alphabetical
-    // order, but after all known standard extensions.
-    Rank = AllStdExts.size() + (Ext - 'a');
-  else
-    Rank = Pos;
+  if (Pos != StringRef::npos)
+    return Pos + 2; // Skip 'e' and 'i' from above.
 
-  return Rank;
+  // If we got an unknown extension letter, then give it an alphabetical
+  // order, but after all known standard extensions.
+  return 2 + AllStdExts.size() + (Ext - 'a');
 }
 
 // Get the rank for multi-letter extension, lower value meaning higher
 // priority/order in canonical order.
-static int multiLetterExtensionRank(const std::string &ExtName) {
-  assert(ExtName.length() >= 2);
-  int HighOrder;
-  int LowOrder = 0;
-  // The order between multi-char extensions: s -> h -> z -> x.
-  char ExtClass = ExtName[0];
-  switch (ExtClass) {
+static unsigned getExtensionRank(const std::string &ExtName) {
+  assert(ExtName.size() >= 1);
+  switch (ExtName[0]) {
   case 's':
-    HighOrder = 0;
-    break;
+    return RF_S_EXTENSION;
   case 'z':
-    HighOrder = 1;
+    assert(ExtName.size() >= 2);
     // `z` extension must be sorted by canonical order of second letter.
     // e.g. zmx has higher rank than zax.
-    LowOrder = singleLetterExtensionRank(ExtName[1]);
-    break;
+    return RF_Z_EXTENSION | singleLetterExtensionRank(ExtName[1]);
   case 'x':
-    HighOrder = 2;
-    break;
+    return RF_X_EXTENSION;
   default:
-    llvm_unreachable("Unknown prefix for multi-char extension");
-    return -1;
+    assert(ExtName.size() == 1);
+    return singleLetterExtensionRank(ExtName[0]);
   }
-
-  return (HighOrder << 8) + LowOrder;
 }
 
 // Compare function for extension.
 // Only compare the extension name, ignore version comparison.
 bool RISCVISAInfo::compareExtension(const std::string &LHS,
                                     const std::string &RHS) {
-  size_t LHSLen = LHS.length();
-  size_t RHSLen = RHS.length();
-  if (LHSLen == 1 && RHSLen != 1)
-    return true;
+  unsigned LHSRank = getExtensionRank(LHS);
+  unsigned RHSRank = getExtensionRank(RHS);
 
-  if (LHSLen != 1 && RHSLen == 1)
-    return false;
-
-  if (LHSLen == 1 && RHSLen == 1)
-    return singleLetterExtensionRank(LHS[0]) <
-           singleLetterExtensionRank(RHS[0]);
-
-  // Both are multi-char ext here.
-  int LHSRank = multiLetterExtensionRank(LHS);
-  int RHSRank = multiLetterExtensionRank(RHS);
+  // If the ranks differ, pick the lower rank.
   if (LHSRank != RHSRank)
     return LHSRank < RHSRank;
 
@@ -592,8 +584,9 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
   bool HasRV64 = Arch.startswith("rv64");
   // ISA string must begin with rv32 or rv64.
   if (!(Arch.startswith("rv32") || HasRV64) || (Arch.size() < 5)) {
-    return createStringError(errc::invalid_argument,
-                             "string must begin with rv32{i,e,g} or rv64{i,g}");
+    return createStringError(
+        errc::invalid_argument,
+        "string must begin with rv32{i,e,g} or rv64{i,e,g}");
   }
 
   unsigned XLen = HasRV64 ? 64 : 32;
@@ -609,14 +602,7 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
   default:
     return createStringError(errc::invalid_argument,
                              "first letter should be 'e', 'i' or 'g'");
-  case 'e': {
-    // Extension 'e' is not allowed in rv64.
-    if (HasRV64)
-      return createStringError(
-          errc::invalid_argument,
-          "standard user-level extension 'e' requires 'rv32'");
-    break;
-  }
+  case 'e':
   case 'i':
     break;
   case 'g':
@@ -836,8 +822,6 @@ RISCVISAInfo::parseArchString(StringRef Arch, bool EnableExperimentalExtension,
 }
 
 Error RISCVISAInfo::checkDependency() {
-  bool IsRv32 = XLen == 32;
-  bool HasE = Exts.count("e") != 0;
   bool HasD = Exts.count("d") != 0;
   bool HasF = Exts.count("f") != 0;
   bool HasZfinx = Exts.count("zfinx") != 0;
@@ -846,11 +830,6 @@ Error RISCVISAInfo::checkDependency() {
   bool HasZve32f = Exts.count("zve32f") != 0;
   bool HasZve64d = Exts.count("zve64d") != 0;
   bool HasZvl = MinVLen != 0;
-
-  if (HasE && !IsRv32)
-    return createStringError(
-        errc::invalid_argument,
-        "standard user-level extension 'e' requires 'rv32'");
 
   if (HasF && HasZfinx)
     return createStringError(errc::invalid_argument,
@@ -1123,6 +1102,8 @@ StringRef RISCVISAInfo::computeDefaultABI() const {
   } else if (XLen == 64) {
     if (hasExtension("d"))
       return "lp64d";
+    if (hasExtension("e"))
+      return "lp64e";
     return "lp64";
   }
   llvm_unreachable("Invalid XLEN");

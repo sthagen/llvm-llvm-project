@@ -113,10 +113,13 @@ bool X86ArgumentStackSlotPass::runOnMachineFunction(MachineFunction &MF) {
 
   if (F.hasFnAttribute(Attribute::Naked))
     return false;
-  // Only support Linux
-  if (!STI.isTargetLinux())
+  // Only support Linux and ELF.
+  if (!STI.isTargetLinux() && !STI.isTargetELF())
     return false;
   if (!TRI->hasBasePointer(MF))
+    return false;
+  // Don't support X32
+  if (STI.isTarget64BitILP32())
     return false;
 
   Register BasePtr = TRI->getBaseRegister();
@@ -145,8 +148,6 @@ bool X86ArgumentStackSlotPass::runOnMachineFunction(MachineFunction &MF) {
   if (!ArgBaseReg.isValid())
     return false;
   // leal    4(%esp), %reg
-  // FIXME: will the instruction be duplicated or eliminated? Should
-  // define a pseudo instruction for it?
   MachineBasicBlock &MBB = MF.front();
   MachineBasicBlock::iterator MBBI = MBB.begin();
   DebugLoc DL;
@@ -157,9 +158,11 @@ bool X86ArgumentStackSlotPass::runOnMachineFunction(MachineFunction &MF) {
   // get the index from the instruction.
   unsigned SlotSize = TRI->getSlotSize();
   int FI = MFI.CreateSpillStackObject(SlotSize, Align(SlotSize));
+  // Use pseudo LEA to prevent the instruction from being eliminated.
+  // TODO: if it is duplicated we can expand it to lea.
   MachineInstr *LEA =
       BuildMI(MBB, MBBI, DL,
-              TII->get(STI.is64Bit() ? X86::LEA64r : X86::LEA32r), ArgBaseReg)
+              TII->get(STI.is64Bit() ? X86::PLEA64r : X86::PLEA32r), ArgBaseReg)
           .addFrameIndex(FI)
           .addImm(1)
           .addUse(X86::NoRegister)

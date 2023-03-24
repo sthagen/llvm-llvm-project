@@ -479,6 +479,7 @@ bool X86PassConfig::addInstSelector() {
     addPass(createCleanupLocalDynamicTLSPass());
 
   addPass(createX86GlobalBaseRegPass());
+  addPass(createX86ArgumentStackSlotPass());
   return false;
 }
 
@@ -519,7 +520,6 @@ bool X86PassConfig::addPreISel() {
 }
 
 void X86PassConfig::addPreRegAlloc() {
-  addPass(createX86ArgumentStackSlotPass());
   if (getOptLevel() != CodeGenOpt::None) {
     addPass(&LiveRangeShrinkID);
     addPass(createX86FixupSetCC());

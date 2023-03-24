@@ -3324,7 +3324,7 @@ struct AAHeapToSharedFunction : public AAHeapToShared {
       auto Remark = [&](OptimizationRemark OR) {
         return OR << "Replaced globalized variable with "
                   << ore::NV("SharedMemory", AllocSize->getZExtValue())
-                  << ((AllocSize->getZExtValue() != 1) ? " bytes " : " byte ")
+                  << (AllocSize->isOne() ? " byte " : " bytes ")
                   << "of shared memory.";
       };
       A.emitRemark<OptimizationRemark>(CB, "OMP111", Remark);
@@ -5201,6 +5201,8 @@ void OpenMPOpt::registerAAsForFunction(Attributor &A, const Function &F) {
   A.getOrCreateAAFor<AAExecutionDomain>(IRPosition::function(F));
   if (!DisableOpenMPOptDeglobalization)
     A.getOrCreateAAFor<AAHeapToStack>(IRPosition::function(F));
+  if (F.hasFnAttribute(Attribute::Convergent))
+    A.getOrCreateAAFor<AANonConvergent>(IRPosition::function(F));
 
   for (auto &I : instructions(F)) {
     if (auto *LI = dyn_cast<LoadInst>(&I)) {
