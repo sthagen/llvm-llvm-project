@@ -396,3 +396,105 @@ llvm.func @test_byval_write_only(%ptr : !llvm.ptr) {
   llvm.call @with_byval_arg(%ptr) : (!llvm.ptr) -> ()
   llvm.return
 }
+
+// -----
+
+llvm.func @aligned_byval_arg(%ptr : !llvm.ptr { llvm.byval = i16, llvm.align = 16 }) attributes {memory = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read>} {
+  llvm.return
+}
+
+// CHECK-LABEL: llvm.func @test_byval_input_aligned
+// CHECK-SAME: %[[UNALIGNED:[a-zA-Z0-9_]+]]: !llvm.ptr
+// CHECK-SAME: %[[ALIGNED:[a-zA-Z0-9_]+]]: !llvm.ptr
+llvm.func @test_byval_input_aligned(%unaligned : !llvm.ptr, %aligned : !llvm.ptr { llvm.align = 16 }) {
+  // Make sure only the unaligned input triggers a memcpy.
+  // CHECK: %[[ALLOCA:.+]] = llvm.alloca %{{.+}} x i16 {alignment = 16
+  // CHECK: "llvm.intr.memcpy"(%[[ALLOCA]], %[[UNALIGNED]]
+  llvm.call @aligned_byval_arg(%unaligned) : (!llvm.ptr) -> ()
+  // CHECK-NOT: memcpy
+  llvm.call @aligned_byval_arg(%aligned) : (!llvm.ptr) -> ()
+  llvm.return
+}
+
+// -----
+
+llvm.func @aligned_byval_arg(%ptr : !llvm.ptr { llvm.byval = i16, llvm.align = 16 }) attributes {memory = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read>} {
+  llvm.return
+}
+
+// CHECK-LABEL: llvm.func @test_byval_alloca
+llvm.func @test_byval_alloca() {
+  // Make sure only the unaligned alloca triggers a memcpy.
+  %size = llvm.mlir.constant(1 : i64) : i64
+  // CHECK: %[[ALLOCA:.+]] = llvm.alloca {{.+}}alignment = 1
+  // CHECK: "llvm.intr.memcpy"(%{{.+}}, %[[ALLOCA]]
+  %unaligned = llvm.alloca %size x i16 { alignment = 1 } : (i64) -> !llvm.ptr
+  llvm.call @aligned_byval_arg(%unaligned) : (!llvm.ptr) -> ()
+  // CHECK-NOT: memcpy
+  %aligned = llvm.alloca %size x i16 { alignment = 16 } : (i64) -> !llvm.ptr
+  llvm.call @aligned_byval_arg(%aligned) : (!llvm.ptr) -> ()
+  llvm.return
+}
+
+// -----
+
+llvm.mlir.global private @unaligned_global(42 : i64) : i64
+llvm.mlir.global private @aligned_global(42 : i64) { alignment = 64 } : i64
+
+llvm.func @aligned_byval_arg(%ptr : !llvm.ptr { llvm.byval = i16, llvm.align = 16 }) attributes {memory = #llvm.memory_effects<other = read, argMem = read, inaccessibleMem = read>} {
+  llvm.return
+}
+
+// CHECK-LABEL: llvm.func @test_byval_global
+llvm.func @test_byval_global() {
+  // Make sure only the unaligned global triggers a memcpy.
+  // CHECK: %[[UNALIGNED:.+]] = llvm.mlir.addressof @unaligned_global
+  // CHECK: %[[ALLOCA:.+]] = llvm.alloca
+  // CHECK: "llvm.intr.memcpy"(%[[ALLOCA]], %[[UNALIGNED]]
+  // CHECK-NOT: llvm.alloca
+  %unaligned = llvm.mlir.addressof @unaligned_global : !llvm.ptr
+  llvm.call @aligned_byval_arg(%unaligned) : (!llvm.ptr) -> ()
+  %aligned = llvm.mlir.addressof @aligned_global : !llvm.ptr
+  llvm.call @aligned_byval_arg(%aligned) : (!llvm.ptr) -> ()
+  llvm.return
+}
+
+// -----
+
+llvm.func @ignored_attrs(%ptr : !llvm.ptr { llvm.inreg, llvm.nocapture, llvm.nofree, llvm.preallocated = i32, llvm.returned, llvm.alignstack = 32 : i64, llvm.writeonly, llvm.noundef, llvm.nonnull }, %x : i32 { llvm.zeroext }) -> (!llvm.ptr { llvm.noundef, llvm.inreg, llvm.nonnull }) {
+  llvm.return %ptr : !llvm.ptr
+}
+
+// CHECK-LABEL: @test_ignored_attrs
+// CHECK-NOT: llvm.call
+// CHECK-NEXT: llvm.return
+llvm.func @test_ignored_attrs(%ptr : !llvm.ptr, %x : i32) {
+  llvm.call @ignored_attrs(%ptr, %x) : (!llvm.ptr, i32) -> (!llvm.ptr)
+  llvm.return
+}
+
+// -----
+
+llvm.func @disallowed_arg_attr(%ptr : !llvm.ptr { llvm.noalias }) {
+  llvm.return
+}
+
+// CHECK-LABEL: @test_disallow_arg_attr
+// CHECK-NEXT: llvm.call
+llvm.func @test_disallow_arg_attr(%ptr : !llvm.ptr) {
+  llvm.call @disallowed_arg_attr(%ptr) : (!llvm.ptr) -> ()
+  llvm.return
+}
+
+// -----
+
+llvm.func @disallowed_res_attr(%ptr : !llvm.ptr) -> (!llvm.ptr { llvm.noalias }) {
+  llvm.return %ptr : !llvm.ptr
+}
+
+// CHECK-LABEL: @test_disallow_res_attr
+// CHECK-NEXT: llvm.call
+llvm.func @test_disallow_res_attr(%ptr : !llvm.ptr) {
+  llvm.call @disallowed_res_attr(%ptr) : (!llvm.ptr) -> (!llvm.ptr)
+  llvm.return
+}

@@ -106,6 +106,12 @@ IntegerLiteralSeparatorFixer::process(const Environment &Env,
         (IsBase16 && SkipHex) || B == Base::Other) {
       continue;
     }
+    if (Style.isCpp()) {
+      if (const auto Pos = Text.find_first_of("_i"); Pos != StringRef::npos) {
+        Text = Text.substr(0, Pos);
+        Length = Pos;
+      }
+    }
     if ((IsBase10 && Text.find_last_of(".eEfFdDmM") != StringRef::npos) ||
         (IsBase16 && Text.find_last_of(".pP") != StringRef::npos)) {
       continue;
@@ -116,7 +122,7 @@ IntegerLiteralSeparatorFixer::process(const Environment &Env,
       continue;
     }
     const auto Start = Text[0] == '0' ? 2 : 0;
-    auto End = Text.find_first_of("uUlLzZn");
+    auto End = Text.find_first_of("uUlLzZn", Start);
     if (End == StringRef::npos)
       End = Length;
     if (Start > 0 || End < Length) {
@@ -130,13 +136,12 @@ IntegerLiteralSeparatorFixer::process(const Environment &Env,
       DigitsPerGroup = Hex;
     if (DigitsPerGroup > 0 && checkSeparator(Text, DigitsPerGroup))
       continue;
+    const auto &Formatted = format(Text, DigitsPerGroup);
+    assert(Formatted != Text);
     if (Start > 0)
       Location = Location.getLocWithOffset(Start);
-    if (const auto &Formatted = format(Text, DigitsPerGroup);
-        Formatted != Text) {
-      cantFail(Result.add(
-          tooling::Replacement(SourceMgr, Location, Length, Formatted)));
-    }
+    cantFail(Result.add(
+        tooling::Replacement(SourceMgr, Location, Length, Formatted)));
   }
 
   return {Result, 0};
@@ -153,9 +158,9 @@ bool IntegerLiteralSeparatorFixer::checkSeparator(
         return false;
       I = 0;
     } else {
-      ++I;
       if (I == DigitsPerGroup)
         return false;
+      ++I;
     }
   }
 
