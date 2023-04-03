@@ -27,10 +27,10 @@ struct RISCVRegisterInfo;
 namespace RISCVISD {
 enum NodeType : unsigned {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
-  RET_FLAG,
-  URET_FLAG,
-  SRET_FLAG,
-  MRET_FLAG,
+  RET_GLUE,
+  URET_GLUE,
+  SRET_GLUE,
+  MRET_GLUE,
   CALL,
   /// Select with condition operator - This selects between a true value and
   /// a false value (ops #3 and #4) based on the boolean result of comparing
@@ -680,6 +680,21 @@ public:
   /// If the target has a standard location for the stack protector cookie,
   /// returns the address of that location. Otherwise, returns nullptr.
   Value *getIRStackGuard(IRBuilderBase &IRB) const override;
+
+  /// Returns whether or not generating a fixed length interleaved load/store
+  /// intrinsic for this type will be legal.
+  bool isLegalInterleavedAccessType(FixedVectorType *, unsigned Factor,
+                                    const DataLayout &) const;
+
+  unsigned getMaxSupportedInterleaveFactor() const override { return 8; }
+
+  bool lowerInterleavedLoad(LoadInst *LI,
+                            ArrayRef<ShuffleVectorInst *> Shuffles,
+                            ArrayRef<unsigned> Indices,
+                            unsigned Factor) const override;
+
+  bool lowerInterleavedStore(StoreInst *SI, ShuffleVectorInst *SVI,
+                             unsigned Factor) const override;
 
 private:
   /// RISCVCCAssignFn - This target-specific function extends the default

@@ -199,6 +199,10 @@ Changes in existing checks
   <clang-tidy/checks/misc/definitions-in-headers>` check.
   Global options of the same name should be used instead.
 
+- Fixed false positive in :doc:`misc-definitions-in-headers
+  <clang-tidy/checks/misc/definitions-in-headers>` to avoid warning on
+  declarations inside anonymous namespaces.
+
 - Deprecated check-local options `HeaderFileExtensions`
   in :doc:`misc-unused-using-decls
   <clang-tidy/checks/misc/unused-using-decls>` check.
@@ -249,6 +253,10 @@ Changes in existing checks
 - Fixed a false positive in :doc:`readability-misleading-indentation
   <clang-tidy/checks/readability/misleading-indentation>` check when warning would
   be unnecessarily emitted for template dependent ``if constexpr``.
+
+- Improved :doc:`readability-static-accessed-through-instance
+  <clang-tidy/checks/readability/static-accessed-through-instance>` check to 
+  support unscoped enumerations through instances.
 
 - Fixed a false positive in :doc:`cppcoreguidelines-slicing
   <clang-tidy/checks/cppcoreguidelines/slicing>` check when warning would be

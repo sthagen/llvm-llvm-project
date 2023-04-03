@@ -21,6 +21,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/VectorUtils.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -1844,7 +1845,7 @@ bool RISCVTargetLowering::mergeStoresAfterLegalization(EVT VT) const {
 
 bool RISCVTargetLowering::isLegalElementTypeForRVV(Type *ScalarTy) const {
   if (ScalarTy->isPointerTy())
-    return true;
+    return Subtarget.is64Bit() ? Subtarget.hasVInstructionsI64() : true;
 
   if (ScalarTy->isIntegerTy(8) || ScalarTy->isIntegerTy(16) ||
       ScalarTy->isIntegerTy(32))
@@ -8405,6 +8406,10 @@ void RISCVTargetLowering::ReplaceNodeResults(SDNode *N,
       // no compare with constant and branch instructions.
       Overflow = DAG.getSetCC(DL, N->getValueType(1), Res,
                               DAG.getConstant(0, DL, MVT::i64), ISD::SETEQ);
+    } else if (IsAdd && isAllOnesConstant(RHS)) {
+      // Special case uaddo X, -1 overflowed if X != 0.
+      Overflow = DAG.getSetCC(DL, N->getValueType(1), N->getOperand(0),
+                              DAG.getConstant(0, DL, MVT::i32), ISD::SETNE);
     } else {
       // Sign extend the LHS and perform an unsigned compare with the ADDW
       // result. Since the inputs are sign extended from i32, this is equivalent
@@ -13908,7 +13913,7 @@ RISCVTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
              [](CCValAssign &VA) { return VA.getLocVT().isScalableVector(); }))
     MF.getInfo<RISCVMachineFunctionInfo>()->setIsVectorCall();
 
-  unsigned RetOpc = RISCVISD::RET_FLAG;
+  unsigned RetOpc = RISCVISD::RET_GLUE;
   // Interrupt service routines use different return instructions.
   const Function &Func = DAG.getMachineFunction().getFunction();
   if (Func.hasFnAttribute("interrupt")) {
@@ -13921,11 +13926,11 @@ RISCVTargetLowering::LowerReturn(SDValue Chain, CallingConv::ID CallConv,
       MF.getFunction().getFnAttribute("interrupt").getValueAsString();
 
     if (Kind == "user")
-      RetOpc = RISCVISD::URET_FLAG;
+      RetOpc = RISCVISD::URET_GLUE;
     else if (Kind == "supervisor")
-      RetOpc = RISCVISD::SRET_FLAG;
+      RetOpc = RISCVISD::SRET_GLUE;
     else
-      RetOpc = RISCVISD::MRET_FLAG;
+      RetOpc = RISCVISD::MRET_GLUE;
   }
 
   return DAG.getNode(RetOpc, DL, MVT::Other, RetOps);
@@ -13969,10 +13974,10 @@ bool RISCVTargetLowering::isUsedByReturnOnly(SDNode *N, SDValue &Chain) const {
   if (Copy->getOperand(Copy->getNumOperands() - 1).getValueType() == MVT::Glue)
     return false;
 
-  // The copy must be used by a RISCVISD::RET_FLAG, and nothing else.
+  // The copy must be used by a RISCVISD::RET_GLUE, and nothing else.
   bool HasRet = false;
   for (SDNode *Node : Copy->uses()) {
-    if (Node->getOpcode() != RISCVISD::RET_FLAG)
+    if (Node->getOpcode() != RISCVISD::RET_GLUE)
       return false;
     HasRet = true;
   }
@@ -13995,10 +14000,10 @@ const char *RISCVTargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch ((RISCVISD::NodeType)Opcode) {
   case RISCVISD::FIRST_NUMBER:
     break;
-  NODE_NAME_CASE(RET_FLAG)
-  NODE_NAME_CASE(URET_FLAG)
-  NODE_NAME_CASE(SRET_FLAG)
-  NODE_NAME_CASE(MRET_FLAG)
+  NODE_NAME_CASE(RET_GLUE)
+  NODE_NAME_CASE(URET_GLUE)
+  NODE_NAME_CASE(SRET_GLUE)
+  NODE_NAME_CASE(MRET_GLUE)
   NODE_NAME_CASE(CALL)
   NODE_NAME_CASE(SELECT_CC)
   NODE_NAME_CASE(BR_CC)
@@ -15037,6 +15042,135 @@ Value *RISCVTargetLowering::getIRStackGuard(IRBuilderBase &IRB) const {
     return useTpOffset(IRB, -0x10);
 
   return TargetLowering::getIRStackGuard(IRB);
+}
+
+bool RISCVTargetLowering::isLegalInterleavedAccessType(
+    FixedVectorType *VTy, unsigned Factor, const DataLayout &DL) const {
+  if (!Subtarget.useRVVForFixedLengthVectors())
+    return false;
+  if (!isLegalElementTypeForRVV(VTy->getElementType()))
+    return false;
+  EVT VT = getValueType(DL, VTy);
+  // Don't lower vlseg/vsseg for fixed length vector types that can't be split.
+  if (!isTypeLegal(VT))
+    return false;
+  // Sometimes the interleaved access pass picks up splats as interleaves of one
+  // element. Don't lower these.
+  if (VTy->getNumElements() < 2)
+    return false;
+
+  // Need to make sure that EMUL * NFIELDS ≤ 8
+  MVT ContainerVT = getContainerForFixedLengthVector(VT.getSimpleVT());
+  auto [LMUL, Fractional] = RISCVVType::decodeVLMUL(getLMUL(ContainerVT));
+  if (Fractional)
+    return true;
+  return Factor * LMUL <= 8;
+}
+
+/// Lower an interleaved load into a vlsegN intrinsic.
+///
+/// E.g. Lower an interleaved load (Factor = 2):
+/// %wide.vec = load <8 x i32>, <8 x i32>* %ptr
+/// %v0 = shuffle %wide.vec, undef, <0, 2, 4, 6>  ; Extract even elements
+/// %v1 = shuffle %wide.vec, undef, <1, 3, 5, 7>  ; Extract odd elements
+///
+/// Into:
+/// %ld2 = { <4 x i32>, <4 x i32> } call llvm.riscv.vlseg.v4i32.p0.i64(
+///                                        %ptr, i64 4)
+/// %vec0 = extractelement { <4 x i32>, <4 x i32> } %ld2, i32 0
+/// %vec1 = extractelement { <4 x i32>, <4 x i32> } %ld2, i32 1
+bool RISCVTargetLowering::lowerInterleavedLoad(
+    LoadInst *LI, ArrayRef<ShuffleVectorInst *> Shuffles,
+    ArrayRef<unsigned> Indices, unsigned Factor) const {
+  IRBuilder<> Builder(LI);
+
+  auto *VTy = cast<FixedVectorType>(Shuffles[0]->getType());
+  if (!isLegalInterleavedAccessType(VTy, Factor,
+                                    LI->getModule()->getDataLayout()))
+    return false;
+
+  auto *XLenTy = Type::getIntNTy(LI->getContext(), Subtarget.getXLen());
+
+  static const Intrinsic::ID FixedLenIntrIds[] = {
+      Intrinsic::riscv_seg2_load, Intrinsic::riscv_seg3_load,
+      Intrinsic::riscv_seg4_load, Intrinsic::riscv_seg5_load,
+      Intrinsic::riscv_seg6_load, Intrinsic::riscv_seg7_load,
+      Intrinsic::riscv_seg8_load};
+  Function *VlsegNFunc =
+      Intrinsic::getDeclaration(LI->getModule(), FixedLenIntrIds[Factor - 2],
+                                {VTy, LI->getPointerOperandType(), XLenTy});
+
+  Value *VL = ConstantInt::get(XLenTy, VTy->getNumElements());
+
+  CallInst *VlsegN =
+      Builder.CreateCall(VlsegNFunc, {LI->getPointerOperand(), VL});
+
+  for (unsigned i = 0; i < Shuffles.size(); i++) {
+    Value *SubVec = Builder.CreateExtractValue(VlsegN, Indices[i]);
+    Shuffles[i]->replaceAllUsesWith(SubVec);
+  }
+
+  return true;
+}
+
+/// Lower an interleaved store into a vssegN intrinsic.
+///
+/// E.g. Lower an interleaved store (Factor = 3):
+/// %i.vec = shuffle <8 x i32> %v0, <8 x i32> %v1,
+///                  <0, 4, 8, 1, 5, 9, 2, 6, 10, 3, 7, 11>
+/// store <12 x i32> %i.vec, <12 x i32>* %ptr
+///
+/// Into:
+/// %sub.v0 = shuffle <8 x i32> %v0, <8 x i32> v1, <0, 1, 2, 3>
+/// %sub.v1 = shuffle <8 x i32> %v0, <8 x i32> v1, <4, 5, 6, 7>
+/// %sub.v2 = shuffle <8 x i32> %v0, <8 x i32> v1, <8, 9, 10, 11>
+/// call void llvm.riscv.vsseg3.v4i32.p0.i64(%sub.v0, %sub.v1, %sub.v2,
+///                                          %ptr, i32 4)
+///
+/// Note that the new shufflevectors will be removed and we'll only generate one
+/// vsseg3 instruction in CodeGen.
+bool RISCVTargetLowering::lowerInterleavedStore(StoreInst *SI,
+                                                ShuffleVectorInst *SVI,
+                                                unsigned Factor) const {
+  IRBuilder<> Builder(SI);
+  auto *ShuffleVTy = cast<FixedVectorType>(SVI->getType());
+  // Given SVI : <n*factor x ty>, then VTy : <n x ty>
+  auto *VTy = FixedVectorType::get(ShuffleVTy->getElementType(),
+                                   ShuffleVTy->getNumElements() / Factor);
+  if (!isLegalInterleavedAccessType(VTy, Factor,
+                                    SI->getModule()->getDataLayout()))
+    return false;
+
+  auto *XLenTy = Type::getIntNTy(SI->getContext(), Subtarget.getXLen());
+
+  static const Intrinsic::ID FixedLenIntrIds[] = {
+      Intrinsic::riscv_seg2_store, Intrinsic::riscv_seg3_store,
+      Intrinsic::riscv_seg4_store, Intrinsic::riscv_seg5_store,
+      Intrinsic::riscv_seg6_store, Intrinsic::riscv_seg7_store,
+      Intrinsic::riscv_seg8_store};
+
+  Function *VssegNFunc =
+      Intrinsic::getDeclaration(SI->getModule(), FixedLenIntrIds[Factor - 2],
+                                {VTy, SI->getPointerOperandType(), XLenTy});
+
+  auto Mask = SVI->getShuffleMask();
+  SmallVector<Value *, 10> Ops;
+
+  for (unsigned i = 0; i < Factor; i++) {
+    Value *Shuffle = Builder.CreateShuffleVector(
+        SVI->getOperand(0), SVI->getOperand(1),
+        createSequentialMask(Mask[i], VTy->getNumElements(), 0));
+    Ops.push_back(Shuffle);
+  }
+  // This VL should be OK (should be executable in one vsseg instruction,
+  // potentially under larger LMULs) because we checked that the fixed vector
+  // type fits in isLegalInterleavedAccessType
+  Value *VL = ConstantInt::get(XLenTy, VTy->getNumElements());
+  Ops.append({SI->getPointerOperand(), VL});
+
+  Builder.CreateCall(VssegNFunc, Ops);
+
+  return true;
 }
 
 #define GET_REGISTER_MATCHER

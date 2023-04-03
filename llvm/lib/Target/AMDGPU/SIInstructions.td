@@ -551,7 +551,7 @@ def SI_RETURN_TO_EPILOG : SPseudoInstSI <
 
 // Return for returning function calls.
 def SI_RETURN : SPseudoInstSI <
-  (outs), (ins), [(AMDGPUret_flag)],
+  (outs), (ins), [(AMDGPUret_glue)],
   "; return"> {
   let isTerminator = 1;
   let isBarrier = 1;
@@ -594,7 +594,7 @@ def SI_CALL : SPseudoInstSI <
 
 // Tail call handling pseudo
 def SI_TCRETURN : SPseudoInstSI <(outs),
-  (ins CCR_SGPR_64:$src0, unknown:$callee, i32imm:$fpdiff),
+  (ins SReg_64:$src0, unknown:$callee, i32imm:$fpdiff),
   [(AMDGPUtc_return i64:$src0, tglobaladdr:$callee, i32:$fpdiff)]> {
   let Size = 4;
   let FixedSize = 1;
