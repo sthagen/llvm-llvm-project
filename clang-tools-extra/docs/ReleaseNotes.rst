@@ -170,6 +170,10 @@ Changes in existing checks
   <clang-tidy/checks/bugprone/dynamic-static-initializers>` check.
   Global options of the same name should be used instead.
 
+- Improved :doc:`bugprone-fold-init-type
+  <clang-tidy/checks/bugprone/fold-init-type>` to handle iterators that do not
+  define `value_type` type aliases.
+
 - Deprecated check-local options `HeaderFileExtensions` and `ImplementationFileExtensions`
   in :doc:`bugprone-suspicious-include
   <clang-tidy/checks/bugprone/suspicious-include>` check.
@@ -182,6 +186,9 @@ Changes in existing checks
 - Improved :doc:`bugprone-use-after-move
   <clang-tidy/checks/bugprone/use-after-move>` check to also cover constructor
   initializers.
+
+- Deprecated :doc:`cert-dcl21-cpp
+  <clang-tidy/checks/cert/dcl21-cpp>` check.
 
 - Deprecated check-local options `HeaderFileExtensions`
   in :doc:`google-build-namespaces
@@ -236,6 +243,10 @@ Changes in existing checks
   <clang-tidy/checks/readability/identifier-naming>`. To preserve the previous
   behavior of using `i` as the prefix for enum tags, set the `EnumConstantPrefix`
   option to `i` instead of using `EnumConstantHungarianPrefix`.
+
+- Fixed a false positive in :doc:`readability-implicit-bool-conversion
+  <clang-tidy/checks/readability/implicit-bool-conversion>` check warning would
+  be unnecessarily emitted for explicit cast using direct list initialization.
 
 - Added support to optionally ignore user-defined literals in
   :doc:`readability-magic-numbers<clang-tidy/checks/readability/magic-numbers>`.
