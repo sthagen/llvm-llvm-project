@@ -1835,6 +1835,7 @@ std::optional<AssignmentInfo> at::getAssignmentInfo(const DataLayout &DL,
   return getAssignmentInfoImpl(DL, AI, SizeInBits);
 }
 
+/// Returns nullptr if the assignment shouldn't be attributed to this variable.
 static CallInst *emitDbgAssign(AssignmentInfo Info, Value *Val, Value *Dest,
                                Instruction &StoreLikeInst,
                                const VarRecord &VarRec, DIBuilder &DIB) {
@@ -1842,11 +1843,35 @@ static CallInst *emitDbgAssign(AssignmentInfo Info, Value *Val, Value *Dest,
   assert(ID && "Store instruction must have DIAssignID metadata");
   (void)ID;
 
+  const uint64_t StoreStartBit = Info.OffsetInBits;
+  const uint64_t StoreEndBit = Info.OffsetInBits + Info.SizeInBits;
+
+  uint64_t FragStartBit = StoreStartBit;
+  uint64_t FragEndBit = StoreEndBit;
+
+  bool StoreToWholeVariable = Info.StoreToWholeAlloca;
+  if (auto Size = VarRec.Var->getSizeInBits()) {
+    // NOTE: trackAssignments doesn't understand base expressions yet, so all
+    // variables that reach here are guaranteed to start at offset 0 in the
+    // alloca.
+    const uint64_t VarStartBit = 0;
+    const uint64_t VarEndBit = *Size;
+
+    // FIXME: trim FragStartBit when nonzero VarStartBit is supported.
+    FragEndBit = std::min(FragEndBit, VarEndBit);
+
+    // Discard stores to bits outside this variable.
+    if (FragStartBit >= FragEndBit)
+      return nullptr;
+
+    StoreToWholeVariable = FragStartBit <= VarStartBit && FragEndBit >= *Size;
+  }
+
   DIExpression *Expr =
       DIExpression::get(StoreLikeInst.getContext(), std::nullopt);
-  if (!Info.StoreToWholeAlloca) {
-    auto R = DIExpression::createFragmentExpression(Expr, Info.OffsetInBits,
-                                                    Info.SizeInBits);
+  if (!StoreToWholeVariable) {
+    auto R = DIExpression::createFragmentExpression(Expr, FragStartBit,
+                                                    FragEndBit - FragStartBit);
     assert(R.has_value() && "failed to create fragment expression");
     Expr = *R;
   }
@@ -1944,7 +1969,7 @@ void at::trackAssignments(Function::iterator Start, Function::iterator End,
         auto *Assign =
             emitDbgAssign(*Info, ValueComponent, DestComponent, I, R, DIB);
         (void)Assign;
-        LLVM_DEBUG(errs() << " > INSERT: " << *Assign << "\n");
+        LLVM_DEBUG(if (Assign) errs() << " > INSERT: " << *Assign << "\n");
       }
     }
   }

@@ -1330,9 +1330,9 @@ packMatmulGreedily(RewriterBase &rewriter, LinalgOp linalgOp,
                    ArrayRef<int64_t> mnkPaddedSizesNextMultipleOf,
                    ArrayRef<int64_t> mnkOrder) {
   assert(mnkPackedSizes.size() == 3 && "unexpected num of packing sizes");
-  assert(mnkPaddedSizesNextMultipleOf.empty() ||
-         mnkPaddedSizesNextMultipleOf.size() == 3 &&
-             "num of packing sizes next multiple should be empty or of size 3");
+  assert((mnkPaddedSizesNextMultipleOf.empty() ||
+          mnkPaddedSizesNextMultipleOf.size() == 3) &&
+         "num of packing sizes next multiple should be empty or of size 3");
   assert(mnkOrder.size() == 3 && "unexpected mnkOrder size");
   assert(isPermutationVector(mnkOrder) && "expected a permutation");
 
@@ -1818,7 +1818,8 @@ transform::HoistPadOp::applyToOne(tensor::PadOp target,
                                   transform::TransformState &state) {
   tensor::PadOp hoistedPadOp;
   SmallVector<GenericOp> transposeOps;
-  IRRewriter rewriter(target->getContext());
+  TrackingListener listener(state, *this);
+  IRRewriter rewriter(target->getContext(), &listener);
   FailureOr<Value> result =
       hoistPaddingOnTensors(rewriter, target, getNumLoops(), getTranspose(),
                             hoistedPadOp, transposeOps);
@@ -3067,7 +3068,7 @@ transform::VectorizeOp::applyToOne(Operation *target,
   if (getVectorizePadding())
     linalg::populatePadOpVectorizationPatterns(patterns);
 
-  TrackingListener listener(state);
+  TrackingListener listener(state, *this);
   GreedyRewriteConfig config;
   config.listener = &listener;
   if (failed(applyPatternsAndFoldGreedily(target, std::move(patterns), config)))
