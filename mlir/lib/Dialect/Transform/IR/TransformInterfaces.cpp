@@ -840,19 +840,8 @@ transform::TransformState::applyTransform(TransformOpInterface transform) {
 
   // If a silenceable failure was produced, some results may be unset, set them
   // to empty lists.
-  if (result.isSilenceableFailure()) {
-    for (OpResult opResult : transform->getResults()) {
-      if (results.isSet(opResult.getResultNumber()))
-        continue;
-
-      if (opResult.getType().isa<TransformParamTypeInterface>())
-        results.setParams(opResult, {});
-      else if (opResult.getType().isa<TransformValueHandleTypeInterface>())
-        results.setValues(opResult, {});
-      else
-        results.set(opResult, {});
-    }
-  }
+  if (result.isSilenceableFailure())
+    results.setRemainingToEmpty(transform);
 
   // Remove the mapping for the operand if it is consumed by the operation. This
   // allows us to catch use-after-free with assertions later on.
@@ -920,33 +909,8 @@ transform::TransformState::applyTransform(TransformOpInterface transform) {
   }
 #endif // LLVM_ENABLE_ABI_BREAKING_CHECKS
 
-  for (OpResult result : transform->getResults()) {
-    assert(result.getDefiningOp() == transform.getOperation() &&
-           "payload IR association for a value other than the result of the "
-           "current transform op");
-    if (result.getType().isa<TransformParamTypeInterface>()) {
-      assert(results.isParam(result.getResultNumber()) &&
-             "expected parameters for the parameter-typed result");
-      if (failed(
-              setParams(result, results.getParams(result.getResultNumber())))) {
-        return DiagnosedSilenceableFailure::definiteFailure();
-      }
-    } else if (result.getType().isa<TransformValueHandleTypeInterface>()) {
-      assert(results.isValue(result.getResultNumber()) &&
-             "expected values for value-type-result");
-      if (failed(setPayloadValues(
-              result, results.getValues(result.getResultNumber())))) {
-        return DiagnosedSilenceableFailure::definiteFailure();
-      }
-    } else {
-      assert(!results.isParam(result.getResultNumber()) &&
-             "expected payload ops for the non-parameter typed result");
-      if (failed(
-              setPayloadOps(result, results.get(result.getResultNumber())))) {
-        return DiagnosedSilenceableFailure::definiteFailure();
-      }
-    }
-  }
+  if (failed(updateStateFromResults(results, transform->getResults())))
+    return DiagnosedSilenceableFailure::definiteFailure();
 
   printOnFailureRAII.release();
   DEBUG_WITH_TYPE(DEBUG_PRINT_AFTER_ALL, {
@@ -954,6 +918,35 @@ transform::TransformState::applyTransform(TransformOpInterface transform) {
     getTopLevel()->print(llvm::dbgs());
   });
   return result;
+}
+
+LogicalResult transform::TransformState::updateStateFromResults(
+    const TransformResults &results, ResultRange opResults) {
+  for (OpResult result : opResults) {
+    if (result.getType().isa<TransformParamTypeInterface>()) {
+      assert(results.isParam(result.getResultNumber()) &&
+             "expected parameters for the parameter-typed result");
+      if (failed(
+              setParams(result, results.getParams(result.getResultNumber())))) {
+        return failure();
+      }
+    } else if (result.getType().isa<TransformValueHandleTypeInterface>()) {
+      assert(results.isValue(result.getResultNumber()) &&
+             "expected values for value-type-result");
+      if (failed(setPayloadValues(
+              result, results.getValues(result.getResultNumber())))) {
+        return failure();
+      }
+    } else {
+      assert(!results.isParam(result.getResultNumber()) &&
+             "expected payload ops for the non-parameter typed result");
+      if (failed(
+              setPayloadOps(result, results.get(result.getResultNumber())))) {
+        return failure();
+      }
+    }
+  }
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1052,6 +1045,14 @@ void transform::TransformResults::setMappedValues(
   assert(diag.succeeded() && "incorrect mapping");
 #endif // NDEBUG
   (void)diag.silence();
+}
+
+void transform::TransformResults::setRemainingToEmpty(
+    transform::TransformOpInterface transform) {
+  for (OpResult opResult : transform->getResults()) {
+    if (!isSet(opResult.getResultNumber()))
+      setMappedValues(opResult, {});
+  }
 }
 
 ArrayRef<Operation *>
@@ -1193,7 +1194,7 @@ void transform::detail::setApplyToOneResults(
 }
 
 //===----------------------------------------------------------------------===//
-// Utilities for PossibleTopLevelTransformOpTrait.
+// Utilities for implementing transform ops with regions.
 //===----------------------------------------------------------------------===//
 
 void transform::detail::prepareValueMappings(
@@ -1212,6 +1213,29 @@ void transform::detail::prepareValueMappings(
     }
   }
 }
+
+void transform::detail::forwardTerminatorOperands(
+    Block *block, transform::TransformState &state,
+    transform::TransformResults &results) {
+  for (auto &&[terminatorOperand, result] :
+       llvm::zip(block->getTerminator()->getOperands(),
+                 block->getParentOp()->getOpResults())) {
+    if (result.getType().isa<transform::TransformHandleTypeInterface>()) {
+      results.set(result, state.getPayloadOps(terminatorOperand));
+    } else if (result.getType()
+                   .isa<transform::TransformValueHandleTypeInterface>()) {
+      results.setValues(result, state.getPayloadValues(terminatorOperand));
+    } else {
+      assert(result.getType().isa<transform::TransformParamTypeInterface>() &&
+             "unhandled transform type interface");
+      results.setParams(result, state.getParams(terminatorOperand));
+    }
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// Utilities for PossibleTopLevelTransformOpTrait.
+//===----------------------------------------------------------------------===//
 
 LogicalResult transform::detail::mapPossibleTopLevelTransformOpBlockArguments(
     TransformState &state, Operation *op, Region &region) {

@@ -209,6 +209,25 @@ void mlir::test::TestConsumeOperandOfOpKindOrFail::getEffects(
   transform::modifiesPayload(effects);
 }
 
+DiagnosedSilenceableFailure
+mlir::test::TestSucceedIfOperandOfOpKind::matchOperation(
+    Operation *op, transform::TransformResults &results,
+    transform::TransformState &state) {
+  if (op->getName().getStringRef() != getOpKind()) {
+    return emitSilenceableError()
+           << "op expected the operand to be associated with a payload op of "
+              "kind "
+           << getOpKind() << " got " << op->getName().getStringRef();
+  }
+  return DiagnosedSilenceableFailure::success();
+}
+
+void mlir::test::TestSucceedIfOperandOfOpKind::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  transform::onlyReadsHandle(getOperand(), effects);
+  transform::onlyReadsPayload(effects);
+}
+
 DiagnosedSilenceableFailure mlir::test::TestPrintRemarkAtOperandOp::apply(
     transform::TransformResults &results, transform::TransformState &state) {
   ArrayRef<Operation *> payload = state.getPayloadOps(getOperand());
@@ -486,6 +505,9 @@ mlir::test::TestReportNumberOfTrackedHandlesNestedUnder::apply(
 void mlir::test::TestPrintParamOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   transform::onlyReadsHandle(getParam(), effects);
+  if (getAnchor())
+    transform::onlyReadsHandle(getAnchor(), effects);
+  transform::onlyReadsPayload(effects);
 }
 
 DiagnosedSilenceableFailure
@@ -493,8 +515,15 @@ mlir::test::TestPrintParamOp::apply(transform::TransformResults &results,
                                     transform::TransformState &state) {
   std::string str;
   llvm::raw_string_ostream os(str);
+  if (getMessage())
+    os << *getMessage() << " ";
   llvm::interleaveComma(state.getParams(getParam()), os);
-  auto diag = emitRemark() << os.str();
+  if (!getAnchor()) {
+    emitRemark() << os.str();
+    return DiagnosedSilenceableFailure::success();
+  }
+  for (Operation *payload : state.getPayloadOps(getAnchor()))
+    ::mlir::emitRemark(payload->getLoc()) << os.str();
   return DiagnosedSilenceableFailure::success();
 }
 
