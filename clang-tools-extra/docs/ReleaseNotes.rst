@@ -101,8 +101,16 @@ Improvements to clang-tidy
 - Support specifying `Checks` as a YAML list in the `.clang-tidy` configuration
   file.
 
+- Fix a potential crash when using the `--dump-config` option.
+
 New checks
 ^^^^^^^^^^
+
+- New :doc:`bugprone-non-zero-enum-to-bool-conversion
+  <clang-tidy/checks/bugprone/non-zero-enum-to-bool-conversion>` check.
+
+  Detect implicit and explicit casts of ``enum`` type into ``bool`` where ``enum`` type
+  doesn't have a zero-value enumerator.
 
 - New :doc:`bugprone-unsafe-functions
   <clang-tidy/checks/bugprone/unsafe-functions>` check.
