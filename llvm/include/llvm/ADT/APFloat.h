@@ -273,6 +273,11 @@ struct APFloatBase {
   static unsigned int semanticsSizeInBits(const fltSemantics &);
   static unsigned int semanticsIntSizeInBits(const fltSemantics&, bool);
 
+  // Returns true if any number described by \p Src can be precisely represented
+  // by a normal (not subnormal) value in \p Dst.
+  static bool isRepresentableAsNormalIn(const fltSemantics &Src,
+                                        const fltSemantics &Dst);
+
   /// Returns the size of the floating point number (in bits) in the given
   /// semantics.
   static unsigned getSizeInBits(const fltSemantics &Sem);
@@ -757,7 +762,7 @@ class APFloat : public APFloatBase {
   typedef detail::IEEEFloat IEEEFloat;
   typedef detail::DoubleAPFloat DoubleAPFloat;
 
-  static_assert(std::is_standard_layout_v<IEEEFloat>);
+  static_assert(std::is_standard_layout<IEEEFloat>::value);
 
   union Storage {
     const fltSemantics *semantics;
@@ -849,9 +854,9 @@ class APFloat : public APFloatBase {
   } U;
 
   template <typename T> static bool usesLayout(const fltSemantics &Semantics) {
-    static_assert(std::is_same_v<T, IEEEFloat> ||
-                  std::is_same_v<T, DoubleAPFloat>);
-    if (std::is_same_v<T, DoubleAPFloat>) {
+    static_assert(std::is_same<T, IEEEFloat>::value ||
+                  std::is_same<T, DoubleAPFloat>::value);
+    if (std::is_same<T, DoubleAPFloat>::value) {
       return &Semantics == &PPCDoubleDouble();
     }
     return &Semantics != &PPCDoubleDouble();
@@ -912,7 +917,7 @@ public:
   APFloat(const fltSemantics &Semantics, StringRef S);
   APFloat(const fltSemantics &Semantics, integerPart I) : U(Semantics, I) {}
   template <typename T,
-            typename = std::enable_if_t<std::is_floating_point_v<T>>>
+            typename = std::enable_if_t<std::is_floating_point<T>::value>>
   APFloat(const fltSemantics &Semantics, T V) = delete;
   // TODO: Remove this constructor. This isn't faster than the first one.
   APFloat(const fltSemantics &Semantics, uninitializedTag)

@@ -1140,22 +1140,20 @@ class VPWidenIntOrFpInductionRecipe : public VPHeaderPHIRecipe {
   PHINode *IV;
   TruncInst *Trunc;
   const InductionDescriptor &IndDesc;
-  bool NeedsVectorIV;
 
 public:
   VPWidenIntOrFpInductionRecipe(PHINode *IV, VPValue *Start, VPValue *Step,
-                                const InductionDescriptor &IndDesc,
-                                bool NeedsVectorIV)
+                                const InductionDescriptor &IndDesc)
       : VPHeaderPHIRecipe(VPDef::VPWidenIntOrFpInductionSC, IV, Start), IV(IV),
-        Trunc(nullptr), IndDesc(IndDesc), NeedsVectorIV(NeedsVectorIV) {
+        Trunc(nullptr), IndDesc(IndDesc) {
     addOperand(Step);
   }
 
   VPWidenIntOrFpInductionRecipe(PHINode *IV, VPValue *Start, VPValue *Step,
                                 const InductionDescriptor &IndDesc,
-                                TruncInst *Trunc, bool NeedsVectorIV)
+                                TruncInst *Trunc)
       : VPHeaderPHIRecipe(VPDef::VPWidenIntOrFpInductionSC, Trunc, Start),
-        IV(IV), Trunc(Trunc), IndDesc(IndDesc), NeedsVectorIV(NeedsVectorIV) {
+        IV(IV), Trunc(Trunc), IndDesc(IndDesc) {
     addOperand(Step);
   }
 
@@ -1209,9 +1207,6 @@ public:
   const Type *getScalarType() const {
     return Trunc ? Trunc->getType() : IV->getType();
   }
-
-  /// Returns true if a vector phi needs to be created for the induction.
-  bool needsVectorIV() const { return NeedsVectorIV; }
 };
 
 class VPWidenPointerInductionRecipe : public VPHeaderPHIRecipe {
@@ -2343,8 +2338,8 @@ public:
   VPValue *getVPValue(Value *V, bool OverrideAllowed = false) {
     assert(V && "Trying to get the VPValue of a null Value");
     assert(Value2VPValue.count(V) && "Value does not exist in VPlan");
-    assert((!Value2VPValue[V]->getDefiningRecipe() || Value2VPValueEnabled ||
-            OverrideAllowed) &&
+    assert((Value2VPValueEnabled || OverrideAllowed ||
+            !Value2VPValue[V]->getDefiningRecipe()) &&
            "Value2VPValue mapping may be out of date!");
     return Value2VPValue[V];
   }

@@ -470,7 +470,7 @@ public:
   /// We do not place that under `#if LLVM_ENABLE_ABI_BREAKING_CHECKS`
   /// intentionally because it adds unneeded complexity without noticeable
   /// benefits (see discussion with @thakis in D120714).
-  uint16_t PersistentId;
+  uint16_t PersistentId = 0xffff;
 
 protected:
   // We define a set of mini-helper classes to help us interpret the bits in our
@@ -1135,6 +1135,7 @@ inline SDValue::SDValue(SDNode *node, unsigned resno)
 }
 
 inline unsigned SDValue::getOpcode() const {
+  assert(Node != nullptr && "Invalid Node");
   return Node->getOpcode();
 }
 
@@ -2942,7 +2943,7 @@ public:
       return ArrayRef(MemRefs.getAddrOfPtr1(), 1);
 
     // Otherwise we have an actual array.
-    return ArrayRef(MemRefs.get<MachineMemOperand **>(), NumMemRefs);
+    return ArrayRef(cast<MachineMemOperand **>(MemRefs), NumMemRefs);
   }
   mmo_iterator memoperands_begin() const { return memoperands().begin(); }
   mmo_iterator memoperands_end() const { return memoperands().end(); }
