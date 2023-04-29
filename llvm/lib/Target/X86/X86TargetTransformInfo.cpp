@@ -1612,7 +1612,7 @@ InstructionCost X86TTIImpl::getShuffleCost(TTI::ShuffleKind Kind,
             LegalVT.getVectorNumElements() * std::max(NumOfSrcs, E);
         unsigned NumOfSrcRegs = NormalizedVF / LegalVT.getVectorNumElements();
         unsigned NumOfDestRegs = NormalizedVF / LegalVT.getVectorNumElements();
-        SmallVector<int> NormalizedMask(NormalizedVF, UndefMaskElem);
+        SmallVector<int> NormalizedMask(NormalizedVF, PoisonMaskElem);
         copy(Mask, NormalizedMask.begin());
         unsigned PrevSrcReg = 0;
         ArrayRef<int> PrevRegMask;
@@ -1634,7 +1634,7 @@ InstructionCost X86TTIImpl::getShuffleCost(TTI::ShuffleKind Kind,
                 return;
               }
               if (SrcReg != DestReg &&
-                  any_of(RegMask, [](int I) { return I != UndefMaskElem; })) {
+                  any_of(RegMask, [](int I) { return I != PoisonMaskElem; })) {
                 // Just a copy of the source register.
                 Cost += TTI::TCC_Basic;
               }
@@ -4861,7 +4861,11 @@ InstructionCost X86TTIImpl::getMemoryOpCost(unsigned Opcode, Type *Src,
       // This isn't exactly right. We're using slow unaligned 32-byte accesses
       // as a proxy for a double-pumped AVX memory interface such as on
       // Sandybridge.
+      // Sub-32-bit loads/stores will be slower either with PINSR*/PEXTR* or
+      // will be scalarized.
       if (CurrOpSizeBytes == 32 && ST->isUnalignedMem32Slow())
+        Cost += 2;
+      else if (CurrOpSizeBytes < 4)
         Cost += 2;
       else
         Cost += 1;

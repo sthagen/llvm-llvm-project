@@ -4534,8 +4534,8 @@ SDValue AArch64TargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
   EVT VT = Op.getValueType();
 
   // If SVE is available then i64 vector multiplications can also be made legal.
-  bool OverrideNEON = VT == MVT::v2i64 || VT == MVT::v1i64 ||
-                      Subtarget->forceStreamingCompatibleSVE();
+  bool OverrideNEON =
+      VT == MVT::v1i64 || Subtarget->forceStreamingCompatibleSVE();
 
   if (VT.isScalableVector() || useSVEForFixedLengthVectorVT(VT, OverrideNEON))
     return LowerToPredicatedOp(Op, DAG, AArch64ISD::MUL_PRED);
@@ -4551,10 +4551,14 @@ SDValue AArch64TargetLowering::LowerMUL(SDValue Op, SelectionDAG &DAG) const {
   unsigned NewOpc = selectUmullSmull(N0, N1, DAG, DL, isMLA);
 
   if (!NewOpc) {
-    if (VT == MVT::v2i64)
+    if (VT == MVT::v2i64) {
+      // If SVE is available then i64 vector multiplications can also be made
+      // legal.
+      if (Subtarget->hasSVE())
+        return LowerToPredicatedOp(Op, DAG, AArch64ISD::MUL_PRED);
       // Fall through to expand this.  It is not legal.
       return SDValue();
-    else
+    } else
       // Other vector multiplications are legal.
       return Op;
   }
@@ -6120,6 +6124,7 @@ CCAssignFn *AArch64TargetLowering::CCAssignFnForCall(CallingConv::ID CC,
   case CallingConv::C:
   case CallingConv::Fast:
   case CallingConv::PreserveMost:
+  case CallingConv::PreserveAll:
   case CallingConv::CXX_FAST_TLS:
   case CallingConv::Swift:
   case CallingConv::SwiftTail:
@@ -6749,6 +6754,7 @@ static bool mayTailCallThisCC(CallingConv::ID CC) {
   case CallingConv::C:
   case CallingConv::AArch64_SVE_VectorCall:
   case CallingConv::PreserveMost:
+  case CallingConv::PreserveAll:
   case CallingConv::Swift:
   case CallingConv::SwiftTail:
   case CallingConv::Tail:
@@ -9864,6 +9870,72 @@ static PredicateConstraint parsePredicateConstraint(StringRef Constraint) {
   return P;
 }
 
+// The set of cc code supported is from
+// https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html#Flag-Output-Operands
+static AArch64CC::CondCode parseConstraintCode(llvm::StringRef Constraint) {
+  AArch64CC::CondCode Cond = StringSwitch<AArch64CC::CondCode>(Constraint)
+                                 .Case("{@cchi}", AArch64CC::HI)
+                                 .Case("{@cccs}", AArch64CC::HS)
+                                 .Case("{@cclo}", AArch64CC::LO)
+                                 .Case("{@ccls}", AArch64CC::LS)
+                                 .Case("{@cccc}", AArch64CC::LO)
+                                 .Case("{@cceq}", AArch64CC::EQ)
+                                 .Case("{@ccgt}", AArch64CC::GT)
+                                 .Case("{@ccge}", AArch64CC::GE)
+                                 .Case("{@cclt}", AArch64CC::LT)
+                                 .Case("{@ccle}", AArch64CC::LE)
+                                 .Case("{@cchs}", AArch64CC::HS)
+                                 .Case("{@ccne}", AArch64CC::NE)
+                                 .Case("{@ccvc}", AArch64CC::VC)
+                                 .Case("{@ccpl}", AArch64CC::PL)
+                                 .Case("{@ccvs}", AArch64CC::VS)
+                                 .Case("{@ccmi}", AArch64CC::MI)
+                                 .Default(AArch64CC::Invalid);
+  return Cond;
+}
+
+/// Helper function to create 'CSET', which is equivalent to 'CSINC <Wd>, WZR,
+/// WZR, invert(<cond>)'.
+static SDValue getSETCC(AArch64CC::CondCode CC, SDValue NZCV, const SDLoc &DL,
+                        SelectionDAG &DAG) {
+  return DAG.getNode(
+      AArch64ISD::CSINC, DL, MVT::i32, DAG.getConstant(0, DL, MVT::i32),
+      DAG.getConstant(0, DL, MVT::i32),
+      DAG.getConstant(getInvertedCondCode(CC), DL, MVT::i32), NZCV);
+}
+
+// Lower @cc flag output via getSETCC.
+SDValue AArch64TargetLowering::LowerAsmOutputForConstraint(
+    SDValue &Chain, SDValue &Glue, const SDLoc &DL,
+    const AsmOperandInfo &OpInfo, SelectionDAG &DAG) const {
+  AArch64CC::CondCode Cond = parseConstraintCode(OpInfo.ConstraintCode);
+  if (Cond == AArch64CC::Invalid)
+    return SDValue();
+  // The output variable should be a scalar integer.
+  if (OpInfo.ConstraintVT.isVector() || !OpInfo.ConstraintVT.isInteger() ||
+      OpInfo.ConstraintVT.getSizeInBits() < 8)
+    report_fatal_error("Flag output operand is of invalid type");
+
+  // Get NZCV register. Only update chain when copyfrom is glued.
+  if (Glue.getNode()) {
+    Glue = DAG.getCopyFromReg(Chain, DL, AArch64::NZCV, MVT::i32, Glue);
+    Chain = Glue.getValue(1);
+  } else
+    Glue = DAG.getCopyFromReg(Chain, DL, AArch64::NZCV, MVT::i32);
+  // Extract CC code.
+  SDValue CC = getSETCC(Cond, Glue, DL, DAG);
+
+  SDValue Result;
+
+  // Truncate or ZERO_EXTEND based on value types.
+  if (OpInfo.ConstraintVT.getSizeInBits() <= 32)
+    Result = DAG.getNode(ISD::TRUNCATE, DL, OpInfo.ConstraintVT, CC);
+  else
+    Result = DAG.getNode(ISD::ZERO_EXTEND, DL, OpInfo.ConstraintVT, CC);
+
+  return Result;
+}
+
 /// getConstraintType - Given a constraint letter, return the type of
 /// constraint it is for this target.
 AArch64TargetLowering::ConstraintType
@@ -9896,6 +9968,8 @@ AArch64TargetLowering::getConstraintType(StringRef Constraint) const {
   } else if (parsePredicateConstraint(Constraint) !=
              PredicateConstraint::Invalid)
       return C_RegisterClass;
+  else if (parseConstraintCode(Constraint) != AArch64CC::Invalid)
+    return C_Other;
   return TargetLowering::getConstraintType(Constraint);
 }
 
@@ -9993,7 +10067,8 @@ AArch64TargetLowering::getRegForInlineAsmConstraint(
                         : std::make_pair(0U, &AArch64::PPRRegClass);
     }
   }
-  if (StringRef("{cc}").equals_insensitive(Constraint))
+  if (StringRef("{cc}").equals_insensitive(Constraint) ||
+      parseConstraintCode(Constraint) != AArch64CC::Invalid)
     return std::make_pair(unsigned(AArch64::NZCV), &AArch64::CCRRegClass);
 
   // Use the default implementation in TargetLowering to convert the register
@@ -14671,9 +14746,9 @@ bool AArch64TargetLowering::lowerInterleavedStore(StoreInst *SI,
   auto Mask = SVI->getShuffleMask();
 
   // Sanity check if all the indices are NOT in range.
-  // If mask is `undef` or `poison`, `Mask` may be a vector of -1s.
-  // If all of them are `undef`, OOB read will happen later.
-  if (llvm::all_of(Mask, [](int Idx) { return Idx == UndefMaskElem; })) {
+  // If mask is `poison`, `Mask` may be a vector of -1s.
+  // If all of them are `poison`, OOB read will happen later.
+  if (llvm::all_of(Mask, [](int Idx) { return Idx == PoisonMaskElem; })) {
     return false;
   }
   // A 64bit st2 which does not start at element 0 will involved adding extra
@@ -17843,9 +17918,66 @@ static SDValue performSubAddMULCombine(SDNode *N, SelectionDAG &DAG) {
   return DAG.getNode(ISD::SUB, SDLoc(N), VT, Sub, M2);
 }
 
+// Combine into mla/mls.
+// This works on the patterns of:
+//   add v1, (mul v2, v3)
+//   sub v1, (mul v2, v3)
+// for vectors of type <1 x i64> and <2 x i64> when SVE is available.
+// It will transform the add/sub to a scalable version, so that we can
+// make use of SVE's MLA/MLS that will be generated for that pattern
+static SDValue performMulAddSubCombine(SDNode *N,
+                                       TargetLowering::DAGCombinerInfo &DCI,
+                                       SelectionDAG &DAG) {
+  // Make sure that the types are legal
+  if (!DCI.isAfterLegalizeDAG())
+    return SDValue();
+  // Before using SVE's features, check first if it's available.
+  if (!DAG.getSubtarget<AArch64Subtarget>().hasSVE())
+    return SDValue();
+
+  if (N->getOpcode() != ISD::ADD && N->getOpcode() != ISD::SUB)
+    return SDValue();
+
+  if (!N->getValueType(0).isFixedLengthVector())
+    return SDValue();
+
+  auto performOpt = [&DAG, &N](SDValue Op0, SDValue Op1) -> SDValue {
+    if (Op1.getOpcode() != ISD::EXTRACT_SUBVECTOR)
+      return SDValue();
+
+    if (!cast<ConstantSDNode>(Op1->getOperand(1))->isZero())
+      return SDValue();
+
+    SDValue MulValue = Op1->getOperand(0);
+    if (MulValue.getOpcode() != AArch64ISD::MUL_PRED)
+      return SDValue();
+
+    if (!Op1.hasOneUse() || !MulValue.hasOneUse())
+      return SDValue();
+
+    EVT ScalableVT = MulValue.getValueType();
+    if (!ScalableVT.isScalableVector())
+      return SDValue();
+
+    SDValue ScaledOp = convertToScalableVector(DAG, ScalableVT, Op0);
+    SDValue NewValue =
+        DAG.getNode(N->getOpcode(), SDLoc(N), ScalableVT, {ScaledOp, MulValue});
+    return convertFromScalableVector(DAG, N->getValueType(0), NewValue);
+  };
+
+  if (SDValue res = performOpt(N->getOperand(0), N->getOperand(1)))
+    return res;
+  else if (N->getOpcode() == ISD::ADD)
+    return performOpt(N->getOperand(1), N->getOperand(0));
+
+  return SDValue();
+}
+
 static SDValue performAddSubCombine(SDNode *N,
                                     TargetLowering::DAGCombinerInfo &DCI,
                                     SelectionDAG &DAG) {
+  if (SDValue Val = performMulAddSubCombine(N, DCI, DAG))
+    return Val;
   // Try to change sum of two reductions.
   if (SDValue Val = performAddUADDVCombine(N, DAG))
     return Val;
@@ -19645,20 +19777,25 @@ static EVT tryGetOriginalBoolVectorType(SDValue Op, int Depth = 0) {
 static SDValue vectorToScalarBitmask(SDNode *N, SelectionDAG &DAG) {
   SDLoc DL(N);
   SDValue ComparisonResult(N, 0);
-  EVT BoolVecVT = ComparisonResult.getValueType();
-  assert(BoolVecVT.isVector() && "Must be a vector type");
+  EVT VecVT = ComparisonResult.getValueType();
+  assert(VecVT.isVector() && "Must be a vector type");
 
-  unsigned NumElts = BoolVecVT.getVectorNumElements();
+  unsigned NumElts = VecVT.getVectorNumElements();
   if (NumElts != 2 && NumElts != 4 && NumElts != 8 && NumElts != 16)
+    return SDValue();
+
+  if (VecVT.getVectorElementType() != MVT::i1 &&
+      !DAG.getTargetLoweringInfo().isTypeLegal(VecVT))
     return SDValue();
 
   // If we can find the original types to work on instead of a vector of i1,
   // we can avoid extend/extract conversion instructions.
-  EVT VecVT = tryGetOriginalBoolVectorType(ComparisonResult);
-  if (!VecVT.isSimple()) {
-    unsigned BitsPerElement = std::max(64 / NumElts, 8u); // min. 64-bit vector
-    VecVT =
-        BoolVecVT.changeVectorElementType(MVT::getIntegerVT(BitsPerElement));
+  if (VecVT.getVectorElementType() == MVT::i1) {
+    VecVT = tryGetOriginalBoolVectorType(ComparisonResult);
+    if (!VecVT.isSimple()) {
+      unsigned BitsPerElement = std::max(64 / NumElts, 8u); // >= 64-bit vector
+      VecVT = MVT::getVectorVT(MVT::getIntegerVT(BitsPerElement), NumElts);
+    }
   }
   VecVT = VecVT.changeVectorElementTypeToInteger();
 
@@ -19719,6 +19856,37 @@ static SDValue vectorToScalarBitmask(SDNode *N, SelectionDAG &DAG) {
   return DAG.getNode(ISD::VECREDUCE_ADD, DL, ResultVT, RepresentativeBits);
 }
 
+static SDValue combineBoolVectorAndTruncateStore(SelectionDAG &DAG,
+                                                 StoreSDNode *Store) {
+  if (!Store->isTruncatingStore())
+    return SDValue();
+
+  SDLoc DL(Store);
+  SDValue VecOp = Store->getValue();
+  EVT VT = VecOp.getValueType();
+  EVT MemVT = Store->getMemoryVT();
+
+  if (!MemVT.isVector() || !VT.isVector() ||
+      MemVT.getVectorElementType() != MVT::i1)
+    return SDValue();
+
+  // If we are storing a vector that we are currently building, let
+  // `scalarizeVectorStore()` handle this more efficiently.
+  if (VecOp.getOpcode() == ISD::BUILD_VECTOR)
+    return SDValue();
+
+  VecOp = DAG.getNode(ISD::TRUNCATE, DL, MemVT, VecOp);
+  SDValue VectorBits = vectorToScalarBitmask(VecOp.getNode(), DAG);
+  if (!VectorBits)
+    return SDValue();
+
+  EVT StoreVT =
+      EVT::getIntegerVT(*DAG.getContext(), MemVT.getStoreSizeInBits());
+  SDValue ExtendedBits = DAG.getZExtOrTrunc(VectorBits, DL, StoreVT);
+  return DAG.getStore(Store->getChain(), DL, ExtendedBits, Store->getBasePtr(),
+                      Store->getMemOperand());
+}
+
 static SDValue performSTORECombine(SDNode *N,
                                    TargetLowering::DAGCombinerInfo &DCI,
                                    SelectionDAG &DAG,
@@ -19755,6 +19923,9 @@ static SDValue performSTORECombine(SDNode *N,
     return SDValue(N, 0);
 
   if (SDValue Store = foldTruncStoreOfExt(DAG, N))
+    return Store;
+
+  if (SDValue Store = combineBoolVectorAndTruncateStore(DAG, ST))
     return Store;
 
   return SDValue();
