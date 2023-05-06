@@ -171,6 +171,11 @@ Changes to the RISC-V Backend
 * Updated support experimental vector crypto extensions to version 0.5.1 of
   the specification.
 * Removed N extension (User-Level Interrupts) CSR names in the assembler.
+* ``RISCV::parseCPUKind`` and ``RISCV::checkCPUKind`` were merged into a single
+  ``RISCV::parseCPU``. The ``CPUKind`` enum is no longer part of the
+  RISCVTargetParser.h interface. Similar for ``parseTuneCPUkind`` and
+  ``checkTuneCPUKind``.
+* Add sifive-x280 processor.
 
 Changes to the WebAssembly Backend
 ----------------------------------

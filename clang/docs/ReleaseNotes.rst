@@ -58,8 +58,7 @@ C++ Specific Potentially Breaking Changes
 
 ABI Changes in This Version
 ---------------------------
-- ``__is_trivial`` has changed for a small category of classes with constrained default constructors (`#60697 <https://github.com/llvm/llvm-project/issues/60697>`_).
-  *FIXME: Remove this note if we've backported this change to the Clang 16 branch.*
+
 
 What's New in Clang |release|?
 ==============================
@@ -93,13 +92,19 @@ C++20 Feature Support
   error again in the future once there is a less fragile way to mark a module
   as being part of the implementation rather than a user module.
 
-C++2b Feature Support
+C++23 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 
 - Implemented `P2036R3: Change scope of lambda trailing-return-type <https://wg21.link/P2036R3>`_
   and `P2579R0 Mitigation strategies for P2036 <https://wg21.link/P2579R0>`_.
   These proposals modify how variables captured in lambdas can appear in trailing return type
   expressions and how their types are deduced therein, in all C++ language versions.
+- Implemented partial support for `P2448R2: Relaxing some constexpr restrictions <https://wg21.link/p2448r2>`_
+  Explicitly defaulted functions no longer have to be constexpr-compatible but merely constexpr suitable.
+  We do not support outside of defaulted special memeber functions the change that constexpr functions no
+  longer have to be constexpr compatible but rather support a less restricted requirements for constexpr
+  functions. Which include allowing non-literal types as return values and paremeters, allow calling of
+  non-constexpr functions and constructors.
 
 Resolutions to C++ Defect Reports
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -139,6 +144,25 @@ C2x Feature Support
   removed, as this is no longer a GNU extension but a C2x extension. You can
   use ``-Wno-c2x-extensions`` to silence the extension warning instead.
 
+- Updated the implementation of
+  `WG14 N3042 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3042.htm>`_
+  based on decisions reached during the WG14 CD Ballot Resolution meetings held
+  in Jan and Feb 2023. This should complete the implementation of ``nullptr``
+  and ``nullptr_t`` in C. The specific changes are:
+
+  .. code-block:: c
+
+    void func(nullptr_t);
+    func(0); // Previously required to be rejected, is now accepted.
+    func((void *)0); // Previously required to be rejected, is now accepted.
+
+    nullptr_t val;
+    val = 0; // Previously required to be rejected, is now accepted.
+    val = (void *)0; // Previously required to be rejected, is now accepted.
+
+    bool b = nullptr; // Was incorrectly rejected by Clang, is now accepted.
+
+
 Non-comprehensive list of changes in this release
 -------------------------------------------------
 - Clang now saves the address of ABI-indirect function parameters on the stack,
@@ -162,6 +186,8 @@ Non-comprehensive list of changes in this release
 
 New Compiler Flags
 ------------------
+- The flag ``-std=c++23`` has been added. This behaves the same as the existing
+  flag ``-std=c++2b``.
 
 Deprecated Compiler Flags
 -------------------------
@@ -313,8 +339,8 @@ Bug Fixes in This Version
   not a type concept.
 - Fix crash when a doc comment contains a line splicing.
   (`#62054 <https://github.com/llvm/llvm-project/issues/62054>`_)
-- Work around with a clang coverage crash which happens when visiting 
-  expressions/statements with invalid source locations in non-assert builds. 
+- Work around with a clang coverage crash which happens when visiting
+  expressions/statements with invalid source locations in non-assert builds.
   Assert builds may still see assertions triggered from this.
 - Fix a failed assertion due to an invalid source location when trying to form
   a coverage report for an unresolved constructor expression.
@@ -331,13 +357,20 @@ Bug Fixes in This Version
   (`#62122 <https://github.com/llvm/llvm-project/issues/62122>`_)
 - Fix crash when handling undefined template partial specialization
   (`#61356 <https://github.com/llvm/llvm-project/issues/61356>`_)
-- Fix a crash caused by incorrectly evaluating constraints on an inheriting
-  constructor declaration.
-  (`#62361 <https://github.com/llvm/llvm-project/issues/62361>`_)
-  (`#62362 <https://github.com/llvm/llvm-project/issues/62362>`_)
+- Fix premature substitution into the constraints of an inherited constructor.
 - Fix crash when attempting to perform parenthesized initialization of an
   aggregate with a base class with only non-public constructors.
   (`#62296 <https://github.com/llvm/llvm-project/issues/62296>`_)
+- Fix a stack overflow issue when evaluating ``consteval`` default arguments.
+  (`#60082` <https://github.com/llvm/llvm-project/issues/60082>`_)
+- Fix the assertion hit when generating code for global variable initializer of
+  _BitInt(1) type.
+  (`#62207 <https://github.com/llvm/llvm-project/issues/62207>`_)
+- Fix lambdas and other anonymous function names not respecting ``-fdebug-prefix-map``
+  (`#62192 <https://github.com/llvm/llvm-project/issues/62192>`_)
+- Fix crash when attempting to pass a non-pointer type as first argument of
+  ``__builtin_assume_aligned``.
+  (`#62305 <https://github.com/llvm/llvm-project/issues/62305>`_) 
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -363,7 +396,7 @@ Bug Fixes to C++ Support
   (`#58674 <https://github.com/llvm/llvm-project/issues/58674>`_)
 - Fix incorrect deletion of the default constructor of unions in some
   cases. (`#48416 <https://github.com/llvm/llvm-project/issues/48416>`_)
-- No longer issue a pre-C++2b compatibility warning in ``-pedantic`` mode
+- No longer issue a pre-C++23 compatibility warning in ``-pedantic`` mode
   regading overloaded `operator[]` with more than one parmeter or for static
   lambdas. (`#61582 <https://github.com/llvm/llvm-project/issues/61582>`_)
 - Stop stripping CV qualifiers from the type of ``this`` when capturing it by value in
@@ -376,6 +409,13 @@ Bug Fixes to C++ Support
 - Fix bug in the computation of the ``__has_unique_object_representations``
   builtin for types with unnamed bitfields.
   (`#61336 <https://github.com/llvm/llvm-project/issues/61336>`_)
+- Fix default member initializers sometimes being ignored when performing
+  parenthesized aggregate initialization of templated types.
+  (`#62266 <https://github.com/llvm/llvm-project/issues/62266>`_)
+- Fix overly aggressive lifetime checks for parenthesized aggregate
+  initialization.
+  (`#61567 <https://github.com/llvm/llvm-project/issues/61567>`_)
+- Fix a crash when expanding a pack as the index of a subscript expression.
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
