@@ -151,7 +151,8 @@ LogicalResult acc::GetDevicePtrOp::verify() {
       getDataClause() != acc::DataClause::acc_copyout &&
       getDataClause() != acc::DataClause::acc_delete &&
       getDataClause() != acc::DataClause::acc_detach &&
-      getDataClause() != acc::DataClause::acc_update_host)
+      getDataClause() != acc::DataClause::acc_update_host &&
+      getDataClause() != acc::DataClause::acc_update_self)
     return emitError("getDevicePtr mismatch");
   return success();
 }
@@ -234,6 +235,18 @@ LogicalResult acc::UpdateDeviceOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// UseDeviceOp
+//===----------------------------------------------------------------------===//
+LogicalResult acc::UseDeviceOp::verify() {
+  // Test for all clauses this operation can be decomposed from:
+  if (getDataClause() != acc::DataClause::acc_use_device)
+    return emitError(
+        "data clause associated with use_device operation must match its intent"
+        " or specify original clause this operation was decomposed from");
+  return success();
+}
+
 template <typename StructureOp>
 static ParseResult parseRegions(OpAsmParser &parser, OperationState &state,
                                 unsigned nRegions = 1) {
@@ -279,20 +292,69 @@ struct RemoveConstantIfCondition : public OpRewritePattern<OpTy> {
     return success();
   }
 };
+
+/// Replaces the given op with the contents of the given single-block region,
+/// using the operands of the block terminator to replace operation results.
+static void replaceOpWithRegion(PatternRewriter &rewriter, Operation *op,
+                                Region &region, ValueRange blockArgs = {}) {
+  assert(llvm::hasSingleElement(region) && "expected single-region block");
+  Block *block = &region.front();
+  Operation *terminator = block->getTerminator();
+  ValueRange results = terminator->getOperands();
+  rewriter.inlineBlockBefore(block, op, blockArgs);
+  rewriter.replaceOp(op, results);
+  rewriter.eraseOp(terminator);
+}
+
+/// Pattern to remove operation with region that have constant false `ifCond`
+/// and remove the condition from the operation if the `ifCond` is constant
+/// true.
+template <typename OpTy>
+struct RemoveConstantIfConditionWithRegion : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const override {
+    // Early return if there is no condition.
+    Value ifCond = op.getIfCond();
+    if (!ifCond)
+      return failure();
+
+    IntegerAttr constAttr;
+    if (!matchPattern(ifCond, m_Constant(&constAttr)))
+      return failure();
+    if (constAttr.getInt())
+      rewriter.updateRootInPlace(op, [&]() { op.getIfCondMutable().erase(0); });
+    else
+      replaceOpWithRegion(rewriter, op, op.getRegion());
+
+    return success();
+  }
+};
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
 // ParallelOp
 //===----------------------------------------------------------------------===//
 
+/// Check dataOperands for acc.parallel, acc.serial and acc.kernels.
+template <typename Op>
+static LogicalResult checkDataOperands(Op op,
+                                       const mlir::ValueRange &operands) {
+  for (mlir::Value operand : operands)
+    if (!mlir::isa<acc::AttachOp, acc::CopyinOp, acc::CopyoutOp, acc::CreateOp,
+                   acc::DeleteOp, acc::DetachOp, acc::DevicePtrOp,
+                   acc::GetDevicePtrOp, acc::NoCreateOp, acc::PresentOp>(
+            operand.getDefiningOp()))
+      return op.emitError(
+          "expect data entry/exit operation or acc.getdeviceptr "
+          "as defining op");
+  return success();
+}
+
 unsigned ParallelOp::getNumDataOperands() {
-  return getReductionOperands().size() + getCopyOperands().size() +
-         getCopyinOperands().size() + getCopyinReadonlyOperands().size() +
-         getCopyoutOperands().size() + getCopyoutZeroOperands().size() +
-         getCreateOperands().size() + getCreateZeroOperands().size() +
-         getNoCreateOperands().size() + getPresentOperands().size() +
-         getDevicePtrOperands().size() + getAttachOperands().size() +
-         getGangPrivateOperands().size() +
+  return getReductionOperands().size() + getGangPrivateOperands().size() +
          getGangFirstPrivateOperands().size() + getDataClauseOperands().size();
 }
 
@@ -306,18 +368,16 @@ Value ParallelOp::getDataOperand(unsigned i) {
   return getOperand(getWaitOperands().size() + numOptional + i);
 }
 
+LogicalResult acc::ParallelOp::verify() {
+  return checkDataOperands<acc::ParallelOp>(*this, getDataClauseOperands());
+}
+
 //===----------------------------------------------------------------------===//
 // SerialOp
 //===----------------------------------------------------------------------===//
 
 unsigned SerialOp::getNumDataOperands() {
-  return getReductionOperands().size() + getCopyOperands().size() +
-         getCopyinOperands().size() + getCopyinReadonlyOperands().size() +
-         getCopyoutOperands().size() + getCopyoutZeroOperands().size() +
-         getCreateOperands().size() + getCreateZeroOperands().size() +
-         getNoCreateOperands().size() + getPresentOperands().size() +
-         getDevicePtrOperands().size() + getAttachOperands().size() +
-         getGangPrivateOperands().size() +
+  return getReductionOperands().size() + getGangPrivateOperands().size() +
          getGangFirstPrivateOperands().size() + getDataClauseOperands().size();
 }
 
@@ -328,17 +388,16 @@ Value SerialOp::getDataOperand(unsigned i) {
   return getOperand(getWaitOperands().size() + numOptional + i);
 }
 
+LogicalResult acc::SerialOp::verify() {
+  return checkDataOperands<acc::SerialOp>(*this, getDataClauseOperands());
+}
+
 //===----------------------------------------------------------------------===//
 // KernelsOp
 //===----------------------------------------------------------------------===//
 
 unsigned KernelsOp::getNumDataOperands() {
-  return getCopyOperands().size() + getCopyinOperands().size() +
-         getCopyinReadonlyOperands().size() + getCopyoutOperands().size() +
-         getCopyoutZeroOperands().size() + getCreateOperands().size() +
-         getCreateZeroOperands().size() + getNoCreateOperands().size() +
-         getPresentOperands().size() + getDevicePtrOperands().size() +
-         getAttachOperands().size() + getDataClauseOperands().size();
+  return getDataClauseOperands().size();
 }
 
 Value KernelsOp::getDataOperand(unsigned i) {
@@ -346,6 +405,30 @@ Value KernelsOp::getDataOperand(unsigned i) {
   numOptional += getIfCond() ? 1 : 0;
   numOptional += getSelfCond() ? 1 : 0;
   return getOperand(getWaitOperands().size() + numOptional + i);
+}
+
+LogicalResult acc::KernelsOp::verify() {
+  return checkDataOperands<acc::KernelsOp>(*this, getDataClauseOperands());
+}
+
+//===----------------------------------------------------------------------===//
+// HostDataOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult acc::HostDataOp::verify() {
+  if (getDataOperands().empty())
+    return emitError("at least one operand must appear on the host_data "
+                     "operation");
+
+  for (mlir::Value operand : getDataOperands())
+    if (!mlir::isa<acc::UseDeviceOp>(operand.getDefiningOp()))
+      return emitError("expect data entry operation as defining op");
+  return success();
+}
+
+void acc::HostDataOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                  MLIRContext *context) {
+  results.add<RemoveConstantIfConditionWithRegion<HostDataOp>>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -480,17 +563,19 @@ LogicalResult acc::DataOp::verify() {
   if (getOperands().empty() && !getDefaultAttr())
     return emitError("at least one operand or the default attribute "
                      "must appear on the data operation");
+
+  for (mlir::Value operand : getDataClauseOperands())
+    if (!mlir::isa<acc::AttachOp, acc::CopyinOp, acc::CopyoutOp, acc::CreateOp,
+                   acc::DeleteOp, acc::DetachOp, acc::DevicePtrOp,
+                   acc::GetDevicePtrOp, acc::NoCreateOp, acc::PresentOp>(
+            operand.getDefiningOp()))
+      return emitError("expect data entry/exit operation or acc.getdeviceptr "
+                       "as defining op");
+
   return success();
 }
 
-unsigned DataOp::getNumDataOperands() {
-  return getCopyOperands().size() + getCopyinOperands().size() +
-         getCopyinReadonlyOperands().size() + getCopyoutOperands().size() +
-         getCopyoutZeroOperands().size() + getCreateOperands().size() +
-         getCreateZeroOperands().size() + getNoCreateOperands().size() +
-         getPresentOperands().size() + getDeviceptrOperands().size() +
-         getAttachOperands().size() + getDataClauseOperands().size();
-}
+unsigned DataOp::getNumDataOperands() { return getDataClauseOperands().size(); }
 
 Value DataOp::getDataOperand(unsigned i) {
   unsigned numOptional = getIfCond() ? 1 : 0;
@@ -505,11 +590,9 @@ LogicalResult acc::ExitDataOp::verify() {
   // 2.6.6. Data Exit Directive restriction
   // At least one copyout, delete, or detach clause must appear on an exit data
   // directive.
-  if (getCopyoutOperands().empty() && getDeleteOperands().empty() &&
-      getDetachOperands().empty() && getDataClauseOperands().empty())
-    return emitError(
-        "at least one operand in copyout, delete or detach must appear on the "
-        "exit data operation");
+  if (getDataClauseOperands().empty())
+    return emitError("at least one operand must be present in dataOperands on "
+                     "the exit data operation");
 
   // The async attribute represent the async clause without value. Therefore the
   // attribute and operand cannot appear at the same time.
@@ -528,8 +611,7 @@ LogicalResult acc::ExitDataOp::verify() {
 }
 
 unsigned ExitDataOp::getNumDataOperands() {
-  return getCopyoutOperands().size() + getDeleteOperands().size() +
-         getDetachOperands().size() + getDataClauseOperands().size();
+  return getDataClauseOperands().size();
 }
 
 Value ExitDataOp::getDataOperand(unsigned i) {
@@ -552,12 +634,9 @@ LogicalResult acc::EnterDataOp::verify() {
   // 2.6.6. Data Enter Directive restriction
   // At least one copyin, create, or attach clause must appear on an enter data
   // directive.
-  if (getCopyinOperands().empty() && getCreateOperands().empty() &&
-      getCreateZeroOperands().empty() && getAttachOperands().empty() &&
-      getDataClauseOperands().empty())
-    return emitError(
-        "at least one operand in copyin, create, "
-        "create_zero or attach must appear on the enter data operation");
+  if (getDataClauseOperands().empty())
+    return emitError("at least one operand must be present in dataOperands on "
+                     "the enter data operation");
 
   // The async attribute represent the async clause without value. Therefore the
   // attribute and operand cannot appear at the same time.
@@ -572,13 +651,16 @@ LogicalResult acc::EnterDataOp::verify() {
   if (getWaitDevnum() && getWaitOperands().empty())
     return emitError("wait_devnum cannot appear without waitOperands");
 
+  for (mlir::Value operand : getDataClauseOperands())
+    if (!mlir::isa<acc::AttachOp, acc::CreateOp, acc::CopyinOp>(
+            operand.getDefiningOp()))
+      return emitError("expect data entry operation as defining op");
+
   return success();
 }
 
 unsigned EnterDataOp::getNumDataOperands() {
-  return getCopyinOperands().size() + getCreateOperands().size() +
-         getCreateZeroOperands().size() + getAttachOperands().size() +
-         getDataClauseOperands().size();
+  return getDataClauseOperands().size();
 }
 
 Value EnterDataOp::getDataOperand(unsigned i) {
@@ -623,10 +705,8 @@ LogicalResult acc::ShutdownOp::verify() {
 
 LogicalResult acc::UpdateOp::verify() {
   // At least one of host or device should have a value.
-  if (getHostOperands().empty() && getDeviceOperands().empty() &&
-      getDataClauseOperands().empty())
-    return emitError(
-        "at least one value must be present in hostOperands or deviceOperands");
+  if (getDataClauseOperands().empty())
+    return emitError("at least one value must be present in dataOperands");
 
   // The async attribute represent the async clause without value. Therefore the
   // attribute and operand cannot appear at the same time.
@@ -641,12 +721,17 @@ LogicalResult acc::UpdateOp::verify() {
   if (getWaitDevnum() && getWaitOperands().empty())
     return emitError("wait_devnum cannot appear without waitOperands");
 
+  for (mlir::Value operand : getDataClauseOperands())
+    if (!mlir::isa<acc::UpdateDeviceOp, acc::UpdateHostOp, acc::GetDevicePtrOp>(
+            operand.getDefiningOp()))
+      return emitError("expect data entry/exit operation or acc.getdeviceptr "
+                       "as defining op");
+
   return success();
 }
 
 unsigned UpdateOp::getNumDataOperands() {
-  return getHostOperands().size() + getDeviceOperands().size() +
-         getDataClauseOperands().size();
+  return getDataClauseOperands().size();
 }
 
 Value UpdateOp::getDataOperand(unsigned i) {
