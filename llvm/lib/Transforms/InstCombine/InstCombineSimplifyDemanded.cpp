@@ -384,7 +384,7 @@ Value *InstCombinerImpl::SimplifyDemandedUseBits(Value *V, APInt DemandedMask,
       return I;
 
     // Only known if known in both the LHS and RHS.
-    Known = KnownBits::commonBits(LHSKnown, RHSKnown);
+    Known = LHSKnown.intersectWith(RHSKnown);
     break;
   }
   case Instruction::Trunc: {
@@ -1542,7 +1542,7 @@ Value *InstCombinerImpl::SimplifyDemandedVectorElts(Value *V,
       // Found constant vector with single element - convert to insertelement.
       if (Op && Value) {
         Instruction *New = InsertElementInst::Create(
-            Op, Value, ConstantInt::get(Type::getInt32Ty(I->getContext()), Idx),
+            Op, Value, ConstantInt::get(Type::getInt64Ty(I->getContext()), Idx),
             Shuffle->getName());
         InsertNewInstWith(New, *Shuffle);
         return New;
