@@ -323,7 +323,7 @@ struct KnownFPClass {
   ///   x > +0 --> true
   ///   x < -0 --> false
   bool cannotBeOrderedLessThanZero() const {
-  return isKnownNever(OrderedLessThanZeroMask);
+    return isKnownNever(OrderedLessThanZeroMask);
   }
 
   /// Return true if we can prove that the analyzed floating-point value is
@@ -391,6 +391,18 @@ struct KnownFPClass {
       KnownFPClasses &= (fcNegative | fcNan);
     if (Sign.isKnownNever(fcNegative | fcNan) || (SignBit && !*SignBit))
       KnownFPClasses &= (fcPositive | fcNan);
+  }
+
+  // Propagate knowledge that a non-NaN source implies the result can also not
+  // be a NaN. For unconstrained operations, signaling nans are not guaranteed
+  // to be quieted but cannot be introduced.
+  void propagateNaN(const KnownFPClass &Src, bool PreserveSign = false) {
+    if (Src.isKnownNever(fcNan)) {
+      knownNot(fcNan);
+      if (PreserveSign)
+        SignBit = Src.SignBit;
+    } else if (Src.isKnownNever(fcSNan))
+      knownNot(fcSNan);
   }
 
   void resetAll() { *this = KnownFPClass(); }
@@ -471,13 +483,17 @@ inline bool isKnownNeverInfOrNaN(
 /// Return true if the floating-point scalar value is not a NaN or if the
 /// floating-point vector value has no NaN elements. Return false if a value
 /// could ever be NaN.
-bool isKnownNeverNaN(const Value *V, const DataLayout &DL,
-                     const TargetLibraryInfo *TLI = nullptr, unsigned Depth = 0,
-                     AssumptionCache *AC = nullptr,
-                     const Instruction *CtxI = nullptr,
-                     const DominatorTree *DT = nullptr,
-                     OptimizationRemarkEmitter *ORE = nullptr,
-                     bool UseInstrInfo = true);
+inline bool isKnownNeverNaN(const Value *V, const DataLayout &DL,
+                            const TargetLibraryInfo *TLI, unsigned Depth = 0,
+                            AssumptionCache *AC = nullptr,
+                            const Instruction *CtxI = nullptr,
+                            const DominatorTree *DT = nullptr,
+                            OptimizationRemarkEmitter *ORE = nullptr,
+                            bool UseInstrInfo = true) {
+  KnownFPClass Known = computeKnownFPClass(V, DL, fcNan, Depth, TLI, AC, CtxI,
+                                           DT, ORE, UseInstrInfo);
+  return Known.isKnownNeverNaN();
+}
 
 /// Return true if we can prove that the specified FP value's sign bit is 0.
 ///
@@ -913,6 +929,13 @@ bool canCreatePoison(const Operator *Op, bool ConsiderFlagsAndMetadata = true);
 /// For example, if ValAssumedPoison is `icmp X, 10` and V is `icmp X, 5`,
 /// impliesPoison returns true.
 bool impliesPoison(const Value *ValAssumedPoison, const Value *V);
+
+/// Return true if V is poison given that ValAssumedPoison is already poison.
+/// Poison generating flags or metadata are ignored in the process of implying.
+/// And the ignored instructions will be recorded in IgnoredInsts.
+bool impliesPoisonIgnoreFlagsOrMetadata(
+    Value *ValAssumedPoison, const Value *V,
+    SmallVectorImpl<Instruction *> &IgnoredInsts);
 
 /// Return true if this function can prove that V does not have undef bits
 /// and is never poison. If V is an aggregate value or vector, check whether

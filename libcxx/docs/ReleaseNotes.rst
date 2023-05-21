@@ -41,6 +41,9 @@ Implemented Papers
 - P1328R1 - ``constexpr type_info::operator==()``
 - P1413R3 - Formatting ``thread::id`` (the ``stacktrace`` is not done yet)
 - P2675R1 - ``format``'s width estimation is too approximate and not forward compatible
+- P2505R5 - Monadic operations for ``std::expected``
+- P2711R1 - Making Multi-Param Constructors Of views explicit (``join_with_view`` is not done yet)
+- P2572R1 - ``std::format`` fill character allowances
 
 Improvements and New Features
 -----------------------------
