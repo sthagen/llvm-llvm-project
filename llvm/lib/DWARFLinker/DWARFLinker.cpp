@@ -903,8 +903,6 @@ void DWARFLinker::lookForDIEsToKeep(AddressesMap &AddressesMap,
     if ((Current.Flags & TF_DependencyWalk) && AlreadyKept)
       continue;
 
-    // We must not call shouldKeepDIE while called from keepDIEAndDependencies,
-    // because it would screw up the relocation finding logic.
     if (!(Current.Flags & TF_DependencyWalk))
       Current.Flags = shouldKeepDIE(AddressesMap, Ranges, Current.Die, File,
                                     Current.CU, MyInfo, Current.Flags);
@@ -2082,6 +2080,10 @@ void DWARFLinker::DIECloner::generateLineTableForUnit(CompileUnit &Unit) {
     // Set Line Table Rows.
     if (Linker.Options.Update) {
       LineTable.Rows = LT->Rows;
+      // If all the line table contains is a DW_LNE_end_sequence, clear the line
+      // table rows, it will be inserted again in the DWARFStreamer.
+      if (LineTable.Rows.size() == 1 && LineTable.Rows[0].EndSequence)
+        LineTable.Rows.clear();
 
       LineTable.Sequences = LT->Sequences;
     } else {
