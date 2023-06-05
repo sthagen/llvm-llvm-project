@@ -118,6 +118,15 @@ td_library(
     ],
 )
 
+td_library(
+    name = "BuiltinDialectBytecodeTdFiles",
+    srcs = ["include/mlir/IR/BuiltinDialectBytecode.td"],
+    includes = ["include"],
+    deps = [
+        ":BytecodeTdFiles",
+    ],
+)
+
 gentbl_cc_library(
     name = "BuiltinDialectIncGen",
     strip_include_prefix = "include",
@@ -4375,6 +4384,7 @@ cc_library(
         ":AsyncDialect",
         ":ControlFlowDialect",
         ":DLTIDialect",
+        ":ExecutionEngineUtils",
         ":FuncDialect",
         ":GPUDialect",
         ":GPUPassIncGen",
