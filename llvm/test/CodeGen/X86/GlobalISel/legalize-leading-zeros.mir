@@ -4,7 +4,7 @@
 # RUN: FileCheck -check-prefix=ERR32  %s < %t
 
 # ERR32: remark: <unknown>:0:0: unable to legalize instruction: %13:_(s32), %14:_(s1) = G_USUBE %8:_, %10:_, %12:_ (in function: test_ctlz35)
-# ERR32: remark: <unknown>:0:0: unable to legalize instruction: %1:_(s64) = G_SELECT %6:_(s1), %9:_, %10:_ (in function: test_ctlz64)
+# ERR32: remark: <unknown>:0:0: unable to legalize instruction: %10:_(s64) = G_CTLZ_ZERO_UNDEF %4:_(s32) (in function: test_ctlz64)
 
 # test count leading zeros for s16, s32, and s64
 
@@ -93,8 +93,13 @@ body:             |
     ; X86-NEXT: [[C1:%[0-9]+]]:_(s64) = G_CONSTANT i64 32
     ; X86-NEXT: [[ADD:%[0-9]+]]:_(s64) = G_ADD [[CTLZ]], [[C1]]
     ; X86-NEXT: [[CTLZ_ZERO_UNDEF:%[0-9]+]]:_(s64) = G_CTLZ_ZERO_UNDEF [[UV1]](s32)
-    ; X86-NEXT: [[SELECT:%[0-9]+]]:_(s64) = G_SELECT [[ICMP]](s1), [[ADD]], [[CTLZ_ZERO_UNDEF]]
-    ; X86-NEXT: [[COPY:%[0-9]+]]:_(s64) = COPY [[SELECT]](s64)
+    ; X86-NEXT: [[UV2:%[0-9]+]]:_(s32), [[UV3:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[ADD]](s64)
+    ; X86-NEXT: [[UV4:%[0-9]+]]:_(s32), [[UV5:%[0-9]+]]:_(s32) = G_UNMERGE_VALUES [[CTLZ_ZERO_UNDEF]](s64)
+    ; X86-NEXT: [[ZEXT:%[0-9]+]]:_(s32) = G_ZEXT [[ICMP]](s1)
+    ; X86-NEXT: [[SELECT:%[0-9]+]]:_(s32) = G_SELECT [[ZEXT]](s32), [[UV2]], [[UV4]]
+    ; X86-NEXT: [[SELECT1:%[0-9]+]]:_(s32) = G_SELECT [[ZEXT]](s32), [[UV3]], [[UV5]]
+    ; X86-NEXT: [[MV:%[0-9]+]]:_(s64) = G_MERGE_VALUES [[SELECT]](s32), [[SELECT1]](s32)
+    ; X86-NEXT: [[COPY:%[0-9]+]]:_(s64) = COPY [[MV]](s64)
     ; X86-NEXT: RET 0, implicit [[COPY]](s64)
     %0:_(s64) = IMPLICIT_DEF
     %1:_(s64) = G_CTLZ %0

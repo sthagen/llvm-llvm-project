@@ -42,6 +42,10 @@ static cl::opt<unsigned> SVEScatterOverhead("sve-scatter-overhead",
 static cl::opt<unsigned> SVETailFoldInsnThreshold("sve-tail-folding-insn-threshold",
                                                   cl::init(15), cl::Hidden);
 
+static cl::opt<unsigned>
+    NeonNonConstStrideOverhead("neon-nonconst-stride-overhead", cl::init(10),
+                               cl::Hidden);
+
 namespace {
 class TailFoldingOption {
   // These bitfields will only ever be set to something non-zero in operator=,
@@ -1696,6 +1700,7 @@ AArch64TTIImpl::instCombineIntrinsic(InstCombiner &IC,
   case Intrinsic::aarch64_sve_ptest_last:
     return instCombineSVEPTest(IC, II);
   case Intrinsic::aarch64_sve_mul:
+  case Intrinsic::aarch64_sve_mul_u:
   case Intrinsic::aarch64_sve_fmul:
   case Intrinsic::aarch64_sve_fmul_u:
     return instCombineSVEVectorMul(IC, II);
@@ -2576,7 +2581,7 @@ InstructionCost AArch64TTIImpl::getAddressComputationCost(Type *Ty,
   // likely result in more instructions compared to scalar code where the
   // computation can more often be merged into the index mode. The resulting
   // extra micro-ops can significantly decrease throughput.
-  unsigned NumVectorInstToHideOverhead = 10;
+  unsigned NumVectorInstToHideOverhead = NeonNonConstStrideOverhead;
   int MaxMergeDistance = 64;
 
   if (Ty->isVectorTy() && SE &&
@@ -2809,19 +2814,23 @@ InstructionCost AArch64TTIImpl::getInterleavedMemoryOpCost(
     Align Alignment, unsigned AddressSpace, TTI::TargetCostKind CostKind,
     bool UseMaskForCond, bool UseMaskForGaps) {
   assert(Factor >= 2 && "Invalid interleave factor");
-  auto *VecVTy = cast<FixedVectorType>(VecTy);
+  auto *VecVTy = cast<VectorType>(VecTy);
+
+  if (VecTy->isScalableTy() && (!ST->hasSVE() || Factor != 2))
+    return InstructionCost::getInvalid();
 
   if (!UseMaskForCond && !UseMaskForGaps &&
       Factor <= TLI->getMaxSupportedInterleaveFactor()) {
-    unsigned NumElts = VecVTy->getNumElements();
+    unsigned MinElts = VecVTy->getElementCount().getKnownMinValue();
     auto *SubVecTy =
-        FixedVectorType::get(VecTy->getScalarType(), NumElts / Factor);
+        VectorType::get(VecVTy->getElementType(),
+                        VecVTy->getElementCount().divideCoefficientBy(Factor));
 
     // ldN/stN only support legal vector types of size 64 or 128 in bits.
     // Accesses having vector types that are a multiple of 128 bits can be
     // matched to more than one ldN/stN instruction.
     bool UseScalable;
-    if (NumElts % Factor == 0 &&
+    if (MinElts % Factor == 0 &&
         TLI->isLegalInterleavedAccessType(SubVecTy, DL, UseScalable))
       return Factor * TLI->getNumInterleavedAccesses(SubVecTy, DL, UseScalable);
   }

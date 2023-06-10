@@ -142,8 +142,33 @@ static DiagnosedSilenceableFailure unpackSingleIndexResultPayloadOperations(
 }
 
 //===----------------------------------------------------------------------===//
+// Apply...PatternsOp
+//===----------------------------------------------------------------------===//
+
+void transform::ApplyEraseUnnecessaryInputsPatternsOp::populatePatterns(
+    RewritePatternSet &patterns) {
+  linalg::populateEraseUnnecessaryInputsPatterns(patterns);
+}
+
+void transform::ApplyFoldUnitExtentDimsViaReshapesPatternsOp::populatePatterns(
+    RewritePatternSet &patterns) {
+  linalg::populateFoldUnitExtentDimsViaReshapesPatterns(patterns);
+}
+
+void transform::ApplyFoldUnitExtentDimsViaSlicesPatternsOp::populatePatterns(
+    RewritePatternSet &patterns) {
+  linalg::populateFoldUnitExtentDimsViaSlicesPatterns(patterns);
+}
+
+void transform::ApplyTilingCanonicalizationPatternsOp::populatePatterns(
+    RewritePatternSet &patterns) {
+  linalg::populateLinalgTilingCanonicalizationPatterns(patterns);
+}
+
+//===----------------------------------------------------------------------===//
 // BufferizeToAllocationOp
 //===----------------------------------------------------------------------===//
+
 DiagnosedSilenceableFailure
 transform::BufferizeToAllocationOp::apply(transform::TransformResults &results,
                                           transform::TransformState &state) {
@@ -1594,9 +1619,14 @@ transform::PadOp::applyToOne(LinalgOp target,
   TrackingListener listener(state, *this);
   IRRewriter rewriter(getContext(), &listener);
   LinalgOp paddedOp;
-  FailureOr<SmallVector<Value>> result = rewriteAsPaddedOp(
-      rewriter, target, extractFromI64ArrayAttr(getPaddingDimensions()),
-      paddingValues, packPaddings, paddedOp);
+  SmallVector<int64_t> paddingDimensions =
+      extractFromI64ArrayAttr(getPaddingDimensions());
+  SmallVector<int64_t> padToMultipleOf(paddingDimensions.size(), 1);
+  if (getPadToMultipleOf().has_value())
+    padToMultipleOf = extractFromI64ArrayAttr(*getPadToMultipleOf());
+  FailureOr<SmallVector<Value>> result =
+      rewriteAsPaddedOp(rewriter, target, paddingDimensions, padToMultipleOf,
+                        paddingValues, packPaddings, paddedOp);
   if (succeeded(result)) {
     // We need to perform our own replacement here because this API is still
     // used in patterns that "pad and hoist", for which the replacement values
@@ -1630,7 +1660,11 @@ LogicalResult transform::PadOp::verify() {
                             "integers, found "
                          << getPaddingDimensions();
   }
-
+  if (getPadToMultipleOf().has_value()) {
+    if (getPadToMultipleOf()->size() != paddingDimensions.size()) {
+      return emitOpError() << "expects as many multiples as padding_dimensions";
+    }
+  }
   ArrayAttr transposes = getTransposePaddings();
   for (Attribute attr : transposes) {
     SmallVector<int64_t> transpose = extractFromI64ArrayAttr(attr);
@@ -2556,8 +2590,8 @@ ParseResult transform::TileOp::parse(OpAsmParser &parser,
 void TileOp::print(OpAsmPrinter &p) {
   p << ' ' << getTarget();
   printDynamicIndexList(p, getOperation(), getDynamicSizes(), getStaticSizes(),
-                        /*valueTypes=*/{}, OpAsmParser::Delimiter::Square,
-                        getLastTileSizeScalable());
+                        /*valueTypes=*/{}, getLastTileSizeScalableAttr(),
+                        OpAsmParser::Delimiter::Square);
   printOptionalInterchange(p, getInterchange());
   p << " : ";
   p.printFunctionalType(getOperands().getTypes(), getResults().getTypes());
@@ -3057,7 +3091,6 @@ transform::VectorizeOp::applyToOne(Operation *target,
 //===----------------------------------------------------------------------===//
 // MaskedVectorizeOp
 //===----------------------------------------------------------------------===//
-
 DiagnosedSilenceableFailure transform::MaskedVectorizeOp::apply(
     mlir::transform::TransformResults &transformResults,
     mlir::transform::TransformState &state) {
@@ -3112,7 +3145,8 @@ DiagnosedSilenceableFailure transform::MaskedVectorizeOp::apply(
     }
 
     if (failed(linalg::vectorize(rewriter, target, vectorSizes,
-                                 getVectorizeNdExtract()))) {
+                                 getVectorizeNdExtract(),
+                                 getLastVectorSizeScalable()))) {
       return mlir::emitSilenceableFailure(target->getLoc())
              << "Attempted to vectorize, but failed";
     }

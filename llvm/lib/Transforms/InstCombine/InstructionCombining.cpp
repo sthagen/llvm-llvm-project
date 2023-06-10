@@ -114,6 +114,11 @@ using namespace llvm::PatternMatch;
 
 STATISTIC(NumWorklistIterations,
           "Number of instruction combining iterations performed");
+STATISTIC(NumOneIteration, "Number of functions with one iteration");
+STATISTIC(NumTwoIterations, "Number of functions with two iterations");
+STATISTIC(NumThreeIterations, "Number of functions with three iterations");
+STATISTIC(NumFourOrMoreIterations,
+          "Number of functions with four or more iterations");
 
 STATISTIC(NumCombined , "Number of insts combined");
 STATISTIC(NumConstProp, "Number of constant folds");
@@ -2547,6 +2552,16 @@ static bool handlePotentiallyDeadBlock(BasicBlock *BB, InstCombiner &IC) {
     Changed = true;
   }
 
+  // Replace phi node operands in successor blocks with poison.
+  for (BasicBlock *Succ : successors(BB))
+    for (PHINode &PN : Succ->phis())
+      for (Use &U : PN.incoming_values())
+        if (PN.getIncomingBlock(U) == BB && !isa<PoisonValue>(U)) {
+          IC.replaceUse(U, PoisonValue::get(PN.getType()));
+          IC.addToWorklist(&PN);
+          Changed = true;
+        }
+
   // TODO: Successor blocks may also be dead.
   return Changed;
 }
@@ -4050,6 +4065,15 @@ static bool combineInstructionsOverFunction(
 
     MadeIRChange = true;
   }
+
+  if (Iteration == 1)
+    ++NumOneIteration;
+  else if (Iteration == 2)
+    ++NumTwoIterations;
+  else if (Iteration == 3)
+    ++NumThreeIterations;
+  else
+    ++NumFourOrMoreIterations;
 
   return MadeIRChange;
 }

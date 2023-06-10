@@ -2025,7 +2025,8 @@ void CodeGenModule::mergeDefaultFunctionDefinitionAttributes(
   llvm::AttrBuilder FuncAttrs(F.getContext());
   getTrivialDefaultFunctionAttributes(F.getName(), F.hasOptNone(),
                                       /*AttrOnCallSite=*/false, FuncAttrs);
-  GetCPUAndFeaturesAttributes(GlobalDecl(), FuncAttrs);
+  GetCPUAndFeaturesAttributes(GlobalDecl(), FuncAttrs,
+                              /*AddTargetFeatures=*/false);
 
   if (!WillInternalize && F.isInterposable()) {
     // Do not promote "dynamic" denormal-fp-math to this translation unit's
@@ -4910,25 +4911,6 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
     CGM.getTargetCodeGenInfo().checkFunctionCallABI(
         CGM, Loc, dyn_cast_or_null<FunctionDecl>(CurCodeDecl), FD, CallArgs);
   }
-
-#ifndef NDEBUG
-  if (!(CallInfo.isVariadic() && CallInfo.getArgStruct())) {
-    // For an inalloca varargs function, we don't expect CallInfo to match the
-    // function pointer's type, because the inalloca struct a will have extra
-    // fields in it for the varargs parameters.  Code later in this function
-    // bitcasts the function pointer to the type derived from CallInfo.
-    //
-    // In other cases, we assert that the types match up (until pointers stop
-    // having pointee types).
-    if (Callee.isVirtual())
-      assert(IRFuncTy == Callee.getVirtualFunctionType());
-    else {
-      llvm::PointerType *PtrTy =
-          llvm::cast<llvm::PointerType>(Callee.getFunctionPointer()->getType());
-      assert(PtrTy->isOpaqueOrPointeeTypeMatches(IRFuncTy));
-    }
-  }
-#endif
 
   // 1. Set up the arguments.
 

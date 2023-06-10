@@ -100,6 +100,11 @@ def TransformOpInterface : OpInterface<"TransformOpInterface"> {
       diag.attachNote(target->getLoc()) << "when applied to this op";
       return diag;
     }
+
+    /// Returns all operands that are handles and being consumed by this op.
+    ::llvm::SmallVector<OpOperand *> getConsumedHandleOpOperands() {
+      return ::mlir::transform::detail::getConsumedHandleOpOperands($_op);
+    }
   }];
 
   let verify = [{
@@ -181,10 +186,6 @@ def TransformEachOpTrait : NativeOpTrait<"TransformEachOpTrait"> {
   let cppNamespace = "::mlir::transform";
 }
 
-def TransformWithPatternsOpTrait : NativeOpTrait<"TransformWithPatternsOpTrait"> {
-  let cppNamespace = "::mlir::transform";
-}
-
 def NavigationTransformOpTrait : NativeOpTrait<"NavigationTransformOpTrait"> {
   let cppNamespace = "::mlir::transform";
 }
@@ -224,6 +225,27 @@ def FindPayloadReplacementOpInterface
       /*returnType=*/"::llvm::SmallVector<::mlir::Value>",
       /*name=*/"getNextOperands",
       /*arguments=*/(ins)
+    >,
+  ];
+}
+
+def PatternDescriptorOpInterface : OpInterface<"PatternDescriptorOpInterface"> {
+  let description = [{
+    This interface should be implemented by ops that select patterns of a
+    `transform.apply_patterns` op. It provides a method to populate a rewrite
+    pattern set with patterns.
+  }];
+
+  let cppNamespace = "::mlir::transform";
+
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{
+        Populate patterns into the given pattern set.
+      }],
+      /*returnType=*/"void",
+      /*name=*/"populatePatterns",
+      /*arguments=*/(ins "RewritePatternSet &":$patterns)
     >,
   ];
 }

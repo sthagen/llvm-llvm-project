@@ -9579,11 +9579,8 @@ bool ASTContext::areCompatibleRVVTypes(QualType FirstType,
   auto IsValidCast = [this](QualType FirstType, QualType SecondType) {
     if (const auto *BT = FirstType->getAs<BuiltinType>()) {
       if (const auto *VT = SecondType->getAs<VectorType>()) {
-        if (VT->getVectorKind() == VectorType::RVVFixedLengthDataVector)
-          return FirstType->isRVVVLSBuiltinType() &&
-                 VT->getElementType().getCanonicalType() ==
-                     FirstType->getRVVEltType(*this);
-        if (VT->getVectorKind() == VectorType::GenericVector)
+        if (VT->getVectorKind() == VectorType::RVVFixedLengthDataVector ||
+            VT->getVectorKind() == VectorType::GenericVector)
           return FirstType->isRVVVLSBuiltinType() &&
                  getTypeSize(SecondType) == getRVVTypeSize(*this, BT) &&
                  hasSameType(VT->getElementType(),
@@ -13581,16 +13578,17 @@ operator<<(const StreamingDiagnostic &DB,
 }
 
 bool ASTContext::mayExternalize(const Decl *D) const {
-  bool IsStaticVar =
-      isa<VarDecl>(D) && cast<VarDecl>(D)->getStorageClass() == SC_Static;
+  bool IsInternalVar =
+      isa<VarDecl>(D) &&
+      basicGVALinkageForVariable(*this, cast<VarDecl>(D)) == GVA_Internal;
   bool IsExplicitDeviceVar = (D->hasAttr<CUDADeviceAttr>() &&
                               !D->getAttr<CUDADeviceAttr>()->isImplicit()) ||
                              (D->hasAttr<CUDAConstantAttr>() &&
                               !D->getAttr<CUDAConstantAttr>()->isImplicit());
-  // CUDA/HIP: static managed variables need to be externalized since it is
+  // CUDA/HIP: managed variables need to be externalized since it is
   // a declaration in IR, therefore cannot have internal linkage. Kernels in
   // anonymous name space needs to be externalized to avoid duplicate symbols.
-  return (IsStaticVar &&
+  return (IsInternalVar &&
           (D->hasAttr<HIPManagedAttr>() || IsExplicitDeviceVar)) ||
          (D->hasAttr<CUDAGlobalAttr>() &&
           basicGVALinkageForFunction(*this, cast<FunctionDecl>(D)) ==

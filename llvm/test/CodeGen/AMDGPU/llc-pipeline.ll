@@ -34,7 +34,6 @@
 ; GCN-O0-NEXT:    Lower ctors and dtors for AMDGPU
 ; GCN-O0-NEXT:    FunctionPass Manager
 ; GCN-O0-NEXT:      Early propagate attributes from kernels to functions
-; GCN-O0-NEXT:    AMDGPU Lower Intrinsics
 ; GCN-O0-NEXT:    AMDGPU Inline All Functions
 ; GCN-O0-NEXT:    Inliner for always_inline functions
 ; GCN-O0-NEXT:      FunctionPass Manager
@@ -51,9 +50,6 @@
 ; GCN-O0-NEXT:      Scalarize Masked Memory Intrinsics
 ; GCN-O0-NEXT:      Expand reduction intrinsics
 ; GCN-O0-NEXT:    AMDGPU Remove Incompatible Functions
-; GCN-O0-NEXT:    AMDGPU Attributor
-; GCN-O0-NEXT:      FunctionPass Manager
-; GCN-O0-NEXT:        Cycle Info Analysis
 ; GCN-O0-NEXT:    CallGraph Construction
 ; GCN-O0-NEXT:    Call Graph SCC Pass Manager
 ; GCN-O0-NEXT:      AMDGPU Annotate Kernel Features
@@ -185,7 +181,6 @@
 ; GCN-O1-NEXT:    Lower ctors and dtors for AMDGPU
 ; GCN-O1-NEXT:    FunctionPass Manager
 ; GCN-O1-NEXT:      Early propagate attributes from kernels to functions
-; GCN-O1-NEXT:    AMDGPU Lower Intrinsics
 ; GCN-O1-NEXT:    AMDGPU Inline All Functions
 ; GCN-O1-NEXT:    Inliner for always_inline functions
 ; GCN-O1-NEXT:      FunctionPass Manager
@@ -348,7 +343,6 @@
 ; GCN-O1-NEXT:        Machine Natural Loop Construction
 ; GCN-O1-NEXT:        Simple Register Coalescing
 ; GCN-O1-NEXT:        Rename Disconnected Subregister Components
-; GCN-O1-NEXT:        Rewrite Partial Register Uses
 ; GCN-O1-NEXT:        Machine Instruction Scheduler
 ; GCN-O1-NEXT:        MachinePostDominator Tree Construction
 ; GCN-O1-NEXT:        SI Whole Quad Mode
@@ -462,7 +456,6 @@
 ; GCN-O1-OPTS-NEXT:    Lower ctors and dtors for AMDGPU
 ; GCN-O1-OPTS-NEXT:    FunctionPass Manager
 ; GCN-O1-OPTS-NEXT:      Early propagate attributes from kernels to functions
-; GCN-O1-OPTS-NEXT:    AMDGPU Lower Intrinsics
 ; GCN-O1-OPTS-NEXT:    AMDGPU Inline All Functions
 ; GCN-O1-OPTS-NEXT:    Inliner for always_inline functions
 ; GCN-O1-OPTS-NEXT:      FunctionPass Manager
@@ -656,7 +649,6 @@
 ; GCN-O1-OPTS-NEXT:        Machine Natural Loop Construction
 ; GCN-O1-OPTS-NEXT:        Simple Register Coalescing
 ; GCN-O1-OPTS-NEXT:        Rename Disconnected Subregister Components
-; GCN-O1-OPTS-NEXT:        Rewrite Partial Register Uses
 ; GCN-O1-OPTS-NEXT:        AMDGPU Pre-RA optimizations
 ; GCN-O1-OPTS-NEXT:        Machine Instruction Scheduler
 ; GCN-O1-OPTS-NEXT:        MachinePostDominator Tree Construction
@@ -771,7 +763,6 @@
 ; GCN-O2-NEXT:    Lower ctors and dtors for AMDGPU
 ; GCN-O2-NEXT:    FunctionPass Manager
 ; GCN-O2-NEXT:      Early propagate attributes from kernels to functions
-; GCN-O2-NEXT:    AMDGPU Lower Intrinsics
 ; GCN-O2-NEXT:    AMDGPU Inline All Functions
 ; GCN-O2-NEXT:    Inliner for always_inline functions
 ; GCN-O2-NEXT:      FunctionPass Manager
@@ -966,7 +957,6 @@
 ; GCN-O2-NEXT:        Machine Natural Loop Construction
 ; GCN-O2-NEXT:        Simple Register Coalescing
 ; GCN-O2-NEXT:        Rename Disconnected Subregister Components
-; GCN-O2-NEXT:        Rewrite Partial Register Uses
 ; GCN-O2-NEXT:        AMDGPU Pre-RA optimizations
 ; GCN-O2-NEXT:        Machine Instruction Scheduler
 ; GCN-O2-NEXT:        MachinePostDominator Tree Construction
@@ -1083,7 +1073,6 @@
 ; GCN-O3-NEXT:    Lower ctors and dtors for AMDGPU
 ; GCN-O3-NEXT:    FunctionPass Manager
 ; GCN-O3-NEXT:      Early propagate attributes from kernels to functions
-; GCN-O3-NEXT:    AMDGPU Lower Intrinsics
 ; GCN-O3-NEXT:    AMDGPU Inline All Functions
 ; GCN-O3-NEXT:    Inliner for always_inline functions
 ; GCN-O3-NEXT:      FunctionPass Manager
@@ -1288,7 +1277,6 @@
 ; GCN-O3-NEXT:        Machine Natural Loop Construction
 ; GCN-O3-NEXT:        Simple Register Coalescing
 ; GCN-O3-NEXT:        Rename Disconnected Subregister Components
-; GCN-O3-NEXT:        Rewrite Partial Register Uses
 ; GCN-O3-NEXT:        AMDGPU Pre-RA optimizations
 ; GCN-O3-NEXT:        Machine Instruction Scheduler
 ; GCN-O3-NEXT:        MachinePostDominator Tree Construction

@@ -4977,7 +4977,8 @@ bool SelectionDAG::isKnownNeverNaN(SDValue Op, bool SNaN, unsigned Depth) const 
   case ISD::FROUND:
   case ISD::FROUNDEVEN:
   case ISD::FRINT:
-  case ISD::FNEARBYINT: {
+  case ISD::FNEARBYINT:
+  case ISD::FLDEXP: {
     if (SNaN)
       return true;
     return isKnownNeverNaN(Op.getOperand(0), SNaN, Depth + 1);
@@ -10472,8 +10473,7 @@ void SelectionDAG::salvageDebugInfo(SDNode &N) {
     case ISD::ADD:
       SDValue N0 = N.getOperand(0);
       SDValue N1 = N.getOperand(1);
-      if (!isConstantIntBuildVectorOrConstantInt(N0) &&
-          isConstantIntBuildVectorOrConstantInt(N1)) {
+      if (!isa<ConstantSDNode>(N0) && isa<ConstantSDNode>(N1)) {
         uint64_t Offset = N.getConstantOperandVal(1);
 
         // Rewrite an ADD constant node into a DIExpression. Since we are

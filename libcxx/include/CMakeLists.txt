@@ -85,11 +85,13 @@ set(files
   __algorithm/pstl_backends/cpu_backends/transform.h
   __algorithm/pstl_backends/cpu_backends/transform_reduce.h
   __algorithm/pstl_copy.h
+  __algorithm/pstl_count.h
   __algorithm/pstl_fill.h
   __algorithm/pstl_find.h
   __algorithm/pstl_for_each.h
   __algorithm/pstl_frontend_dispatch.h
   __algorithm/pstl_merge.h
+  __algorithm/pstl_replace.h
   __algorithm/pstl_stable_sort.h
   __algorithm/pstl_transform.h
   __algorithm/push_heap.h
@@ -433,6 +435,7 @@ set(files
   __iterator/common_iterator.h
   __iterator/concepts.h
   __iterator/counted_iterator.h
+  __iterator/cpp17_iterator_concepts.h
   __iterator/data.h
   __iterator/default_sentinel.h
   __iterator/distance.h
@@ -642,6 +645,10 @@ set(files
   __stop_token/atomic_unique_lock.h
   __stop_token/intrusive_list_view.h
   __stop_token/intrusive_shared_ptr.h
+  __stop_token/stop_callback.h
+  __stop_token/stop_source.h
+  __stop_token/stop_state.h
+  __stop_token/stop_token.h
   __string/char_traits.h
   __string/constexpr_c_functions.h
   __string/extern_template_lists.h
@@ -825,6 +832,7 @@ set(files
   __utility/forward_like.h
   __utility/in_place.h
   __utility/integer_sequence.h
+  __utility/is_pointer_in_range.h
   __utility/move.h
   __utility/pair.h
   __utility/piecewise_construct.h
@@ -959,6 +967,7 @@ set(files
   stdint.h
   stdio.h
   stdlib.h
+  stop_token
   streambuf
   string
   string.h
@@ -983,7 +992,7 @@ set(files
   wctype.h
   )
 
-foreach(feature LIBCXX_ENABLE_FILESYSTEM LIBCXX_ENABLE_LOCALIZATION LIBCXX_ENABLE_FSTREAM LIBCXX_ENABLE_THREADS LIBCXX_ENABLE_WIDE_CHARACTERS)
+foreach(feature LIBCXX_ENABLE_FILESYSTEM LIBCXX_ENABLE_LOCALIZATION LIBCXX_ENABLE_THREADS LIBCXX_ENABLE_WIDE_CHARACTERS)
   if (NOT ${${feature}})
     set(requires_${feature} "requires LIBCXX_CONFIGURED_WITHOUT_SUPPORT_FOR_THIS_HEADER")
   endif()

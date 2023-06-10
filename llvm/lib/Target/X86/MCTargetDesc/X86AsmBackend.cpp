@@ -1327,9 +1327,13 @@ public:
 
   /// Implementation of algorithm to generate the compact unwind encoding
   /// for the CFI instructions.
-  uint32_t
-  generateCompactUnwindEncoding(ArrayRef<MCCFIInstruction> Instrs) const override {
+  uint32_t generateCompactUnwindEncoding(const MCDwarfFrameInfo *FI,
+                                         const MCContext *Ctxt) const override {
+    ArrayRef<MCCFIInstruction> Instrs = FI->Instructions;
     if (Instrs.empty()) return 0;
+    if (!isDarwinCanonicalPersonality(FI->Personality) &&
+        !Ctxt->emitCompactUnwindNonCanonical())
+      return CU::UNWIND_MODE_DWARF;
 
     // Reset the saved registers.
     unsigned SavedRegIdx = 0;
@@ -1515,6 +1519,12 @@ MCAsmBackend *llvm::createX86_64AsmBackend(const Target &T,
 
   if (TheTriple.isOSWindows() && TheTriple.isOSBinFormatCOFF())
     return new WindowsX86AsmBackend(T, true, STI);
+
+  if (TheTriple.isUEFI()) {
+    assert(TheTriple.isOSBinFormatCOFF() &&
+         "Only COFF format is supported in UEFI environment.");
+    return new WindowsX86AsmBackend(T, true, STI);
+  }
 
   uint8_t OSABI = MCELFObjectTargetWriter::getOSABI(TheTriple.getOS());
 

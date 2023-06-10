@@ -17,6 +17,7 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/ValueLattice.h"
 #include "llvm/Analysis/ValueLatticeUtils.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
@@ -386,7 +387,6 @@ class SCCPInstVisitor : public InstVisitor<SCCPInstVisitor> {
   using Edge = std::pair<BasicBlock *, BasicBlock *>;
   DenseSet<Edge> KnownFeasibleEdges;
 
-  DenseMap<Function *, LoopInfo *> FnLoopInfo;
   DenseMap<Function *, std::unique_ptr<PredicateInfo>> FnPredicateInfo;
 
   DenseMap<Value *, SmallPtrSet<User *, 2>> AdditionalUsers;
@@ -614,6 +614,7 @@ private:
   void visitCastInst(CastInst &I);
   void visitSelectInst(SelectInst &I);
   void visitUnaryOperator(Instruction &I);
+  void visitFreezeInst(FreezeInst &I);
   void visitBinaryOperator(Instruction &I);
   void visitCmpInst(CmpInst &I);
   void visitExtractValueInst(ExtractValueInst &EVI);
@@ -651,10 +652,6 @@ private:
   void visitInstruction(Instruction &I);
 
 public:
-  void addLoopInfo(Function &F, LoopInfo &LI) {
-    FnLoopInfo.insert({&F, &LI});
-  }
-
   void addPredicateInfo(Function &F, DominatorTree &DT, AssumptionCache &AC) {
     FnPredicateInfo.insert({&F, std::make_unique<PredicateInfo>(F, DT, AC)});
   }
@@ -668,13 +665,6 @@ public:
     if (It == FnPredicateInfo.end())
       return nullptr;
     return It->second->getPredicateInfoFor(I);
-  }
-
-  const LoopInfo &getLoopInfo(Function &F) {
-    auto It = FnLoopInfo.find(&F);
-    assert(It != FnLoopInfo.end() && It->second &&
-           "Need LoopInfo analysis results for function.");
-    return *It->second;
   }
 
   SCCPInstVisitor(const DataLayout &DL,
@@ -1404,6 +1394,30 @@ void SCCPInstVisitor::visitUnaryOperator(Instruction &I) {
   markOverdefined(&I);
 }
 
+void SCCPInstVisitor::visitFreezeInst(FreezeInst &I) {
+  // If this freeze returns a struct, just mark the result overdefined.
+  // TODO: We could do a lot better than this.
+  if (I.getType()->isStructTy())
+    return (void)markOverdefined(&I);
+
+  ValueLatticeElement V0State = getValueState(I.getOperand(0));
+  ValueLatticeElement &IV = ValueState[&I];
+  // resolvedUndefsIn might mark I as overdefined. Bail out, even if we would
+  // discover a concrete value later.
+  if (SCCPSolver::isOverdefined(IV))
+    return (void)markOverdefined(&I);
+
+  // If something is unknown/undef, wait for it to resolve.
+  if (V0State.isUnknownOrUndef())
+    return;
+
+  if (SCCPSolver::isConstant(V0State) &&
+      isGuaranteedNotToBeUndefOrPoison(getConstant(V0State)))
+    return (void)markConstant(IV, &I, getConstant(V0State));
+
+  markOverdefined(&I);
+}
+
 // Handle Binary Operators.
 void SCCPInstVisitor::visitBinaryOperator(Instruction &I) {
   ValueLatticeElement V1State = getValueState(I.getOperand(0));
@@ -1765,6 +1779,8 @@ void SCCPInstVisitor::handleCallResult(CallBase &CB) {
       SmallVector<ConstantRange, 2> OpRanges;
       for (Value *Op : II->args()) {
         const ValueLatticeElement &State = getValueState(Op);
+        if (State.isUnknownOrUndef())
+          return;
         OpRanges.push_back(getConstantRange(State, Op->getType()));
       }
 
@@ -1950,10 +1966,6 @@ SCCPSolver::SCCPSolver(
 
 SCCPSolver::~SCCPSolver() = default;
 
-void SCCPSolver::addLoopInfo(Function &F, LoopInfo &LI) {
-  Visitor->addLoopInfo(F, LI);
-}
-
 void SCCPSolver::addPredicateInfo(Function &F, DominatorTree &DT,
                                   AssumptionCache &AC) {
   Visitor->addPredicateInfo(F, DT, AC);
@@ -1965,10 +1977,6 @@ bool SCCPSolver::markBlockExecutable(BasicBlock *BB) {
 
 const PredicateBase *SCCPSolver::getPredicateInfoFor(Instruction *I) {
   return Visitor->getPredicateInfoFor(I);
-}
-
-const LoopInfo &SCCPSolver::getLoopInfo(Function &F) {
-  return Visitor->getLoopInfo(F);
 }
 
 void SCCPSolver::trackValueOfGlobalVariable(GlobalVariable *GV) {

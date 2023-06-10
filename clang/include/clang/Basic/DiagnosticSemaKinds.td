@@ -2656,10 +2656,23 @@ def warn_cxx14_compat_constexpr_not_const : Warning<
   "in C++14; add 'const' to avoid a change in behavior">,
   InGroup<DiagGroup<"constexpr-not-const">>;
 def err_invalid_consteval_take_address : Error<
-  "cannot take address of consteval %select{function|call operator of}1 %0 outside"
+  "cannot take address of %select{immediate|consteval}2 "
+  "%select{function|call operator of}1 %0 outside"
   " of an immediate invocation">;
 def err_invalid_consteval_call : Error<
-  "call to consteval function %q0 is not a constant expression">;
+  "call to %select{immediate|consteval}1 function "
+  "%q0 is not a constant expression">;
+
+def err_immediate_function_used_before_definition : Error<
+  "immediate function %0 used before it is defined">;
+
+def note_immediate_function_reason : Note<
+  "%0 is an immediate function because its body "
+  "%select{evaluates the address of %select{an immediate|a consteval}2 "
+  "function %1|contains a call to %select{an immediate|a consteval}2 "
+  "%select{function|constructor}4 %1 and that call is not a constant "
+  "expression}3">;
+
 def note_invalid_consteval_initializer : Note<
   "in the default initalizer of %0">;
 def note_invalid_consteval_initializer_here : Note<
@@ -3065,8 +3078,8 @@ def err_attribute_riscv_rvv_bits_unsupported : Error<
   "%0 is only supported when '-mrvv-vector-bits=<bits>' is specified with a "
   "value of \"zvl\" or a power 2 in the range [64,65536]">;
 def err_attribute_bad_rvv_vector_size : Error<
-  "invalid RVV vector size '%0', must match value set by "
-  "'-mrvv-vector-bits' ('%1')">;
+  "invalid RVV vector size '%0', expected size is '%1' based on LMUL of type "
+  "and '-mrvv-vector-bits'">;
 def err_attribute_invalid_rvv_type : Error<
   "%0 attribute applied to non-RVV type %1">;
 def err_attribute_requires_positive_integer : Error<
@@ -7661,7 +7674,7 @@ def warn_increment_bool : Warning<
   "incompatible with C++17">, InGroup<DeprecatedIncrementBool>;
 def ext_increment_bool : ExtWarn<
   "ISO C++17 does not allow incrementing expression of type bool">,
-  DefaultError, InGroup<IncrementBool>;
+  DefaultError, SFINAEFailure, InGroup<IncrementBool>;
 def err_increment_decrement_enum : Error<
   "cannot %select{decrement|increment}0 expression of enum type %1">;
 
@@ -9462,6 +9475,10 @@ def note_defaulted_comparison_not_constexpr_here : Note<
 def note_in_declaration_of_implicit_equality_comparison : Note<
   "while declaring the corresponding implicit 'operator==' "
   "for this defaulted 'operator<=>'">;
+def err_volatile_comparison_operator : Error<
+  "defaulted comparison function must not be volatile">;
+def err_ref_qualifier_comparison_operator : Error<
+  "ref-qualifier '&&' is not allowed on a defaulted comparison operator">;
 
 def ext_implicit_exception_spec_mismatch : ExtWarn<
   "function previously declared with an %select{explicit|implicit}0 exception "

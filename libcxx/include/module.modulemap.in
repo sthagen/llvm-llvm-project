@@ -976,7 +976,7 @@ module std [system] {
   }
   module fstream {
     @requires_LIBCXX_ENABLE_LOCALIZATION@
-    @requires_LIBCXX_ENABLE_FSTREAM@
+    @requires_LIBCXX_ENABLE_FILESYSTEM@
     header "fstream"
     export *
   }
@@ -1076,11 +1076,12 @@ module std [system] {
     export *
 
     module __iterator {
-      module access                { private header "__iterator/access.h" }
-      module advance               { private header "__iterator/advance.h" }
-      module back_insert_iterator  { private header "__iterator/back_insert_iterator.h" }
-      module bounded_iter          { private header "__iterator/bounded_iter.h" }
-      module common_iterator       { private header "__iterator/common_iterator.h" }
+      module access                  { private header "__iterator/access.h" }
+      module advance                 { private header "__iterator/advance.h" }
+      module back_insert_iterator    { private header "__iterator/back_insert_iterator.h" }
+      module bounded_iter            { private header "__iterator/bounded_iter.h" }
+      module common_iterator         { private header "__iterator/common_iterator.h" }
+      module cpp17_iterator_concepts { private header "__iterator/cpp17_iterator_concepts.h" }
       module concepts {
         private header "__iterator/concepts.h"
         export concepts.equality_comparable
@@ -1462,11 +1463,17 @@ module std [system] {
     export *
   }
   module stop_token {
+    @requires_LIBCXX_ENABLE_THREADS@
+    header "stop_token"
     export *
     module __stop_token {
       module atomic_unique_lock   { private header "__stop_token/atomic_unique_lock.h" }
       module intrusive_list_view  { private header "__stop_token/intrusive_list_view.h" }
       module intrusive_shared_ptr { private header "__stop_token/intrusive_shared_ptr.h" }
+      module stop_callback        { private header "__stop_token/stop_callback.h" }
+      module stop_source          { private header "__stop_token/stop_source.h" }
+      module stop_state           { private header "__stop_token/stop_state.h" }
+      module stop_token           { private header "__stop_token/stop_token.h" }
     }
   }
   module streambuf {
@@ -1749,6 +1756,7 @@ module std [system] {
       module forward_like           { private header "__utility/forward_like.h" }
       module in_place               { private header "__utility/in_place.h" }
       module integer_sequence       { private header "__utility/integer_sequence.h" }
+      module is_pointer_in_range    { private header "__utility/is_pointer_in_range.h" }
       module move                   { private header "__utility/move.h" }
       module pair                   { private header "__utility/pair.h" }
       module pair_fwd               { private header "__fwd/pair.h" }
