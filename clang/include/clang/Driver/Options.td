@@ -1037,6 +1037,17 @@ defm cuda_short_ptr : BoolFOption<"cuda-short-ptr",
   TargetOpts<"NVPTXUseShortPointers">, DefaultFalse,
   PosFlag<SetTrue, [CC1Option], "Use 32-bit pointers for accessing const/local/shared address spaces">,
   NegFlag<SetFalse>>;
+def mprintf_kind_EQ : Joined<["-"], "mprintf-kind=">, Group<m_Group>,
+  HelpText<"Specify the printf lowering scheme (AMDGPU only), allowed values are "
+  "\"hostcall\"(printing happens during kernel execution, this scheme "
+  "relies on hostcalls which require system to support pcie atomics) "
+  "and \"buffered\"(printing happens after all kernel threads exit, "
+  "this uses a printf buffer and does not rely on pcie atomic support)">,
+  Flags<[CC1Option]>,
+  Values<"hostcall,buffered">,
+  NormalizedValuesScope<"TargetOptions::AMDGPUPrintfKind">,
+  NormalizedValues<["Hostcall", "Buffered"]>,
+  MarshallingInfoEnum<TargetOpts<"AMDGPUPrintfKindVal">, "Hostcall">;
 def fgpu_default_stream_EQ : Joined<["-"], "fgpu-default-stream=">,
   HelpText<"Specify default stream. The default value is 'legacy'. (HIP only)">,
   Flags<[CC1Option]>,
@@ -2205,10 +2216,10 @@ defm xray_ignore_loops : BoolFOption<"xray-ignore-loops",
   NegFlag<SetFalse>>;
 
 defm xray_function_index : BoolFOption<"xray-function-index",
-  CodeGenOpts<"XRayOmitFunctionIndex">, DefaultTrue,
+  CodeGenOpts<"XRayFunctionIndex">, DefaultTrue,
+  PosFlag<SetTrue, []>,
   NegFlag<SetFalse, [CC1Option], "Omit function index section at the"
-          " expense of single-function patching performance">,
-  PosFlag<SetTrue>>;
+          " expense of single-function patching performance">>;
 
 def fxray_link_deps : Flag<["-"], "fxray-link-deps">, Group<f_Group>,
   Flags<[CC1Option]>,
@@ -2301,6 +2312,11 @@ def fmacro_backtrace_limit_EQ : Joined<["-"], "fmacro-backtrace-limit=">,
   Group<f_Group>, Flags<[NoXarchOption, CC1Option, CoreOption]>,
   HelpText<"Set the maximum number of entries to print in a macro expansion backtrace (0 = no limit)">,
   MarshallingInfoInt<DiagnosticOpts<"MacroBacktraceLimit">, "DiagnosticOptions::DefaultMacroBacktraceLimit">;
+def fcaret_diagnostics_max_lines_EQ :
+  Joined<["-"], "fcaret-diagnostics-max-lines=">,
+  Group<f_Group>, Flags<[CC1Option, CoreOption]>,
+  HelpText<"Set the maximum number of source lines to show in a caret diagnostic (0 = no limit).">,
+  MarshallingInfoInt<DiagnosticOpts<"SnippetLineLimit">, "DiagnosticOptions::DefaultSnippetLineLimit">;
 defm merge_all_constants : BoolFOption<"merge-all-constants",
   CodeGenOpts<"MergeAllConstants">, DefaultFalse,
   PosFlag<SetTrue, [CC1Option, CoreOption], "Allow">, NegFlag<SetFalse, [], "Disallow">,
@@ -3476,9 +3492,9 @@ def l : JoinedOrSeparate<["-"], "l">, Flags<[LinkerInput, RenderJoined]>,
         Group<Link_Group>;
 def lazy__framework : Separate<["-"], "lazy_framework">, Flags<[LinkerInput]>;
 def lazy__library : Separate<["-"], "lazy_library">, Flags<[LinkerInput]>;
-def mlittle_endian : Flag<["-"], "mlittle-endian">, Flags<[NoXarchOption,TargetSpecific]>;
+def mlittle_endian : Flag<["-"], "mlittle-endian">, Group<m_Group>, Flags<[NoXarchOption,TargetSpecific]>;
 def EL : Flag<["-"], "EL">, Alias<mlittle_endian>;
-def mbig_endian : Flag<["-"], "mbig-endian">, Flags<[NoXarchOption,TargetSpecific]>;
+def mbig_endian : Flag<["-"], "mbig-endian">, Group<m_Group>, Flags<[NoXarchOption,TargetSpecific]>;
 def EB : Flag<["-"], "EB">, Alias<mbig_endian>;
 def m16 : Flag<["-"], "m16">, Group<m_Group>, Flags<[NoXarchOption, CoreOption]>;
 def m32 : Flag<["-"], "m32">, Group<m_Group>, Flags<[NoXarchOption, CoreOption]>;
@@ -3538,7 +3554,7 @@ def mappletvos_version_min_EQ : Joined<["-"], "mappletvos-version-min=">, Alias<
 def mtvos_simulator_version_min_EQ : Joined<["-"], "mtvos-simulator-version-min=">;
 def mappletvsimulator_version_min_EQ : Joined<["-"], "mappletvsimulator-version-min=">, Alias<mtvos_simulator_version_min_EQ>;
 def mwatchos_version_min_EQ : Joined<["-"], "mwatchos-version-min=">, Group<m_Group>;
-def mwatchos_simulator_version_min_EQ : Joined<["-"], "mwatchos-simulator-version-min=">;
+def mwatchos_simulator_version_min_EQ : Joined<["-"], "mwatchos-simulator-version-min=">, Group<m_Group>;
 def mwatchsimulator_version_min_EQ : Joined<["-"], "mwatchsimulator-version-min=">, Alias<mwatchos_simulator_version_min_EQ>;
 } // let Flags = [TargetSpecific]
 def march_EQ : Joined<["-"], "march=">, Group<m_Group>, Flags<[CoreOption,TargetSpecific]>,
@@ -3559,16 +3575,14 @@ def mdefault_build_attributes : Joined<["-"], "mdefault-build-attributes">, Grou
 def mno_default_build_attributes : Joined<["-"], "mno-default-build-attributes">, Group<m_Group>;
 let Flags = [TargetSpecific] in {
 def mconstant_cfstrings : Flag<["-"], "mconstant-cfstrings">, Group<clang_ignored_m_Group>;
-} // let Flags = [TargetSpecific]
-def mconsole : Joined<["-"], "mconsole">, Group<m_Group>, Flags<[NoXarchOption]>;
-def mwindows : Joined<["-"], "mwindows">, Group<m_Group>, Flags<[NoXarchOption]>;
-def mdll : Joined<["-"], "mdll">, Group<m_Group>, Flags<[NoXarchOption]>;
-def municode : Joined<["-"], "municode">, Group<m_Group>, Flags<[NoXarchOption]>;
-def mthreads : Joined<["-"], "mthreads">, Group<m_Group>, Flags<[NoXarchOption]>;
-def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>, Flags<[NoXarchOption]>,
+def mconsole : Joined<["-"], "mconsole">, Group<m_Group>;
+def mwindows : Joined<["-"], "mwindows">, Group<m_Group>;
+def mdll : Joined<["-"], "mdll">, Group<m_Group>;
+def municode : Joined<["-"], "municode">, Group<m_Group>;
+def mthreads : Joined<["-"], "mthreads">, Group<m_Group>;
+def mguard_EQ : Joined<["-"], "mguard=">, Group<m_Group>,
   HelpText<"Enable or disable Control Flow Guard checks and guard tables emission">,
   Values<"none,cf,cf-nochecks">;
-let Flags = [TargetSpecific] in {
 def mcpu_EQ : Joined<["-"], "mcpu=">, Group<m_Group>,
   HelpText<"For a list of available CPUs for the target use '-mcpu=help'">;
 def mmcu_EQ : Joined<["-"], "mmcu=">, Group<m_Group>;
@@ -3599,11 +3613,10 @@ def mios_version_min_EQ : Joined<["-"], "mios-version-min=">,
   Group<m_Group>, HelpText<"Set iOS deployment target">;
 def : Joined<["-"], "miphoneos-version-min=">,
   Group<m_Group>, Alias<mios_version_min_EQ>;
-def mios_simulator_version_min_EQ : Joined<["-"], "mios-simulator-version-min=">;
+def mios_simulator_version_min_EQ : Joined<["-"], "mios-simulator-version-min=">, Group<m_Group>;
 def : Joined<["-"], "miphonesimulator-version-min=">, Alias<mios_simulator_version_min_EQ>;
 def mkernel : Flag<["-"], "mkernel">, Group<m_Group>;
-def mlinker_version_EQ : Joined<["-"], "mlinker-version=">,
-  Flags<[NoXarchOption]>;
+def mlinker_version_EQ : Joined<["-"], "mlinker-version=">, Group<m_Group>, Flags<[NoXarchOption]>;
 } // let Flags = [TargetSpecific]
 def mllvm : Separate<["-"], "mllvm">,Flags<[CC1Option,CC1AsOption,CoreOption,FC1Option,FlangOption]>,
   HelpText<"Additional arguments to forward to LLVM's option processing">,
@@ -3835,7 +3848,7 @@ def mbranch_protection_EQ : Joined<["-"], "mbranch-protection=">,
   Group<m_Group>,
   HelpText<"Enforce targets of indirect branches and function returns">;
 
-def mharden_sls_EQ : Joined<["-"], "mharden-sls=">,
+def mharden_sls_EQ : Joined<["-"], "mharden-sls=">, Group<m_Group>,
   HelpText<"Select straight-line speculation hardening scope (ARM/AArch64/X86"
            " only). <arg> must be: all, none, retbr(ARM/AArch64),"
            " blr(ARM/AArch64), comdat(ARM/AArch64), nocomdat(ARM/AArch64),"
@@ -4699,7 +4712,7 @@ def mhexagon_hvx_ieee_fp : Flag<["-"], "mhvx-ieee-fp">,
 def mno_hexagon_hvx_ieee_fp : Flag<["-"], "mno-hvx-ieee-fp">,
   Group<m_hexagon_Features_Group>,
   HelpText<"Disable Hexagon HVX IEEE floating-point">;
-def ffixed_r19: Flag<["-"], "ffixed-r19">,
+def ffixed_r19: Flag<["-"], "ffixed-r19">, Group<f_Group>,
   HelpText<"Reserve register r19 (Hexagon only)">;
 } // let Flags = [TargetSpecific]
 def mmemops : Flag<["-"], "mmemops">, Group<m_hexagon_Features_Group>,
@@ -4793,7 +4806,11 @@ def mssse3 : Flag<["-"], "mssse3">, Group<m_x86_Features_Group>;
 def mno_ssse3 : Flag<["-"], "mno-ssse3">, Group<m_x86_Features_Group>;
 def msse4_1 : Flag<["-"], "msse4.1">, Group<m_x86_Features_Group>;
 def mno_sse4_1 : Flag<["-"], "mno-sse4.1">, Group<m_x86_Features_Group>;
+} // let Flags = [TargetSpecific]
+// TODO: Make -msse4.2 TargetSpecific after
+// https://github.com/llvm/llvm-project/issues/63270 is fixed.
 def msse4_2 : Flag<["-"], "msse4.2">, Group<m_x86_Features_Group>;
+let Flags = [TargetSpecific] in {
 def mno_sse4_2 : Flag<["-"], "mno-sse4.2">, Group<m_x86_Features_Group>;
 def msse4 : Flag<["-"], "msse4">, Alias<msse4_2>;
 // -mno-sse4 turns off sse4.1 which has the effect of turning off everything
@@ -5993,10 +6010,6 @@ def ftabstop : Separate<["-"], "ftabstop">, MetaVarName<"<N>">,
 def ferror_limit : Separate<["-"], "ferror-limit">, MetaVarName<"<N>">,
   HelpText<"Set the maximum number of errors to emit before stopping (0 = no limit).">,
   MarshallingInfoInt<DiagnosticOpts<"ErrorLimit">>;
-def fcaret_diagnostics_max_lines :
-  Separate<["-"], "fcaret-diagnostics-max-lines">, MetaVarName<"<N>">,
-  HelpText<"Set the maximum number of source lines to show in a caret diagnostic">,
-  MarshallingInfoInt<DiagnosticOpts<"SnippetLineLimit">, "DiagnosticOptions::DefaultSnippetLineLimit">;
 def verify_EQ : CommaJoined<["-"], "verify=">,
   MetaVarName<"<prefixes>">,
   HelpText<"Verify diagnostic output using comment directives that start with"
