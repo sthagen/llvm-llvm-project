@@ -207,8 +207,11 @@ def LLVM_UMaxOp : LLVM_BinarySameArgsIntrOpI<"umax">;
 def LLVM_UMinOp : LLVM_BinarySameArgsIntrOpI<"umin">;
 
 class LLVM_MemcpyIntrOpBase<string name> :
-    LLVM_ZeroResultIntrOp<name, [0, 1, 2], [], /*requiresAccessGroup=*/1,
-                                               /*requiresAliasAnalysis=*/1> {
+    LLVM_ZeroResultIntrOp<name, [0, 1, 2],
+    [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+     DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>],
+    /*requiresAccessGroup=*/1, /*requiresAliasAnalysis=*/1> {
   dag args = (ins Arg<LLVM_AnyPointer,"",[MemWrite]>:$dst,
                   Arg<LLVM_AnyPointer,"",[MemRead]>:$src,
                   AnySignlessInteger:$len, I1Attr:$isVolatile);
@@ -245,9 +248,11 @@ def LLVM_MemcpyOp : LLVM_MemcpyIntrOpBase<"memcpy">;
 def LLVM_MemmoveOp : LLVM_MemcpyIntrOpBase<"memmove">;
 
 def LLVM_MemcpyInlineOp :
-    LLVM_ZeroResultIntrOp<"memcpy.inline", [0, 1], [],
-                          /*requiresAccessGroup=*/1,
-                          /*requiresAliasAnalysis=*/1> {
+    LLVM_ZeroResultIntrOp<"memcpy.inline", [0, 1],
+    [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+     DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>],
+    /*requiresAccessGroup=*/1, /*requiresAliasAnalysis=*/1> {
   dag args = (ins Arg<LLVM_AnyPointer,"",[MemWrite]>:$dst,
                   Arg<LLVM_AnyPointer,"",[MemRead]>:$src,
                   APIntAttr:$len, I1Attr:$isVolatile);
@@ -282,8 +287,11 @@ def LLVM_MemcpyInlineOp :
       # setAliasAnalysisMetadataCode;
 }
 
-def LLVM_MemsetOp : LLVM_ZeroResultIntrOp<"memset", [0, 2], [],
-                      /*requiresAccessGroup=*/1, /*requiresAliasAnalysis=*/1> {
+def LLVM_MemsetOp : LLVM_ZeroResultIntrOp<"memset", [0, 2], 
+    [DeclareOpInterfaceMethods<PromotableMemOpInterface>,
+     DeclareOpInterfaceMethods<DestructurableAccessorOpInterface>,
+     DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>],
+    /*requiresAccessGroup=*/1, /*requiresAliasAnalysis=*/1> {
   dag args = (ins Arg<LLVM_AnyPointer,"",[MemWrite]>:$dst,
                   I8:$val, AnySignlessInteger:$len, I1Attr:$isVolatile);
   // Append the alias attributes defined by LLVM_IntrOpBase.

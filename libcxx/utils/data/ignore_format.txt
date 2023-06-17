@@ -621,8 +621,11 @@ libcxx/include/__support/win32/locale_win32.h
 libcxx/include/__support/xlocale/__nop_locale_mgmt.h
 libcxx/include/__system_error/errc.h
 libcxx/include/thread
+libcxx/include/__thread/formatter.h
 libcxx/include/__threading_support
 libcxx/include/__thread/poll_with_backoff.h
+libcxx/include/__thread/this_thread.h
+libcxx/include/__thread/thread.h
 libcxx/include/__thread/timed_backoff_policy.h
 libcxx/include/__tree
 libcxx/include/tuple
@@ -830,7 +833,6 @@ libcxx/src/support/runtime/exception_pointer_cxxabi.ipp
 libcxx/src/support/runtime/exception_pointer_glibcxx.ipp
 libcxx/src/support/runtime/exception_pointer_msvc.ipp
 libcxx/src/support/runtime/exception_pointer_unimplemented.ipp
-libcxx/src/support/runtime/new_handler_fallback.ipp
 libcxx/src/support/runtime/stdexcept_default.ipp
 libcxx/src/support/runtime/stdexcept_vcruntime.ipp
 libcxx/src/support/win32/locale_win32.cpp
