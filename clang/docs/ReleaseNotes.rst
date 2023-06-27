@@ -132,6 +132,7 @@ C++23 Feature Support
 C++2c Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 - Compiler flags ``-std=c++2c`` and ``-std=gnu++2c`` have been added for experimental C++2c implementation work.
+- Implemented `P2738R1: constexpr cast from void* <https://wg21.link/P2738R1>`_.
 
 Resolutions to C++ Defect Reports
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -366,6 +367,9 @@ Improvements to Clang's diagnostics
   been fixed and the Fix-It now only spans to the end of the ``:``.
 - Clang now underlines the parameter list of function declaration when emitting
   a note about the mismatch in the number of arguments.
+- Clang now diagnoses unexpected tokens after a
+  ``#pragma clang|GCC diagnostic push|pop`` directive.
+  (`#13920: <https://github.com/llvm/llvm-project/issues/13920>`_)
 
 Bug Fixes in This Version
 -------------------------
@@ -723,6 +727,12 @@ AIX Support
 
 WebAssembly Support
 ^^^^^^^^^^^^^^^^^^^
+- Shared library support (and PIC code generation) for WebAssembly is no longer
+  limited to the Emscripten target OS and now works with other targets such as
+  wasm32-wasi.  Note that the `format
+  <https://github.com/WebAssembly/tool-conventions/blob/main/DynamicLinking.md>`_
+  is not yet stable and may change between LLVM versions.  Also, WASI does not
+  yet have facilities to load dynamic libraries.
 
 AVR Support
 ^^^^^^^^^^^
