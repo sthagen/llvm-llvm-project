@@ -504,7 +504,6 @@ set(files
   __memory/temp_value.h
   __memory/temporary_buffer.h
   __memory/uninitialized_algorithms.h
-  __memory/uninitialized_buffer.h
   __memory/unique_ptr.h
   __memory/uses_allocator.h
   __memory/uses_allocator_construction.h
@@ -708,6 +707,7 @@ set(files
   __type_traits/conjunction.h
   __type_traits/copy_cv.h
   __type_traits/copy_cvref.h
+  __type_traits/datasizeof.h
   __type_traits/decay.h
   __type_traits/dependent_type.h
   __type_traits/disjunction.h
