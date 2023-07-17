@@ -344,6 +344,9 @@ module std [system] {
       module pstl_backends_cpu_backends_for_each {
         private header "__algorithm/pstl_backends/cpu_backends/for_each.h"
       }
+      module pstl_backends_cpu_backends_libdispatch {
+        private header "__algorithm/pstl_backends/cpu_backends/libdispatch.h"
+      }
       module pstl_backends_cpu_backends_merge {
         private header "__algorithm/pstl_backends/cpu_backends/merge.h"
       }
@@ -1236,6 +1239,7 @@ module std [system] {
     export *
 
     module __mdspan {
+      module default_accessor                { private header "__mdspan/default_accessor.h" }
       module extents                         {
         private header "__mdspan/extents.h"
         export array

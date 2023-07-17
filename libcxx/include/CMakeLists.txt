@@ -78,6 +78,7 @@ set(files
   __algorithm/pstl_backends/cpu_backends/fill.h
   __algorithm/pstl_backends/cpu_backends/find_if.h
   __algorithm/pstl_backends/cpu_backends/for_each.h
+  __algorithm/pstl_backends/cpu_backends/libdispatch.h
   __algorithm/pstl_backends/cpu_backends/merge.h
   __algorithm/pstl_backends/cpu_backends/serial.h
   __algorithm/pstl_backends/cpu_backends/stable_sort.h
@@ -477,6 +478,7 @@ set(files
   __locale_dir/locale_base_api/bsd_locale_fallbacks.h
   __locale_dir/locale_base_api/locale_guard.h
   __mbstate_t.h
+  __mdspan/default_accessor.h
   __mdspan/extents.h
   __mdspan/layout_left.h
   __mdspan/layout_right.h

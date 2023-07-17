@@ -48,10 +48,6 @@ include(CMakeDependentOption)
 include(HandleCompilerRT)
 
 # Basic options ---------------------------------------------------------------
-option(LIBCXX_ENABLE_ASSERTIONS
-  "Enable assertions inside the compiled library, and at the same time make it the
-   default when compiling user code. Note that assertions can be enabled or disabled
-   by users in their own code regardless of this option." OFF)
 option(LIBCXX_ENABLE_SHARED "Build libc++ as a shared library." ON)
 option(LIBCXX_ENABLE_STATIC "Build libc++ as a static library." ON)
 option(LIBCXX_ENABLE_FILESYSTEM
@@ -59,6 +55,16 @@ option(LIBCXX_ENABLE_FILESYSTEM
    available on the platform. This includes things like most parts of <filesystem> and
    others like <fstream>" ON)
 option(LIBCXX_INCLUDE_TESTS "Build the libc++ tests." ${LLVM_INCLUDE_TESTS})
+set(LIBCXX_SUPPORTED_HARDENING_MODES unchecked hardened debug)
+set(LIBCXX_HARDENING_MODE "unchecked" CACHE STRING
+  "Specify the default hardening mode to use. This mode will be used inside the
+   compiled library and will be the default when compiling user code. Note that
+   users can override this setting in their own code. This does not affect the
+   ABI. Supported values are ${LIBCXX_SUPPORTED_HARDENING_MODES}.")
+if (NOT "${LIBCXX_HARDENING_MODE}" IN_LIST LIBCXX_SUPPORTED_HARDENING_MODES)
+  message(FATAL_ERROR
+    "Unsupported hardening mode: '${LIBCXX_HARDENING_MODE}'. Supported values are ${LIBCXX_SUPPORTED_HARDENING_MODES}.")
+endif()
 option(LIBCXX_ENABLE_RANDOM_DEVICE
   "Whether to include support for std::random_device in the library. Disabling
    this can be useful when building the library for platforms that don't have
@@ -470,13 +476,6 @@ if (LIBCXX_GENERATE_COVERAGE)
   set(CMAKE_BUILD_TYPE "COVERAGE" CACHE STRING "" FORCE)
 endif()
 
-string(TOUPPER "${CMAKE_BUILD_TYPE}" uppercase_CMAKE_BUILD_TYPE)
-if (uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
-  set(LIBCXX_DEBUG_BUILD ON)
-else()
-  set(LIBCXX_DEBUG_BUILD OFF)
-endif()
-
 #===============================================================================
 # Setup Compiler Flags
 #===============================================================================
@@ -585,13 +584,6 @@ if (LIBCXX_BUILD_EXTERNAL_THREAD_LIBRARY AND LIBCXX_ENABLE_SHARED)
   endif()
 endif()
 
-# Assertion flags =============================================================
-define_if(LIBCXX_DEBUG_BUILD -D_DEBUG)
-if (LIBCXX_ENABLE_ASSERTIONS AND NOT LIBCXX_DEBUG_BUILD)
-  # MSVC doesn't like _DEBUG on release builds. See PR 4379.
-  define_if_not(MSVC -D_DEBUG)
-endif()
-
 # Modules flags ===============================================================
 # FIXME The libc++ sources are fundamentally non-modular. They need special
 # versions of the headers in order to provide C++03 and legacy ABI definitions.
@@ -603,6 +595,8 @@ function(cxx_add_module_flags target)
     target_compile_options(${target} PUBLIC -fno-modules)
   endif()
 endfunction()
+
+string(TOUPPER "${CMAKE_BUILD_TYPE}" uppercase_CMAKE_BUILD_TYPE)
 
 # Sanitizer flags =============================================================
 
@@ -711,7 +705,7 @@ function(cxx_link_system_libraries target)
   endif()
 
   if (MSVC)
-    if (LIBCXX_DEBUG_BUILD)
+    if (uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
       set(LIB_SUFFIX "d")
     else()
       set(LIB_SUFFIX "")
@@ -779,19 +773,31 @@ config_define_if_not(LIBCXX_ENABLE_LOCALIZATION _LIBCPP_HAS_NO_LOCALIZATION)
 config_define_if_not(LIBCXX_ENABLE_UNICODE _LIBCPP_HAS_NO_UNICODE)
 config_define_if_not(LIBCXX_ENABLE_WIDE_CHARACTERS _LIBCPP_HAS_NO_WIDE_CHARACTERS)
 config_define_if_not(LIBCXX_ENABLE_VENDOR_AVAILABILITY_ANNOTATIONS _LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS)
+if (LIBCXX_HARDENING_MODE STREQUAL "hardened")
+  config_define(1 _LIBCPP_ENABLE_HARDENED_MODE_DEFAULT)
+  config_define(0 _LIBCPP_ENABLE_DEBUG_MODE_DEFAULT)
+elseif (LIBCXX_HARDENING_MODE STREQUAL "debug")
+  config_define(0 _LIBCPP_ENABLE_HARDENED_MODE_DEFAULT)
+  config_define(1 _LIBCPP_ENABLE_DEBUG_MODE_DEFAULT)
+elseif (LIBCXX_HARDENING_MODE STREQUAL "unchecked")
+  config_define(0 _LIBCPP_ENABLE_HARDENED_MODE_DEFAULT)
+  config_define(0 _LIBCPP_ENABLE_DEBUG_MODE_DEFAULT)
+endif()
+# TODO(LLVM 18): Remove this after branching for LLVM 17, this is a simple
+# courtesy for vendors to be notified about this change.
 if (LIBCXX_ENABLE_ASSERTIONS)
-  config_define(1 _LIBCPP_ENABLE_ASSERTIONS_DEFAULT)
-else()
-  config_define(0 _LIBCPP_ENABLE_ASSERTIONS_DEFAULT)
+  message(FATAL_ERROR "LIBCXX_ENABLE_ASSERTIONS has been replaced by LIBCXX_HARDENING_MODE=hardened")
 endif()
 
 if (LIBCXX_PSTL_CPU_BACKEND STREQUAL "serial")
   config_define(1 _LIBCPP_PSTL_CPU_BACKEND_SERIAL)
 elseif(LIBCXX_PSTL_CPU_BACKEND STREQUAL "std_thread")
   config_define(1 _LIBCPP_PSTL_CPU_BACKEND_THREAD)
+elseif(LIBCXX_PSTL_CPU_BACKEND STREQUAL "libdispatch")
+  config_define(1 _LIBCPP_PSTL_CPU_BACKEND_LIBDISPATCH)
 else()
   message(FATAL_ERROR "LIBCXX_PSTL_CPU_BACKEND is set to ${LIBCXX_PSTL_CPU_BACKEND}, which is not a valid backend.
-                       Valid backends are: serial, std_thread")
+                       Valid backends are: serial, std_thread and libdispatch")
 endif()
 
 if (LIBCXX_ABI_DEFINES)

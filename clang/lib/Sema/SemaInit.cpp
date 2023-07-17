@@ -2847,7 +2847,7 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
         SemaRef.Diag(DIE->getBeginLoc(), diag::ext_designated_init_reordered)
             << KnownField << PrevField << DIE->getSourceRange();
 
-        unsigned OldIndex = NumBases + PrevField->getFieldIndex();
+        unsigned OldIndex = StructuredIndex - 1;
         if (StructuredList && OldIndex <= StructuredList->getNumInits()) {
           if (Expr *PrevInit = StructuredList->getInit(OldIndex)) {
             SemaRef.Diag(PrevInit->getBeginLoc(),
@@ -2951,8 +2951,12 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
     // If this the first designator, our caller will continue checking
     // the rest of this struct/class/union subobject.
     if (IsFirstDesignator) {
+      if (Field != RD->field_end() && Field->isUnnamedBitfield())
+        ++Field;
+
       if (NextField)
         *NextField = Field;
+
       StructuredIndex = FieldIndex;
       return false;
     }
@@ -6336,6 +6340,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
   // We're at the end of the line for C: it's either a write-back conversion
   // or it's a C assignment. There's no need to check anything else.
   if (!S.getLangOpts().CPlusPlus) {
+    assert(Initializer && "Initializer must be non-null");
     // If allowed, check whether this is an Objective-C writeback conversion.
     if (allowObjCWritebackConversion &&
         tryObjCWritebackConversion(S, *this, Entity, Initializer)) {
@@ -6362,7 +6367,8 @@ void InitializationSequence::InitializeFrom(Sema &S,
     if (Kind.getKind() == InitializationKind::IK_Direct ||
         (Kind.getKind() == InitializationKind::IK_Copy &&
          (Context.hasSameUnqualifiedType(SourceType, DestType) ||
-          S.IsDerivedFrom(Initializer->getBeginLoc(), SourceType, DestType)))) {
+          (Initializer && S.IsDerivedFrom(Initializer->getBeginLoc(),
+                                          SourceType, DestType))))) {
       TryConstructorInitialization(S, Entity, Kind, Args, DestType, DestType,
                                    *this);
 
@@ -6406,6 +6412,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
       //       function is used) to a derived class thereof are enumerated as
       //       described in 13.3.1.4, and the best one is chosen through
       //       overload resolution (13.3).
+      assert(Initializer && "Initializer must be non-null");
       TryUserDefinedConversion(S, DestType, Kind, Initializer, *this,
                                TopLevelOfInitList);
     }
@@ -6457,6 +6464,7 @@ void InitializationSequence::InitializeFrom(Sema &S,
   //    - Otherwise, if the source type is a (possibly cv-qualified) class
   //      type, conversion functions are considered.
   if (!SourceType.isNull() && SourceType->isRecordType()) {
+    assert(Initializer && "Initializer must be non-null");
     // For a conversion to _Atomic(T) from either T or a class type derived
     // from T, initialize the T object then convert to _Atomic type.
     bool NeedAtomicConversion = false;

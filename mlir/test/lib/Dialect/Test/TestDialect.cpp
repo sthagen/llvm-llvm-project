@@ -1933,6 +1933,46 @@ static ParseResult customParseProperties(OpAsmParser &parser,
   return success();
 }
 
+static bool parseUsingPropertyInCustom(OpAsmParser &parser, int64_t value[3]) {
+  return parser.parseLSquare() || parser.parseInteger(value[0]) ||
+         parser.parseComma() || parser.parseInteger(value[1]) ||
+         parser.parseComma() || parser.parseInteger(value[2]) ||
+         parser.parseRSquare();
+}
+
+static void printUsingPropertyInCustom(OpAsmPrinter &printer, Operation *op,
+                                       ArrayRef<int64_t> value) {
+  printer << '[' << value << ']';
+}
+
+static bool parseIntProperty(OpAsmParser &parser, int64_t &value) {
+  return failed(parser.parseInteger(value));
+}
+
+static void printIntProperty(OpAsmPrinter &printer, Operation *op,
+                             int64_t value) {
+  printer << value;
+}
+
+static bool parseSumProperty(OpAsmParser &parser, int64_t &second,
+                             int64_t first) {
+  int64_t sum;
+  auto loc = parser.getCurrentLocation();
+  if (parser.parseInteger(second) || parser.parseEqual() ||
+      parser.parseInteger(sum))
+    return true;
+  if (sum != second + first) {
+    parser.emitError(loc, "Expected sum to equal first + second");
+    return true;
+  }
+  return false;
+}
+
+static void printSumProperty(OpAsmPrinter &printer, Operation *op,
+                             int64_t second, int64_t first) {
+  printer << second << " = " << (second + first);
+}
+
 #include "TestOpEnums.cpp.inc"
 #include "TestOpInterfaces.cpp.inc"
 #include "TestTypeInterfaces.cpp.inc"

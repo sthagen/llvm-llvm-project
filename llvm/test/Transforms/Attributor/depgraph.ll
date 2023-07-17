@@ -141,19 +141,13 @@ define ptr @checkAndAdvance(ptr align 16 %0) {
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AAHeapToStack] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state [H2S] Mallocs Good/Bad: 0/0
 ; GRAPH-EMPTY:
+; GRAPH-NEXT: [AAMustProgress] for CtxI ' %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state may-not-progress
+; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AAWillReturn] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state may-noreturn
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AAWillReturn] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state may-noreturn
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AANoRecurse] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state may-recurse
-; GRAPH-EMPTY:
-; GRAPH-NEXT: [AAMustProgress] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state may-not-progress
-; GRAPH-EMPTY:
-; GRAPH-NEXT: [AANoSync] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nosync
-; GRAPH-NEXT:   updates [AANoSync] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nosync
-; GRAPH-EMPTY:
-; GRAPH-NEXT: [AANoSync] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nosync
-; GRAPH-NEXT:   updates [AANoSync] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nosync
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AANoFree] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nofree
 ; GRAPH-NEXT:   updates [AANoFree] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nofree
@@ -161,6 +155,12 @@ define ptr @checkAndAdvance(ptr align 16 %0) {
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AANoFree] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nofree
 ; GRAPH-NEXT:   updates [AANoFree] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nofree
+; GRAPH-EMPTY:
+; GRAPH-NEXT: [AANoSync] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nosync
+; GRAPH-NEXT:   updates [AANoSync] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nosync
+; GRAPH-EMPTY:
+; GRAPH-NEXT: [AANoSync] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state nosync
+; GRAPH-NEXT:   updates [AANoSync] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state nosync
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AAMemoryLocation] for CtxI '  %2 = load i32, ptr %0, align 4' at position {fn:checkAndAdvance [checkAndAdvance@-1]} with state memory:argument
 ; GRAPH-NEXT:   updates [AAMemoryLocation] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs: [@-1]} with state memory:argument
@@ -229,6 +229,8 @@ define ptr @checkAndAdvance(ptr align 16 %0) {
 ; GRAPH-NEXT: [AANoAlias] for CtxI '  %5 = getelementptr inbounds i32, ptr %0, i64 4' at position {flt: [@-1]} with state may-alias
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AANoFree] for CtxI '  %6 = call ptr @checkAndAdvance(ptr %5)' at position {cs_arg: [@0]} with state nofree
+; GRAPH-EMPTY:
+; GRAPH-NEXT: [AAAddressSpace] for CtxI '  %2 = load i32, ptr %0, align 4' at position {arg: [@0]} with state addrspace(0)
 ; GRAPH-EMPTY:
 ; GRAPH-NEXT: [AADereferenceable] for CtxI '  %5 = getelementptr inbounds i32, ptr %0, i64 4' at position {flt: [@-1]} with state unknown-dereferenceable
 
@@ -308,6 +310,7 @@ define ptr @checkAndAdvance(ptr align 16 %0) {
 ; DOT-DAG: Node[[Node71:0x[a-z0-9]+]] [shape=record,label="{[AANoAlias]
 ; DOT-DAG: Node[[Node72:0x[a-z0-9]+]] [shape=record,label="{[AANoAlias]
 ; DOT-DAG: Node[[Node73:0x[a-z0-9]+]] [shape=record,label="{[AANoFree]
+; DOT-DAG: Node[[Node75:0x[a-z0-9]+]] [shape=record,label="{[AAAddressSpace]
 ; DOT-DAG: Node[[Node74:0x[a-z0-9]+]] [shape=record,label="{[AADereferenceable]
 
 ; DOT-DAG: Node[[Node20]] -> Node[[Node19]];

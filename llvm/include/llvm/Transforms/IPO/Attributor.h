@@ -3522,6 +3522,15 @@ struct AAMustProgress
                          AAMustProgress> {
   AAMustProgress(const IRPosition &IRP, Attributor &A) : IRAttribute(IRP) {}
 
+  static bool isImpliedByIR(Attributor &A, const IRPosition &IRP,
+                            Attribute::AttrKind ImpliedAttributeKind,
+                            bool IgnoreSubsumingPositions = false) {
+    // Note: This is also run for non-IPO amendable functions.
+    assert(ImpliedAttributeKind == Attribute::MustProgress);
+    return A.hasAttr(IRP, {Attribute::MustProgress, Attribute::WillReturn},
+                     IgnoreSubsumingPositions, Attribute::MustProgress);
+  }
+
   /// Return true if we assume that the underlying value is nonnull.
   bool isAssumedMustProgress() const { return getAssumed(); }
 
@@ -3640,6 +3649,8 @@ struct AAWillReturn
   static bool isImpliedByIR(Attributor &A, const IRPosition &IRP,
                             Attribute::AttrKind ImpliedAttributeKind,
                             bool IgnoreSubsumingPositions = false) {
+    // Note: This is also run for non-IPO amendable functions.
+    assert(ImpliedAttributeKind == Attribute::WillReturn);
     if (IRAttribute::isImpliedByIR(A, IRP, ImpliedAttributeKind,
                                    IgnoreSubsumingPositions))
       return true;
@@ -3815,6 +3826,17 @@ struct AANoFree
                          StateWrapper<BooleanState, AbstractAttribute>,
                          AANoFree> {
   AANoFree(const IRPosition &IRP, Attributor &A) : IRAttribute(IRP) {}
+
+  /// See IRAttribute::isImpliedByIR
+  static bool isImpliedByIR(Attributor &A, const IRPosition &IRP,
+                            Attribute::AttrKind ImpliedAttributeKind,
+                            bool IgnoreSubsumingPositions = false) {
+    // Note: This is also run for non-IPO amendable functions.
+    assert(ImpliedAttributeKind == Attribute::NoFree);
+    return A.hasAttr(
+        IRP, {Attribute::ReadNone, Attribute::ReadOnly, Attribute::NoFree},
+        IgnoreSubsumingPositions, Attribute::NoFree);
+  }
 
   /// See AbstractAttribute::isValidIRPositionForInit
   static bool isValidIRPositionForInit(Attributor &A, const IRPosition &IRP) {
@@ -6015,6 +6037,46 @@ struct AAUnderlyingObjects : AbstractAttribute {
   virtual bool
   forallUnderlyingObjects(function_ref<bool(Value &)> Pred,
                           AA::ValueScope Scope = AA::Interprocedural) const = 0;
+};
+
+/// An abstract interface for address space information.
+struct AAAddressSpace : public StateWrapper<BooleanState, AbstractAttribute> {
+  AAAddressSpace(const IRPosition &IRP, Attributor &A)
+      : StateWrapper<BooleanState, AbstractAttribute>(IRP) {}
+
+  /// See AbstractAttribute::isValidIRPositionForInit
+  static bool isValidIRPositionForInit(Attributor &A, const IRPosition &IRP) {
+    if (!IRP.getAssociatedType()->isPtrOrPtrVectorTy())
+      return false;
+    return AbstractAttribute::isValidIRPositionForInit(A, IRP);
+  }
+
+  /// Return the address space of the associated value. \p NoAddressSpace is
+  /// returned if the associated value is dead. This functions is not supposed
+  /// to be called if the AA is invalid.
+  virtual int32_t getAddressSpace() const = 0;
+
+  /// Create an abstract attribute view for the position \p IRP.
+  static AAAddressSpace &createForPosition(const IRPosition &IRP,
+                                           Attributor &A);
+
+  /// See AbstractAttribute::getName()
+  const std::string getName() const override { return "AAAddressSpace"; }
+
+  /// See AbstractAttribute::getIdAddr()
+  const char *getIdAddr() const override { return &ID; }
+
+  /// This function should return true if the type of the \p AA is
+  /// AAAssumptionInfo
+  static bool classof(const AbstractAttribute *AA) {
+    return (AA->getIdAddr() == &ID);
+  }
+
+  // No address space which indicates the associated value is dead.
+  static const int32_t NoAddressSpace = -1;
+
+  /// Unique ID (due to the unique address)
+  static const char ID;
 };
 
 raw_ostream &operator<<(raw_ostream &, const AAPointerInfo::Access &);

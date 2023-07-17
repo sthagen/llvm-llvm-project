@@ -73,8 +73,6 @@
 // The "module" lowering implemented here finds LDS variables which are used by
 // non-kernel functions and creates a new struct with a field for each of those
 // LDS variables. Variables that are only used from kernels are excluded.
-// Kernels that do not use this struct are annoteated with the attribute
-// amdgpu-elide-module-lds which allows the back end to elide the allocation.
 //
 // The "table" lowering implemented here has three components.
 // First kernels are assigned a unique integer identifier which is available in
@@ -200,7 +198,9 @@
 #include "llvm/Pass.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/OptimizedStructLayout.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -243,6 +243,13 @@ bool isKernelLDS(const Function *F) {
   // a graphics shader, denoted amdgpu_ps, so stay with the limited case.
   // Putting LDS in the name of the function to draw attention to this.
   return AMDGPU::isKernel(F->getCallingConv());
+}
+
+template <typename T> std::vector<T> sortByName(std::vector<T> &&V) {
+  llvm::sort(V.begin(), V.end(), [](const auto *L, const auto *R) {
+    return L->getName() < R->getName();
+  });
+  return {std::move(V)};
 }
 
 class AMDGPULowerModuleLDS : public ModulePass {
@@ -345,6 +352,11 @@ public:
     for (auto &GV : M.globals()) {
       if (!AMDGPU::isLDSVariableToLower(GV)) {
         continue;
+      }
+
+      if (GV.isAbsoluteSymbolRef()) {
+        report_fatal_error(
+            "LDS variables with absolute addresses are unimplemented.");
       }
 
       for (User *V : GV.users()) {
@@ -733,10 +745,7 @@ public:
       }
 
       // Put them in an arbitrary but reproducible order
-      llvm::sort(OrderedKernels.begin(), OrderedKernels.end(),
-                 [](const Function *lhs, const Function *rhs) -> bool {
-                   return lhs->getName() < rhs->getName();
-                 });
+      OrderedKernels = sortByName(std::move(OrderedKernels));
 
       // Annotate the kernels with their order in this vector
       LLVMContext &Ctx = M->getContext();
@@ -897,9 +906,6 @@ public:
             });
 
         markUsedByKernel(Builder, &Func, ModuleScopeReplacement.SGV);
-
-      } else {
-        markElideModuleLDS(Func);
       }
     }
 
@@ -1097,14 +1103,6 @@ public:
     return KernelToCreatedDynamicLDS;
   }
 
-  static bool canElideModuleLDS(const Function &F) {
-    return F.hasFnAttribute("amdgpu-elide-module-lds");
-  }
-
-  static void markElideModuleLDS(Function &F) {
-    F.addFnAttr("amdgpu-elide-module-lds");
-  }
-
   bool runOnModule(Module &M) override {
     CallGraph CG = CallGraph(M);
     bool Changed = superAlignLDSGlobals(M);
@@ -1185,13 +1183,9 @@ public:
 
       // The order must be consistent between lookup table and accesses to
       // lookup table
-      std::vector<GlobalVariable *> TableLookupVariablesOrdered(
-          TableLookupVariables.begin(), TableLookupVariables.end());
-      llvm::sort(TableLookupVariablesOrdered.begin(),
-                 TableLookupVariablesOrdered.end(),
-                 [](const GlobalVariable *lhs, const GlobalVariable *rhs) {
-                   return lhs->getName() < rhs->getName();
-                 });
+      auto TableLookupVariablesOrdered =
+          sortByName(std::vector<GlobalVariable *>(TableLookupVariables.begin(),
+                                                   TableLookupVariables.end()));
 
       GlobalVariable *LookupTable = buildLookupTable(
           M, TableLookupVariablesOrdered, OrderedKernels, KernelToReplacement);
@@ -1206,7 +1200,6 @@ public:
 
     // All kernel frames have been allocated. Calculate and record the
     // addresses.
-
     {
       const DataLayout &DL = M.getDataLayout();
 
@@ -1215,8 +1208,8 @@ public:
           continue;
 
         // All three of these are optional. The first variable is allocated at
-        // zero. They are allocated by allocateKnownAddressLDSGlobal in the
-        // following order:
+        // zero. They are allocated by AMDGPUMachineFunction as one block.
+        // Layout:
         //{
         //  module.lds
         //  alignment padding
@@ -1226,7 +1219,8 @@ public:
         //}
 
         const bool AllocateModuleScopeStruct =
-            MaybeModuleScopeStruct && !canElideModuleLDS(Func);
+            MaybeModuleScopeStruct &&
+            KernelsThatAllocateModuleLDS.contains(&Func);
 
         auto Replacement = KernelToReplacement.find(&Func);
         const bool AllocateKernelScopeStruct =
@@ -1245,21 +1239,36 @@ public:
 
         if (AllocateKernelScopeStruct) {
           GlobalVariable *KernelStruct = Replacement->second.SGV;
-
           Offset = alignTo(Offset, AMDGPU::getAlign(DL, KernelStruct));
-
           recordLDSAbsoluteAddress(&M, KernelStruct, Offset);
-
           Offset += DL.getTypeAllocSize(KernelStruct->getValueType());
-
         }
 
+        // If there is dynamic allocation, the alignment needed is included in
+        // the static frame size. There may be no reference to the dynamic
+        // variable in the kernel itself, so without including it here, that
+        // alignment padding could be missed.
         if (AllocateDynamicVariable) {
           GlobalVariable *DynamicVariable = KernelToCreatedDynamicLDS[&Func];
-
           Offset = alignTo(Offset, AMDGPU::getAlign(DL, DynamicVariable));
-
           recordLDSAbsoluteAddress(&M, DynamicVariable, Offset);
+        }
+
+        if (Offset != 0) {
+          std::string Buffer;
+          raw_string_ostream SS{Buffer};
+          SS << format("%u", Offset);
+
+          // Instead of explictly marking kernels that access dynamic variables
+          // using special case metadata, annotate with min-lds == max-lds, i.e.
+          // that there is no more space available for allocating more static
+          // LDS variables. That is the right condition to prevent allocating
+          // more variables which would collide with the addresses assigned to
+          // dynamic variables.
+          if (AllocateDynamicVariable)
+            SS << format(",%u", Offset);
+
+          Func.addFnAttr("amdgpu-lds-size", Buffer);
         }
       }
     }
@@ -1338,12 +1347,9 @@ private:
       // The order of fields in this struct depends on the order of
       // varables in the argument which varies when changing how they
       // are identified, leading to spurious test breakage.
-      std::vector<GlobalVariable *> Sorted(LDSVarsToTransform.begin(),
-                                           LDSVarsToTransform.end());
-      llvm::sort(Sorted.begin(), Sorted.end(),
-                 [](const GlobalVariable *lhs, const GlobalVariable *rhs) {
-                   return lhs->getName() < rhs->getName();
-                 });
+      auto Sorted = sortByName(std::vector<GlobalVariable *>(
+          LDSVarsToTransform.begin(), LDSVarsToTransform.end()));
+
       for (GlobalVariable *GV : Sorted) {
         OptimizedStructLayoutField F(GV,
                                      DL.getTypeAllocSize(GV->getValueType()),
@@ -1424,19 +1430,15 @@ private:
   template <typename PredicateTy>
   static void replaceLDSVariablesWithStruct(
       Module &M, DenseSet<GlobalVariable *> const &LDSVarsToTransformArg,
-      LDSVariableReplacement Replacement, PredicateTy Predicate) {
+      const LDSVariableReplacement &Replacement, PredicateTy Predicate) {
     LLVMContext &Ctx = M.getContext();
     const DataLayout &DL = M.getDataLayout();
 
     // A hack... we need to insert the aliasing info in a predictable order for
     // lit tests. Would like to have them in a stable order already, ideally the
     // same order they get allocated, which might mean an ordered set container
-    std::vector<GlobalVariable *> LDSVarsToTransform(
-        LDSVarsToTransformArg.begin(), LDSVarsToTransformArg.end());
-    llvm::sort(LDSVarsToTransform.begin(), LDSVarsToTransform.end(),
-               [](const GlobalVariable *lhs, const GlobalVariable *rhs) {
-                 return lhs->getName() < rhs->getName();
-               });
+    auto LDSVarsToTransform = sortByName(std::vector<GlobalVariable *>(
+        LDSVarsToTransformArg.begin(), LDSVarsToTransformArg.end()));
 
     // Create alias.scope and their lists. Each field in the new structure
     // does not alias with all other fields.
@@ -1458,7 +1460,7 @@ private:
     // field of the instance that will be allocated by AMDGPUMachineFunction
     for (size_t I = 0; I < NumberVars; I++) {
       GlobalVariable *GV = LDSVarsToTransform[I];
-      Constant *GEP = Replacement.LDSVarsToConstantGEP[GV];
+      Constant *GEP = Replacement.LDSVarsToConstantGEP.at(GV);
 
       GV->replaceUsesWithIf(GEP, Predicate);
 

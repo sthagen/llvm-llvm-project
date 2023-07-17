@@ -3403,10 +3403,12 @@ public:
                             OMPPrivateScope &PrivateScope);
   void EmitOMPUseDevicePtrClause(
       const OMPUseDevicePtrClause &C, OMPPrivateScope &PrivateScope,
-      const llvm::DenseMap<const ValueDecl *, Address> &CaptureDeviceAddrMap);
+      const llvm::DenseMap<const ValueDecl *, llvm::Value *>
+          CaptureDeviceAddrMap);
   void EmitOMPUseDeviceAddrClause(
       const OMPUseDeviceAddrClause &C, OMPPrivateScope &PrivateScope,
-      const llvm::DenseMap<const ValueDecl *, Address> &CaptureDeviceAddrMap);
+      const llvm::DenseMap<const ValueDecl *, llvm::Value *>
+          CaptureDeviceAddrMap);
   /// Emit code for copyin clause in \a D directive. The next code is
   /// generated at the start of outlined functions for directives:
   /// \code
@@ -4705,6 +4707,14 @@ public:
   /// SetFPAccuracy - Set the minimum required accuracy of the given floating
   /// point operation, expressed as the maximum relative error in ulp.
   void SetFPAccuracy(llvm::Value *Val, float Accuracy);
+
+  /// Set the minimum required accuracy of the given sqrt operation
+  /// based on CodeGenOpts.
+  void SetSqrtFPAccuracy(llvm::Value *Val);
+
+  /// Set the minimum required accuracy of the given sqrt operation based on
+  /// CodeGenOpts.
+  void SetDivFPAccuracy(llvm::Value *Val);
 
   /// Set the codegen fast-math flags.
   void SetFastMathFlags(FPOptions FPFeatures);

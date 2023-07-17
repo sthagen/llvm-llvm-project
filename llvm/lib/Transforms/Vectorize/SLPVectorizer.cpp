@@ -952,8 +952,13 @@ static void addMask(SmallVectorImpl<int> &Mask, ArrayRef<int> SubMask,
                     bool ExtendingManyInputs = false) {
   if (SubMask.empty())
     return;
-  assert((!ExtendingManyInputs || SubMask.size() > Mask.size()) &&
-         "SubMask with many inputs support must be larger than the mask.");
+  assert(
+      (!ExtendingManyInputs || SubMask.size() > Mask.size() ||
+       // Check if input scalars were extended to match the size of other node.
+       (SubMask.size() == Mask.size() &&
+        std::all_of(std::next(Mask.begin(), Mask.size() / 2), Mask.end(),
+                    [](int Idx) { return Idx == PoisonMaskElem; }))) &&
+      "SubMask with many inputs support must be larger than the mask.");
   if (Mask.empty()) {
     Mask.append(SubMask.begin(), SubMask.end());
     return;
@@ -12701,6 +12706,9 @@ class HorizontalReduction {
       return I->getFastMathFlags().noNaNs();
     }
 
+    if (Kind == RecurKind::FMaximum || Kind == RecurKind::FMinimum)
+      return true;
+
     return I->isAssociative();
   }
 
@@ -12751,6 +12759,18 @@ class HorizontalReduction {
                                minnum(cast<ConstantFP>(LHS)->getValueAPF(),
                                       cast<ConstantFP>(RHS)->getValueAPF()));
       return Builder.CreateBinaryIntrinsic(Intrinsic::minnum, LHS, RHS);
+    case RecurKind::FMaximum:
+      if (IsConstant)
+        return ConstantFP::get(LHS->getType(),
+                               maximum(cast<ConstantFP>(LHS)->getValueAPF(),
+                                      cast<ConstantFP>(RHS)->getValueAPF()));
+      return Builder.CreateBinaryIntrinsic(Intrinsic::maximum, LHS, RHS);
+    case RecurKind::FMinimum:
+      if (IsConstant)
+        return ConstantFP::get(LHS->getType(),
+                               minimum(cast<ConstantFP>(LHS)->getValueAPF(),
+                                      cast<ConstantFP>(RHS)->getValueAPF()));
+      return Builder.CreateBinaryIntrinsic(Intrinsic::minimum, LHS, RHS);
     case RecurKind::SMax:
       if (IsConstant || UseSelect) {
         Value *Cmp = Builder.CreateICmpSGT(LHS, RHS, Name);
@@ -12833,6 +12853,10 @@ public:
     if (match(I, m_Intrinsic<Intrinsic::minnum>(m_Value(), m_Value())))
       return RecurKind::FMin;
 
+    if (match(I, m_Intrinsic<Intrinsic::maximum>(m_Value(), m_Value())))
+      return RecurKind::FMaximum;
+    if (match(I, m_Intrinsic<Intrinsic::minimum>(m_Value(), m_Value())))
+      return RecurKind::FMinimum;
     // This matches either cmp+select or intrinsics. SLP is expected to handle
     // either form.
     // TODO: If we are canonicalizing to intrinsics, we can remove several
@@ -13800,6 +13824,8 @@ private:
     }
     case RecurKind::FMax:
     case RecurKind::FMin:
+    case RecurKind::FMaximum:
+    case RecurKind::FMinimum:
     case RecurKind::SMax:
     case RecurKind::SMin:
     case RecurKind::UMax:
@@ -14130,6 +14156,10 @@ static bool matchRdxBop(Instruction *I, Value *&V0, Value *&V1) {
   if (match(I, m_Intrinsic<Intrinsic::maxnum>(m_Value(V0), m_Value(V1))))
     return true;
   if (match(I, m_Intrinsic<Intrinsic::minnum>(m_Value(V0), m_Value(V1))))
+    return true;
+  if (match(I, m_Intrinsic<Intrinsic::maximum>(m_Value(V0), m_Value(V1))))
+    return true;
+  if (match(I, m_Intrinsic<Intrinsic::minimum>(m_Value(V0), m_Value(V1))))
     return true;
   if (match(I, m_Intrinsic<Intrinsic::smax>(m_Value(V0), m_Value(V1))))
     return true;

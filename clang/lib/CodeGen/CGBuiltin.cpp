@@ -2544,11 +2544,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     case Builtin::BI__builtin_sqrtf:
     case Builtin::BI__builtin_sqrtf16:
     case Builtin::BI__builtin_sqrtl:
-    case Builtin::BI__builtin_sqrtf128:
-      return RValue::get(emitUnaryMaybeConstrainedFPBuiltin(*this, E,
-                                   Intrinsic::sqrt,
-                                   Intrinsic::experimental_constrained_sqrt));
-
+    case Builtin::BI__builtin_sqrtf128: {
+      llvm::Value *Call = emitUnaryMaybeConstrainedFPBuiltin(
+          *this, E, Intrinsic::sqrt, Intrinsic::experimental_constrained_sqrt);
+      SetSqrtFPAccuracy(Call);
+      return RValue::get(Call);
+    }
     case Builtin::BItrunc:
     case Builtin::BItruncf:
     case Builtin::BItruncl:
@@ -7906,6 +7907,17 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
         CGM.getIntrinsic(Intrinsic::bitreverse, Arg->getType()), Arg, "rbit");
   }
 
+  if (BuiltinID == clang::ARM::BI__builtin_arm_clz ||
+      BuiltinID == clang::ARM::BI__builtin_arm_clz64) {
+    llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, Arg->getType());
+    Value *Res = Builder.CreateCall(F, {Arg, Builder.getInt1(false)});
+    if (BuiltinID == clang::ARM::BI__builtin_arm_clz64)
+      Res = Builder.CreateTrunc(Res, Builder.getInt32Ty());
+    return Res;
+  }
+
+
   if (BuiltinID == clang::ARM::BI__builtin_arm_cls) {
     llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
     return Builder.CreateCall(CGM.getIntrinsic(Intrinsic::arm_cls), Arg, "cls");
@@ -9986,6 +9998,16 @@ Value *CodeGenFunction::EmitAArch64BuiltinExpr(unsigned BuiltinID,
     llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
     return Builder.CreateCall(
         CGM.getIntrinsic(Intrinsic::bitreverse, Arg->getType()), Arg, "rbit");
+  }
+
+  if (BuiltinID == clang::AArch64::BI__builtin_arm_clz ||
+      BuiltinID == clang::AArch64::BI__builtin_arm_clz64) {
+    llvm::Value *Arg = EmitScalarExpr(E->getArg(0));
+    Function *F = CGM.getIntrinsic(Intrinsic::ctlz, Arg->getType());
+    Value *Res = Builder.CreateCall(F, {Arg, Builder.getInt1(false)});
+    if (BuiltinID == clang::AArch64::BI__builtin_arm_clz64)
+      Res = Builder.CreateTrunc(Res, Builder.getInt32Ty());
+    return Res;
   }
 
   if (BuiltinID == clang::AArch64::BI__builtin_arm_cls) {
@@ -20157,9 +20179,12 @@ Value *CodeGenFunction::EmitRISCVBuiltinExpr(unsigned BuiltinID,
   case RISCV::BI__builtin_riscv_clz_64:
   case RISCV::BI__builtin_riscv_ctz_32:
   case RISCV::BI__builtin_riscv_ctz_64:
-  case RISCV::BI__builtin_riscv_clmul:
-  case RISCV::BI__builtin_riscv_clmulh:
-  case RISCV::BI__builtin_riscv_clmulr:
+  case RISCV::BI__builtin_riscv_clmul_32:
+  case RISCV::BI__builtin_riscv_clmul_64:
+  case RISCV::BI__builtin_riscv_clmulh_32:
+  case RISCV::BI__builtin_riscv_clmulh_64:
+  case RISCV::BI__builtin_riscv_clmulr_32:
+  case RISCV::BI__builtin_riscv_clmulr_64:
   case RISCV::BI__builtin_riscv_xperm4_32:
   case RISCV::BI__builtin_riscv_xperm4_64:
   case RISCV::BI__builtin_riscv_xperm8_32:
@@ -20195,13 +20220,16 @@ Value *CodeGenFunction::EmitRISCVBuiltinExpr(unsigned BuiltinID,
     }
 
     // Zbc
-    case RISCV::BI__builtin_riscv_clmul:
+    case RISCV::BI__builtin_riscv_clmul_32:
+    case RISCV::BI__builtin_riscv_clmul_64:
       ID = Intrinsic::riscv_clmul;
       break;
-    case RISCV::BI__builtin_riscv_clmulh:
+    case RISCV::BI__builtin_riscv_clmulh_32:
+    case RISCV::BI__builtin_riscv_clmulh_64:
       ID = Intrinsic::riscv_clmulh;
       break;
-    case RISCV::BI__builtin_riscv_clmulr:
+    case RISCV::BI__builtin_riscv_clmulr_32:
+    case RISCV::BI__builtin_riscv_clmulr_64:
       ID = Intrinsic::riscv_clmulr;
       break;
 
