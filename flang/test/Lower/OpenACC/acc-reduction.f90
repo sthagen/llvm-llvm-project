@@ -2,6 +2,26 @@
 
 ! RUN: bbc -fopenacc -emit-fir %s -o - | FileCheck %s
 
+! CHECK-LABEL: acc.reduction.recipe @reduction_add_ref_10xi32 : !fir.ref<!fir.array<10xi32>> reduction_operator <add> init {
+! CHECK: ^bb0(%{{.*}}: !fir.ref<!fir.array<10xi32>>):
+! CHECK:   %[[CST:.*]] = arith.constant dense<0> : vector<10xi32>
+! CHECK:   acc.yield %[[CST]] : vector<10xi32>
+! CHECK: } combiner {
+! CHECK: ^bb0(%[[ARG0:.*]]: !fir.ref<!fir.array<10xi32>>, %[[ARG1:.*]]: !fir.ref<!fir.array<10xi32>>):
+! CHECK:   %[[LB:.*]] = arith.constant 0 : index
+! CHECK:   %[[UB:.*]] = arith.constant 9 : index
+! CHECK:   %[[STEP:.*]] = arith.constant 1 : index
+! CHECK:   fir.do_loop %[[IV:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] {
+! CHECK:     %[[COORD1:.*]] = fir.coordinate_of %[[ARG0]], %[[IV]] : (!fir.ref<!fir.array<10xi32>>, index) -> !fir.ref<i32>
+! CHECK:     %[[COORD2:.*]] = fir.coordinate_of %[[ARG1]], %[[IV]] : (!fir.ref<!fir.array<10xi32>>, index) -> !fir.ref<i32>
+! CHECK:     %[[LOAD1:.*]] = fir.load %[[COORD1]] : !fir.ref<i32>
+! CHECK:     %[[LOAD2:.*]] = fir.load %[[COORD2]] : !fir.ref<i32>
+! CHECK:     %[[COMBINED:.*]] = arith.addi %[[LOAD1]], %[[LOAD2]] : i32
+! CHECK:     fir.store %[[COMBINED]] to %[[COORD1]] : !fir.ref<i32>
+! CHECK:   }
+! CHECK:   acc.yield %[[ARG0]] : !fir.ref<!fir.array<10xi32>>
+! CHECK: }
+
 ! CHECK-LABEL: acc.reduction.recipe @reduction_mul_z32 : !fir.complex<4> reduction_operator <mul> init {
 ! CHECK: ^bb0(%{{.*}}: !fir.complex<4>):
 ! CHECK:   %[[REAL:.*]] = arith.constant 1.000000e+00 : f32
@@ -777,3 +797,45 @@ end subroutine
 ! CHECK-LABEL: func.func @_QPacc_reduction_mul_cmplx()
 ! CHECK: %[[RED:.*]] = acc.reduction varPtr(%{{.*}} : !fir.ref<!fir.complex<4>>) -> !fir.ref<!fir.complex<4>> {name = "c"}
 ! CHECK: acc.parallel reduction(@reduction_mul_z32 -> %[[RED]] : !fir.ref<!fir.complex<4>>)
+
+subroutine acc_reduction_add_alloc()
+  integer, allocatable :: i
+  allocate(i)
+  !$acc parallel reduction(+:i)
+  !$acc end parallel
+end subroutine
+
+! CHECK-LABEL: func.func @_QPacc_reduction_add_alloc()
+! CHECK: %[[ALLOCA:.*]] = fir.alloca !fir.box<!fir.heap<i32>> {bindc_name = "i", uniq_name = "_QFacc_reduction_add_allocEi"}
+! CHECK: %[[LOAD:.*]] = fir.load %[[ALLOCA]] : !fir.ref<!fir.box<!fir.heap<i32>>>
+! CHECK: %[[BOX_ADDR:.*]] = fir.box_addr %[[LOAD]] : (!fir.box<!fir.heap<i32>>) -> !fir.heap<i32>
+! CHECK: %[[RED:.*]] = acc.reduction varPtr(%[[BOX_ADDR]] : !fir.heap<i32>) -> !fir.heap<i32> {name = "i"}
+! CHECK: acc.parallel reduction(@reduction_add_i32 -> %[[RED]] : !fir.heap<i32>)
+
+subroutine acc_reduction_add_pointer(i)
+  integer, pointer :: i
+  !$acc parallel reduction(+:i)
+  !$acc end parallel
+end subroutine
+
+! CHECK-LABEL: func.func @_QPacc_reduction_add_pointer(
+! CHECK-SAME: %[[ARG0:.*]]: !fir.ref<!fir.box<!fir.ptr<i32>>> {fir.bindc_name = "i"})
+! CHECK: %[[LOAD:.*]] = fir.load %[[ARG0]] : !fir.ref<!fir.box<!fir.ptr<i32>>>
+! CHECK: %[[BOX_ADDR:.*]] = fir.box_addr %[[LOAD]] : (!fir.box<!fir.ptr<i32>>) -> !fir.ptr<i32>
+! CHECK: %[[RED:.*]] = acc.reduction varPtr(%[[BOX_ADDR]] : !fir.ptr<i32>) -> !fir.ptr<i32> {name = "i"}
+! CHECK: acc.parallel reduction(@reduction_add_i32 -> %[[RED]] : !fir.ptr<i32>)
+
+subroutine acc_reduction_add_static_slice(a)
+  integer :: a(100)
+  !$acc parallel reduction(+:a(11:20))
+  !$acc end parallel
+end subroutine
+
+! CHECK-LABEL: func.func @_QPacc_reduction_add_static_slice(
+! CHECK-SAME: %[[ARG0:.*]]: !fir.ref<!fir.array<100xi32>> {fir.bindc_name = "a"})
+! CHECK: %[[C1:.*]] = arith.constant 1 : index
+! CHECK: %[[LB:.*]] = arith.constant 10 : index
+! CHECK: %[[UB:.*]] = arith.constant 19 : index
+! CHECK: %[[BOUND:.*]] = acc.bounds lowerbound(%[[LB]] : index) upperbound(%[[UB]] : index) stride(%[[C1]] : index) startIdx(%[[C1]] : index)
+! CHECK: %[[RED:.*]] = acc.reduction varPtr(%[[ARG0]] : !fir.ref<!fir.array<100xi32>>) bounds(%[[BOUND]]) -> !fir.ref<!fir.array<10xi32>> {name = "a(11:20)"}
+! CHECK: acc.parallel reduction(@reduction_add_ref_10xi32 -> %[[RED]] : !fir.ref<!fir.array<10xi32>>)

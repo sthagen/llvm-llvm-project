@@ -42,12 +42,11 @@ class RVInstIVI_VROR<bits<6> funct6, dag outs, dag ins, string opcodestr,
   let RVVConstraint = VMConstraint;
 }
 
-multiclass VROR_IV_V_X_I<string opcodestr, bits<6> funct6,
-                              Operand optype = uimm6, string vw = "v">
+multiclass VROR_IV_V_X_I<string opcodestr, bits<6> funct6>
     : VALU_IV_V_X<opcodestr, funct6> {
   def I : RVInstIVI_VROR<funct6, (outs VR:$vd),
-              (ins VR:$vs2, optype:$imm, VMaskOp:$vm),
-              opcodestr # "." # vw # "i", "$vd, $vs2, $imm$vm">,
+              (ins VR:$vs2, uimm6:$imm, VMaskOp:$vm),
+              opcodestr # ".vi", "$vd, $vs2, $imm$vm">,
          Sched<[WriteVIALUI_WorstCase, ReadVIALUV_WorstCase,
                 ReadVMask]>;
 }
@@ -182,6 +181,8 @@ let Predicates = [HasStdExtZvksh], RVVConstraint = NoConstraint in {
 // Pseudo instructions
 //===----------------------------------------------------------------------===//
 
+defm PseudoVANDN : VPseudoVALU_VV_VX;
+
 multiclass VPseudoUnaryV_V {
   foreach m = MxList in {
     let VLMul = m.value in {
@@ -215,6 +216,34 @@ multiclass VPatUnarySDNode_V<SDPatternOperator op, string instruction_name> {
   }
 }
 
+// Helpers for detecting splats since we preprocess splat_vector to vmv.v.x
+// This should match the logic in RISCVDAGToDAGISel::selectVSplat
+def riscv_splat_vector : PatFrag<(ops node:$rs1),
+                                 (riscv_vmv_v_x_vl undef, node:$rs1, srcvalue)>;
+def riscv_vnot : PatFrag<(ops node:$rs1), (xor node:$rs1,
+                                               (riscv_splat_vector -1))>;
+
+foreach vti = AllIntegerVectors in {
+  let Predicates = !listconcat([HasStdExtZvbb],
+                               GetVTypePredicates<vti>.Predicates) in {
+    def : Pat<(vti.Vector (and (riscv_vnot vti.RegClass:$rs1),
+                               vti.RegClass:$rs2)),
+              (!cast<Instruction>("PseudoVANDN_VV_"#vti.LMul.MX)
+                 (vti.Vector (IMPLICIT_DEF)),
+                 vti.RegClass:$rs2,
+                 vti.RegClass:$rs1,
+                 vti.AVL, vti.Log2SEW, TA_MA)>;
+    def : Pat<(vti.Vector (and (riscv_splat_vector
+                                 (not vti.ScalarRegClass:$rs1)),
+                               vti.RegClass:$rs2)),
+              (!cast<Instruction>("PseudoVANDN_VX_"#vti.LMul.MX)
+                 (vti.Vector (IMPLICIT_DEF)),
+                 vti.RegClass:$rs2,
+                 vti.ScalarRegClass:$rs1,
+                 vti.AVL, vti.Log2SEW, TA_MA)>;
+  }
+}
+
 defm : VPatUnarySDNode_V<bitreverse, "PseudoVBREV">;
 defm : VPatUnarySDNode_V<bswap, "PseudoVREV8">;
 defm : VPatUnarySDNode_V<ctlz, "PseudoVCLZ">;
@@ -241,6 +270,45 @@ multiclass VPatUnaryVL_V<SDPatternOperator op, string instruction_name> {
                    vti.Log2SEW,
                    TAIL_AGNOSTIC)>;
     }
+  }
+}
+
+foreach vti = AllIntegerVectors in {
+  let Predicates = !listconcat([HasStdExtZvbb],
+                               GetVTypePredicates<vti>.Predicates) in {
+    def : Pat<(vti.Vector (riscv_and_vl (riscv_xor_vl
+                                           (vti.Vector vti.RegClass:$rs1),
+                                           (riscv_splat_vector -1),
+                                           (vti.Vector vti.RegClass:$merge),
+                                           (vti.Mask V0),
+                                           VLOpFrag),
+                                        (vti.Vector vti.RegClass:$rs2),
+                                        (vti.Vector vti.RegClass:$merge),
+                                        (vti.Mask V0),
+                                        VLOpFrag)),
+              (!cast<Instruction>("PseudoVANDN_VV_"#vti.LMul.MX#"_MASK")
+                 vti.RegClass:$merge,
+                 vti.RegClass:$rs2,
+                 vti.RegClass:$rs1,
+                 (vti.Mask V0),
+                 GPR:$vl,
+                 vti.Log2SEW,
+                 TAIL_AGNOSTIC)>;
+
+    def : Pat<(vti.Vector (riscv_and_vl (riscv_splat_vector
+                                           (not vti.ScalarRegClass:$rs1)),
+                                        (vti.Vector vti.RegClass:$rs2),
+                                        (vti.Vector vti.RegClass:$merge),
+                                        (vti.Mask V0),
+                                        VLOpFrag)),
+              (!cast<Instruction>("PseudoVANDN_VX_"#vti.LMul.MX#"_MASK")
+                 vti.RegClass:$merge,
+                 vti.RegClass:$rs2,
+                 vti.ScalarRegClass:$rs1,
+                 (vti.Mask V0),
+                 GPR:$vl,
+                 vti.Log2SEW,
+                 TAIL_AGNOSTIC)>;
   }
 }
 

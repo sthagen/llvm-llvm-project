@@ -310,9 +310,15 @@ bool CodeGenAction::beginSourceFileAction() {
             mlirModule->getOperation()))
       isDevice = offloadMod.getIsTargetDevice();
 
-    if (isDevice)
+    pm.addPass(fir::createOMPMarkDeclareTargetPass());
+    if (isDevice) {
       pm.addPass(fir::createOMPEarlyOutliningPass());
-    pm.addPass(fir::createOMPFunctionFilteringPass());
+      // FIXME: This should eventually be moved out of the
+      // if, so that it also functions for host, however,
+      // we must fix the filtering to function reasonably
+      // for host first.  
+      pm.addPass(fir::createOMPFunctionFilteringPass());
+    }
   }
 
   pm.enableVerifier(/*verifyPasses=*/true);

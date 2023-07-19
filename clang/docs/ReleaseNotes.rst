@@ -142,6 +142,22 @@ Resolutions to C++ Defect Reports
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 - Implemented `DR2397 <https://wg21.link/CWG2397>`_ which allows ``auto`` specifier for pointers
   and reference to arrays.
+- Implemented `CWG2521 <https://wg21.link/CWG2521>`_ which reserves using ``__`` in user-defined
+  literal suffixes and deprecates literal operator function declarations using an identifier.
+  Taught ``-Wuser-defined-literals`` for the former, on by default, and added
+  ``-Wdeprecated-literal-operator`` for the latter, off by default for now.
+
+  .. code-block:: c++
+
+    // What follows is warned by -Wuser-defined-literals
+    // albeit "ill-formed, no diagnostic required".
+    // Its behavior is undefined, [reserved.names.general]p2.
+    string operator ""__i18n(const char*, std::size_t);
+
+    // Assume this declaration is not in the global namespace.
+    // -Wdeprecated-literal-operator diagnoses the extra space.
+    string operator "" _i18n(const char*, std::size_t);
+    //                ^ an extra space
 
 C Language Changes
 ------------------
@@ -267,6 +283,10 @@ Modified Compiler Flags
   directory (``/tmp`` on \*NIX systems, if none of the environment variables
   TMPDIR, TMP, and TEMP are specified).
 
+- ``-ffat-lto-objects`` can now be used to emit object files with both object
+  code and LLVM bitcode. Previously this flag was ignored for GCC compatibility.
+  (`See related patch <https://reviews.llvm.org/D146777>`_).
+
 Removed Compiler Flags
 -------------------------
 - The deprecated flag `-fmodules-ts` is removed. Please use ``-std=c++20``
@@ -386,13 +406,6 @@ Improvements to Clang's diagnostics
   on overload resolution, when the actual reason for the failure is loss of other qualifiers.
 - Clang's notes about unconvertible types in overload resolution failure now covers
   the source range of parameter declaration of the candidate function declaration.
-- Added a new diagnostic warning group
-  ``-Wdeprecated-redundant-constexpr-static-def``, under the existing
-  ``-Wdeprecated`` group. This controls warnings about out-of-line definitions
-  of 'static constexpr' data members that are unnecessary from C++17 onwards.
-
- Bug Fixes in This Version
- -------------------------
 
   *Example Code*:
 
@@ -422,6 +435,7 @@ Improvements to Clang's diagnostics
     source:1:6: note: candidate function not viable: no known conversion from 'const char[4]' to 'int' for 2nd argument
     void func(int aa, int bb);
          ^            ~~~~~~
+
 - ``-Wformat`` cast fix-its will now suggest ``static_cast`` instead of C-style casts
   for C++ code.
 - ``-Wformat`` will no longer suggest a no-op fix-it for fixing scoped enum format
@@ -431,6 +445,10 @@ Improvements to Clang's diagnostics
 Bug Fixes in This Version
 -------------------------
 
+- Added a new diagnostic warning group
+  ``-Wdeprecated-redundant-constexpr-static-def``, under the existing
+  ``-Wdeprecated`` group. This controls warnings about out-of-line definitions
+  of 'static constexpr' data members that are unnecessary from C++17 onwards.
 - Fix segfault while running clang-rename on a non existing file.
   (`#36471 <https://github.com/llvm/llvm-project/issues/36471>`_)
 - Fix crash when diagnosing incorrect usage of ``_Nullable`` involving alias
@@ -632,6 +650,8 @@ Bug Fixes in This Version
   that construct (`#62133 <https://github.com/llvm/llvm-project/issues/38717>_`).
 - Fix crash caused by PseudoObjectExprBitfields: NumSubExprs overflow.
   (`#63169 <https://github.com/llvm/llvm-project/issues/63169>_`)
+- Fix crash when casting an object to an array type.
+  (`#63758 <https://github.com/llvm/llvm-project/issues/63758>_`)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -705,6 +725,50 @@ Bug Fixes to C++ Support
 - Fix crash when emitting diagnostic for out of order designated initializers
   in C++.
   (`#63605 <https://github.com/llvm/llvm-project/issues/63605>`_)
+- Fix crash when using standard C++ modules with OpenMP.
+  (`#62359 <https://github.com/llvm/llvm-project/issues/62359>`_)
+- Fix crash when using consteval non static data member initialization in
+  standard C++ modules.
+  (`#60275 <https://github.com/llvm/llvm-project/issues/60275>`_)
+- Fix handling of ADL for dependent expressions in standard C++ modules.
+  (`#60488 <https://github.com/llvm/llvm-project/issues/60488>`_)
+- Fix crash when combining `-ftime-trace` within standard C++ modules.
+  (`#60544 <https://github.com/llvm/llvm-project/issues/60544>`_)
+- Don't generate template specializations when importing standard C++ modules.
+  (`#60693 <https://github.com/llvm/llvm-project/issues/60693>`_)
+- Fix the visibility of `initializer list` in the importer of standard C++
+  modules. This addresses
+  (`#60775 <https://github.com/llvm/llvm-project/issues/60775>`_)
+- Allow the use of constrained friend in standard C++ modules.
+  (`#60890 <https://github.com/llvm/llvm-project/issues/60890>`_)
+- Don't evaluate initializer of used variables in every importer of standard
+  C++ modules.
+  (`#61040 <https://github.com/llvm/llvm-project/issues/61040>`_)
+- Fix the issue that the default `operator==` in standard C++ modules will
+  cause duplicate symbol linker error.
+  (`#61067 <https://github.com/llvm/llvm-project/issues/61067>`_)
+- Fix the false positive ODR check for template names. This addresses the issue
+  that we can't include `<ranges>` in multiple module units.
+  (`#61317 <https://github.com/llvm/llvm-project/issues/61317>`_)
+- Fix crash for inconsistent exported declarations in standard C++ modules.
+  (`#61321 <https://github.com/llvm/llvm-project/issues/61321>`_)
+- Fix ignoring `#pragma comment` and `#pragma detect_mismatch` directives in
+  standard C++ modules.
+  (`#61733 <https://github.com/llvm/llvm-project/issues/61733>`_)
+- Don't generate virtual tables if the class is defined in another module units
+  for Itanium ABI.
+  (`#61940 <https://github.com/llvm/llvm-project/issues/61940>`_)
+- Fix false postive check for constrained satisfaction in standard C++ modules.
+  (`#62589 <https://github.com/llvm/llvm-project/issues/62589>`_)
+- Serialize the evaluated constant values for variable declarations in standard
+  C++ modules.
+  (`#62796 <https://github.com/llvm/llvm-project/issues/62796>`_)
+- Merge lambdas in require expressions in standard C++ modules.
+  (`#63544 <https://github.com/llvm/llvm-project/issues/63544>`_)
+
+- Fix location of default member initialization in parenthesized aggregate
+  initialization.
+  (`#63903 <https://github.com/llvm/llvm-project/issues/63903>`_)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -872,6 +936,7 @@ clang-format
   the indentation level of the contents of braced init lists.
 - Add ``KeepEmptyLinesAtEOF`` to keep empty lines at end of file.
 - Add ``RemoveParentheses`` to remove redundant parentheses.
+- Add ``TypeNames`` to treat listed non-keyword identifiers as type names.
 
 libclang
 --------
