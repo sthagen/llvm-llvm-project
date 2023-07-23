@@ -447,11 +447,10 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::FNEARBYINT, MVT::f64, Legal);
       setOperationAction(ISD::BITCAST, MVT::i64, Custom);
       setOperationAction(ISD::BITCAST, MVT::f64, Custom);
+    } else {
+      if (Subtarget.is64Bit())
+        setOperationAction(FPRndMode, MVT::f64, Custom);
     }
-
-    if (Subtarget.is64Bit())
-      setOperationAction(FPRndMode, MVT::f64,
-                         Subtarget.hasStdExtZfa() ? Legal : Custom);
 
     setOperationAction(ISD::STRICT_FP_ROUND, MVT::f32, Legal);
     setOperationAction(ISD::STRICT_FP_EXTEND, MVT::f64, Legal);
@@ -678,8 +677,6 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
       setOperationAction({ISD::SMIN, ISD::SMAX, ISD::UMIN, ISD::UMAX}, VT,
                          Legal);
 
-      setOperationAction({ISD::ROTL, ISD::ROTR}, VT, Expand);
-
       setOperationAction({ISD::VP_FSHL, ISD::VP_FSHR}, VT, Expand);
 
       // Custom-lower extensions and truncations from/to mask types.
@@ -769,6 +766,8 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
                               ISD::VP_CTLZ_ZERO_UNDEF, ISD::VP_CTTZ_ZERO_UNDEF},
                              VT, Custom);
         }
+
+        setOperationAction({ISD::ROTL, ISD::ROTR}, VT, Expand);
       }
     }
 
