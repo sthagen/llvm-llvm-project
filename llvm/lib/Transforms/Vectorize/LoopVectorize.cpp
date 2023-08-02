@@ -2630,11 +2630,7 @@ void InnerLoopVectorizer::vectorizeInterleaveGroup(
     if (auto *gep = dyn_cast<GetElementPtrInst>(AddrPart->stripPointerCasts()))
       InBounds = gep->isInBounds();
     AddrPart = Builder.CreateGEP(ScalarTy, AddrPart, Idx, "", InBounds);
-
-    // Cast to the vector pointer type.
-    unsigned AddressSpace = AddrPart->getType()->getPointerAddressSpace();
-    Type *PtrTy = VecTy->getPointerTo(AddressSpace);
-    AddrParts.push_back(Builder.CreateBitCast(AddrPart, PtrTy));
+    AddrParts.push_back(AddrPart);
   }
 
   State.setDebugLocFromInst(Instr);
@@ -3571,7 +3567,10 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths(VPTransformState &State) {
     VPValue *Def = State.Plan->getVPValue(KV.first, true);
     if (!State.hasAnyVectorValue(Def))
       continue;
-    for (unsigned Part = 0; Part < UF; ++Part) {
+    // If the instruction is defined outside the loop, only update the first
+    // part; the first part will be re-used for all other parts.
+    unsigned UFToUse = OrigLoop->contains(KV.first) ? UF : 1;
+    for (unsigned Part = 0; Part < UFToUse; ++Part) {
       Value *I = State.get(Def, Part);
       if (Erased.count(I) || I->use_empty() || !isa<Instruction>(I))
         continue;
@@ -3680,7 +3679,8 @@ void InnerLoopVectorizer::truncateToMinimalBitwidths(VPTransformState &State) {
     VPValue *Def = State.Plan->getVPValue(KV.first, true);
     if (!State.hasAnyVectorValue(Def))
       continue;
-    for (unsigned Part = 0; Part < UF; ++Part) {
+    unsigned UFToUse = OrigLoop->contains(KV.first) ? UF : 1;
+    for (unsigned Part = 0; Part < UFToUse; ++Part) {
       Value *I = State.get(Def, Part);
       ZExtInst *Inst = dyn_cast<ZExtInst>(I);
       if (Inst && Inst->use_empty()) {
@@ -9870,6 +9870,9 @@ Value *VPTransformState::get(VPValue *Def, unsigned Part) {
   };
 
   if (!hasScalarValue(Def, {Part, 0})) {
+    assert(Def->isLiveIn() && "expected a live-in");
+    if (Part != 0)
+      return get(Def, 0);
     Value *IRV = Def->getLiveInIRValue();
     Value *B = GetBroadcastInstrs(IRV);
     set(Def, B, Part);
