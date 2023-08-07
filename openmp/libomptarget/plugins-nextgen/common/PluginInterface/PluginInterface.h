@@ -194,6 +194,11 @@ class DeviceImageTy {
   private:
     __tgt_target_table TTTablePtr;
     llvm::SmallVector<__tgt_offload_entry> Entries;
+
+  public:
+    using const_iterator = decltype(Entries)::const_iterator;
+    const_iterator begin() const { return Entries.begin(); }
+    const_iterator end() const { return Entries.end(); }
   };
 
   /// Image identifier within the corresponding device. Notice that this id is
@@ -274,6 +279,12 @@ struct GenericKernelTy {
   /// Get the kernel name.
   const char *getName() const { return Name; }
 
+  /// Get the kernel image.
+  DeviceImageTy &getImage() const {
+    assert(ImagePtr && "Kernel is not initialized!");
+    return *ImagePtr;
+  }
+
   /// Indicate whether an execution mode is valid.
   static bool isValidExecutionMode(OMPTgtExecModeFlags ExecutionMode) {
     switch (ExecutionMode) {
@@ -318,10 +329,6 @@ private:
                     llvm::SmallVectorImpl<void *> &Args,
                     llvm::SmallVectorImpl<void *> &Ptrs) const;
 
-  /// Get the default number of threads and blocks for the kernel.
-  virtual uint32_t getDefaultNumThreads(GenericDeviceTy &Device) const = 0;
-  virtual uint32_t getDefaultNumBlocks(GenericDeviceTy &Device) const = 0;
-
   /// Get the number of threads and blocks for the kernel based on the
   /// user-defined threads and block clauses.
   uint32_t getNumThreads(GenericDeviceTy &GenericDevice,
@@ -346,6 +353,9 @@ private:
 
   /// The execution flags of the kernel.
   OMPTgtExecModeFlags ExecutionMode;
+
+  /// The image that contains this kernel.
+  DeviceImageTy *ImagePtr = nullptr;
 
 protected:
   /// The preferred number of threads to run the kernel.
@@ -784,9 +794,9 @@ private:
                                    __tgt_offload_entry &DeviceEntry);
 
   /// Allocate and construct a kernel object.
-  virtual Expected<GenericKernelTy *>
-  constructKernelEntry(const __tgt_offload_entry &KernelEntry,
-                       DeviceImageTy &Image) = 0;
+  virtual Expected<GenericKernelTy &>
+  constructKernel(const __tgt_offload_entry &KernelEntry,
+                  OMPTgtExecModeFlags ExecMode) = 0;
 
   /// Get and set the stack size and heap size for the device. If not used, the
   /// plugin can implement the setters as no-op and setting the output
@@ -827,8 +837,8 @@ private:
 
 protected:
   /// Return the execution mode used for kernel \p Name.
-  Expected<OMPTgtExecModeFlags> getExecutionModeForKernel(StringRef Name,
-                                                          DeviceImageTy &Image);
+  virtual Expected<OMPTgtExecModeFlags>
+  getExecutionModeForKernel(StringRef Name, DeviceImageTy &Image);
 
   /// Environment variables defined by the LLVM OpenMP implementation
   /// regarding the initial number of streams and events.
@@ -1168,7 +1178,7 @@ public:
 
   /// Deinitialize the resource pool and delete all resources. This function
   /// must be called before the destructor.
-  Error deinit() {
+  virtual Error deinit() {
     if (NextAvailable)
       DP("Missing %d resources to be returned\n", NextAvailable);
 
@@ -1252,7 +1262,7 @@ protected:
     return Plugin::success();
   }
 
-private:
+protected:
   /// The resources between \p OldSize and \p NewSize need to be created or
   /// destroyed. The mutex is locked when this function is called.
   Error resizeResourcePoolImpl(uint32_t OldSize, uint32_t NewSize) {
