@@ -1883,6 +1883,27 @@ ExprResult Sema::CreateGenericSelectionExpr(
       ContainsUnexpandedParameterPack, ResultIndex);
 }
 
+static PredefinedExpr::IdentKind getPredefinedExprKind(tok::TokenKind Kind) {
+  switch (Kind) {
+  default:
+    llvm_unreachable("unexpected TokenKind");
+  case tok::kw___func__:
+    return PredefinedExpr::Func; // [C99 6.4.2.2]
+  case tok::kw___FUNCTION__:
+    return PredefinedExpr::Function;
+  case tok::kw___FUNCDNAME__:
+    return PredefinedExpr::FuncDName; // [MS]
+  case tok::kw___FUNCSIG__:
+    return PredefinedExpr::FuncSig; // [MS]
+  case tok::kw_L__FUNCTION__:
+    return PredefinedExpr::LFunction; // [MS]
+  case tok::kw_L__FUNCSIG__:
+    return PredefinedExpr::LFuncSig; // [MS]
+  case tok::kw___PRETTY_FUNCTION__:
+    return PredefinedExpr::PrettyFunction; // [GNU]
+  }
+}
+
 /// getUDSuffixLoc - Create a SourceLocation for a ud-suffix, given the
 /// location of the token and the offset of the ud-suffix within it.
 static SourceLocation getUDSuffixLoc(Sema &S, SourceLocation TokLoc,
@@ -1923,6 +1944,11 @@ static ExprResult BuildCookedLiteralOperatorCall(Sema &S, Scope *Scope,
 }
 
 ExprResult Sema::ActOnUnevaluatedStringLiteral(ArrayRef<Token> StringToks) {
+  // StringToks needs backing storage as it doesn't hold array elements itself
+  std::vector<Token> ExpandedToks;
+  if (getLangOpts().MicrosoftExt)
+    StringToks = ExpandedToks = ExpandFunctionLocalPredefinedMacros(StringToks);
+
   StringLiteralParser Literal(StringToks, PP,
                               StringLiteralEvalMethod::Unevaluated);
   if (Literal.hadError)
@@ -1946,6 +1972,55 @@ ExprResult Sema::ActOnUnevaluatedStringLiteral(ArrayRef<Token> StringToks) {
   return Lit;
 }
 
+std::vector<Token>
+Sema::ExpandFunctionLocalPredefinedMacros(ArrayRef<Token> Toks) {
+  // MSVC treats some predefined identifiers (e.g. __FUNCTION__) as function
+  // local macros that expand to string literals that may be concatenated.
+  // These macros are expanded here (in Sema), because StringLiteralParser
+  // (in Lex) doesn't know the enclosing function (because it hasn't been
+  // parsed yet).
+  assert(getLangOpts().MicrosoftExt);
+
+  // Note: Although function local macros are defined only inside functions,
+  // we ensure a valid `CurrentDecl` even outside of a function. This allows
+  // expansion of macros into empty string literals without additional checks.
+  Decl *CurrentDecl = getCurLocalScopeDecl();
+  if (!CurrentDecl)
+    CurrentDecl = Context.getTranslationUnitDecl();
+
+  std::vector<Token> ExpandedToks;
+  ExpandedToks.reserve(Toks.size());
+  for (const Token &Tok : Toks) {
+    if (!isFunctionLocalStringLiteralMacro(Tok.getKind(), getLangOpts())) {
+      assert(tok::isStringLiteral(Tok.getKind()));
+      ExpandedToks.emplace_back(Tok);
+      continue;
+    }
+    if (isa<TranslationUnitDecl>(CurrentDecl))
+      Diag(Tok.getLocation(), diag::ext_predef_outside_function);
+    // Stringify predefined expression
+    Diag(Tok.getLocation(), diag::ext_string_literal_from_predefined)
+        << Tok.getKind();
+    SmallString<64> Str;
+    llvm::raw_svector_ostream OS(Str);
+    Token &Exp = ExpandedToks.emplace_back();
+    Exp.startToken();
+    if (Tok.getKind() == tok::kw_L__FUNCTION__ ||
+        Tok.getKind() == tok::kw_L__FUNCSIG__) {
+      OS << 'L';
+      Exp.setKind(tok::wide_string_literal);
+    } else {
+      Exp.setKind(tok::string_literal);
+    }
+    OS << '"'
+       << Lexer::Stringify(PredefinedExpr::ComputeName(
+              getPredefinedExprKind(Tok.getKind()), CurrentDecl))
+       << '"';
+    PP.CreateString(OS.str(), Exp, Tok.getLocation(), Tok.getEndLoc());
+  }
+  return ExpandedToks;
+}
+
 /// ActOnStringLiteral - The specified tokens were lexed as pasted string
 /// fragments (e.g. "foo" "bar" L"baz").  The result string has to handle string
 /// concatenation ([C99 5.1.1.2, translation phase #6]), so it may come from
@@ -1955,6 +2030,11 @@ ExprResult Sema::ActOnUnevaluatedStringLiteral(ArrayRef<Token> StringToks) {
 ExprResult
 Sema::ActOnStringLiteral(ArrayRef<Token> StringToks, Scope *UDLScope) {
   assert(!StringToks.empty() && "Must have at least one string!");
+
+  // StringToks needs backing storage as it doesn't hold array elements itself
+  std::vector<Token> ExpandedToks;
+  if (getLangOpts().MicrosoftExt)
+    StringToks = ExpandedToks = ExpandFunctionLocalPredefinedMacros(StringToks);
 
   StringLiteralParser Literal(StringToks, PP);
   if (Literal.hadError)
@@ -3625,17 +3705,7 @@ static void ConvertUTF8ToWideString(unsigned CharByteWidth, StringRef Source,
 
 ExprResult Sema::BuildPredefinedExpr(SourceLocation Loc,
                                      PredefinedExpr::IdentKind IK) {
-  // Pick the current block, lambda, captured statement or function.
-  Decl *currentDecl = nullptr;
-  if (const BlockScopeInfo *BSI = getCurBlock())
-    currentDecl = BSI->TheDecl;
-  else if (const LambdaScopeInfo *LSI = getCurLambda())
-    currentDecl = LSI->CallOperator;
-  else if (const CapturedRegionScopeInfo *CSI = getCurCapturedRegion())
-    currentDecl = CSI->TheCapturedDecl;
-  else
-    currentDecl = getCurFunctionOrMethodDecl();
-
+  Decl *currentDecl = getCurLocalScopeDecl();
   if (!currentDecl) {
     Diag(Loc, diag::ext_predef_outside_function);
     currentDecl = Context.getTranslationUnitDecl();
@@ -3700,20 +3770,7 @@ ExprResult Sema::ActOnSYCLUniqueStableNameExpr(SourceLocation OpLoc,
 }
 
 ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
-  PredefinedExpr::IdentKind IK;
-
-  switch (Kind) {
-  default: llvm_unreachable("Unknown simple primary expr!");
-  case tok::kw___func__: IK = PredefinedExpr::Func; break; // [C99 6.4.2.2]
-  case tok::kw___FUNCTION__: IK = PredefinedExpr::Function; break;
-  case tok::kw___FUNCDNAME__: IK = PredefinedExpr::FuncDName; break; // [MS]
-  case tok::kw___FUNCSIG__: IK = PredefinedExpr::FuncSig; break; // [MS]
-  case tok::kw_L__FUNCTION__: IK = PredefinedExpr::LFunction; break; // [MS]
-  case tok::kw_L__FUNCSIG__: IK = PredefinedExpr::LFuncSig; break; // [MS]
-  case tok::kw___PRETTY_FUNCTION__: IK = PredefinedExpr::PrettyFunction; break;
-  }
-
-  return BuildPredefinedExpr(Loc, IK);
+  return BuildPredefinedExpr(Loc, getPredefinedExprKind(Kind));
 }
 
 ExprResult Sema::ActOnCharacterConstant(const Token &Tok, Scope *UDLScope) {
@@ -9679,6 +9736,40 @@ ExprResult Sema::ActOnConditionalOp(SourceLocation QuestionLoc,
       ColonLoc, result, VK, OK);
 }
 
+// Check that the SME attributes for PSTATE.ZA and PSTATE.SM are compatible.
+bool Sema::IsInvalidSMECallConversion(QualType FromType, QualType ToType,
+                                      AArch64SMECallConversionKind C) {
+  unsigned FromAttributes = 0, ToAttributes = 0;
+  if (const auto *FromFn =
+          dyn_cast<FunctionProtoType>(Context.getCanonicalType(FromType)))
+    FromAttributes =
+        FromFn->getAArch64SMEAttributes() & FunctionType::SME_AttributeMask;
+  if (const auto *ToFn =
+          dyn_cast<FunctionProtoType>(Context.getCanonicalType(ToType)))
+    ToAttributes =
+        ToFn->getAArch64SMEAttributes() & FunctionType::SME_AttributeMask;
+
+  if (FromAttributes == ToAttributes)
+    return false;
+
+  // If the '__arm_preserves_za' is the only difference between the types,
+  // check whether we're allowed to add or remove it.
+  if ((FromAttributes ^ ToAttributes) ==
+      FunctionType::SME_PStateZAPreservedMask) {
+    switch (C) {
+    case AArch64SMECallConversionKind::MatchExactly:
+      return true;
+    case AArch64SMECallConversionKind::MayAddPreservesZA:
+      return !(ToAttributes & FunctionType::SME_PStateZAPreservedMask);
+    case AArch64SMECallConversionKind::MayDropPreservesZA:
+      return !(FromAttributes & FunctionType::SME_PStateZAPreservedMask);
+    }
+  }
+
+  // There has been a mismatch of attributes
+  return true;
+}
+
 // Check if we have a conversion between incompatible cmse function pointer
 // types, that is, a conversion between a function pointer with the
 // cmse_nonsecure_call attribute and one without.
@@ -9844,6 +9935,10 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType,
       S.IsFunctionConversion(ltrans, rtrans, ltrans))
     return Sema::IncompatibleFunctionPointer;
   if (IsInvalidCmseNSCallConversion(S, ltrans, rtrans))
+    return Sema::IncompatibleFunctionPointer;
+  if (S.IsInvalidSMECallConversion(
+          rtrans, ltrans,
+          Sema::AArch64SMECallConversionKind::MayDropPreservesZA))
     return Sema::IncompatibleFunctionPointer;
   return ConvTy;
 }
@@ -13880,56 +13975,6 @@ inline QualType Sema::CheckBitwiseOperands(ExprResult &LHS, ExprResult &RHS,
   return InvalidOperands(Loc, LHS, RHS);
 }
 
-// Diagnose cases where the user write a logical and/or but probably meant a
-// bitwise one.  We do this when one of the operands is a non-bool integer and
-// the other is a constant.
-void Sema::diagnoseLogicalInsteadOfBitwise(Expr *Op1, Expr *Op2,
-                                           SourceLocation Loc,
-                                           BinaryOperatorKind Opc) {
-  if (Op1->getType()->isIntegerType() && !Op1->getType()->isBooleanType() &&
-      Op2->getType()->isIntegerType() && !Op2->isValueDependent() &&
-      // Don't warn in macros or template instantiations.
-      !Loc.isMacroID() && !inTemplateInstantiation() &&
-      !Op2->getExprLoc().isMacroID() && !Op1->getExprLoc().isMacroID()) {
-    bool IsOp1InMacro = Op1->getExprLoc().isMacroID();
-    bool IsOp2InMacro = Op2->getExprLoc().isMacroID();
-
-    // Exclude the specific expression from triggering the warning.
-    if (!(IsOp1InMacro && IsOp2InMacro &&
-          Op1->getSourceRange() == Op2->getSourceRange())) {
-      // If the RHS can be constant folded, and if it constant folds to
-      // something that isn't 0 or 1 (which indicate a potential logical
-      // operation that happened to fold to true/false) then warn. Parens on the
-      // RHS are ignored. If the RHS can be constant folded, and if it constant
-      // folds to something that isn't 0 or 1 (which indicate a potential
-      // logical operation that happened to fold to true/false) then warn.
-      // Parens on the RHS are ignored.
-      Expr::EvalResult EVResult;
-      if (Op2->EvaluateAsInt(EVResult, Context)) {
-        llvm::APSInt Result = EVResult.Val.getInt();
-        if ((getLangOpts().Bool && !Op2->getType()->isBooleanType() &&
-             !Op2->getExprLoc().isMacroID()) ||
-            (Result != 0 && Result != 1)) {
-          Diag(Loc, diag::warn_logical_instead_of_bitwise)
-              << Op2->getSourceRange() << (Opc == BO_LAnd ? "&&" : "||");
-          // Suggest replacing the logical operator with the bitwise version
-          Diag(Loc, diag::note_logical_instead_of_bitwise_change_operator)
-              << (Opc == BO_LAnd ? "&" : "|")
-              << FixItHint::CreateReplacement(
-                     SourceRange(Loc, getLocForEndOfToken(Loc)),
-                     Opc == BO_LAnd ? "&" : "|");
-          if (Opc == BO_LAnd)
-            // Suggest replacing "Foo() && kNonZero" with "Foo()"
-            Diag(Loc, diag::note_logical_instead_of_bitwise_remove_constant)
-                << FixItHint::CreateRemoval(
-                       SourceRange(getLocForEndOfToken(Op1->getEndLoc()),
-                                   Op2->getEndLoc()));
-        }
-      }
-    }
-  }
-}
-
 // C99 6.5.[13,14]
 inline QualType Sema::CheckLogicalOperands(ExprResult &LHS, ExprResult &RHS,
                                            SourceLocation Loc,
@@ -13948,6 +13993,9 @@ inline QualType Sema::CheckLogicalOperands(ExprResult &LHS, ExprResult &RHS,
     }
   }
 
+  if (EnumConstantInBoolContext)
+    Diag(Loc, diag::warn_enum_constant_in_bool_context);
+
   // WebAssembly tables can't be used with logical operators.
   QualType LHSTy = LHS.get()->getType();
   QualType RHSTy = RHS.get()->getType();
@@ -13958,14 +14006,40 @@ inline QualType Sema::CheckLogicalOperands(ExprResult &LHS, ExprResult &RHS,
     return InvalidOperands(Loc, LHS, RHS);
   }
 
-  if (EnumConstantInBoolContext) {
-    // Warn when converting the enum constant to a boolean
-    Diag(Loc, diag::warn_enum_constant_in_bool_context);
-  } else {
-    // Diagnose cases where the user write a logical and/or but probably meant a
-    // bitwise one.
-    diagnoseLogicalInsteadOfBitwise(LHS.get(), RHS.get(), Loc, Opc);
-    diagnoseLogicalInsteadOfBitwise(RHS.get(), LHS.get(), Loc, Opc);
+  // Diagnose cases where the user write a logical and/or but probably meant a
+  // bitwise one.  We do this when the LHS is a non-bool integer and the RHS
+  // is a constant.
+  if (!EnumConstantInBoolContext && LHS.get()->getType()->isIntegerType() &&
+      !LHS.get()->getType()->isBooleanType() &&
+      RHS.get()->getType()->isIntegerType() && !RHS.get()->isValueDependent() &&
+      // Don't warn in macros or template instantiations.
+      !Loc.isMacroID() && !inTemplateInstantiation()) {
+    // If the RHS can be constant folded, and if it constant folds to something
+    // that isn't 0 or 1 (which indicate a potential logical operation that
+    // happened to fold to true/false) then warn.
+    // Parens on the RHS are ignored.
+    Expr::EvalResult EVResult;
+    if (RHS.get()->EvaluateAsInt(EVResult, Context)) {
+      llvm::APSInt Result = EVResult.Val.getInt();
+      if ((getLangOpts().Bool && !RHS.get()->getType()->isBooleanType() &&
+           !RHS.get()->getExprLoc().isMacroID()) ||
+          (Result != 0 && Result != 1)) {
+        Diag(Loc, diag::warn_logical_instead_of_bitwise)
+            << RHS.get()->getSourceRange() << (Opc == BO_LAnd ? "&&" : "||");
+        // Suggest replacing the logical operator with the bitwise version
+        Diag(Loc, diag::note_logical_instead_of_bitwise_change_operator)
+            << (Opc == BO_LAnd ? "&" : "|")
+            << FixItHint::CreateReplacement(
+                   SourceRange(Loc, getLocForEndOfToken(Loc)),
+                   Opc == BO_LAnd ? "&" : "|");
+        if (Opc == BO_LAnd)
+          // Suggest replacing "Foo() && kNonZero" with "Foo()"
+          Diag(Loc, diag::note_logical_instead_of_bitwise_remove_constant)
+              << FixItHint::CreateRemoval(
+                     SourceRange(getLocForEndOfToken(LHS.get()->getEndLoc()),
+                                 RHS.get()->getEndLoc()));
+      }
+    }
   }
 
   if (!Context.getLangOpts().CPlusPlus) {
