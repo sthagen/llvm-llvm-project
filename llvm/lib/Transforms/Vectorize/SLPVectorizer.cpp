@@ -2768,6 +2768,14 @@ private:
       return FoundLane;
     }
 
+    /// Build a shuffle mask for graph entry which represents a merge of main
+    /// and alternate operations.
+    void
+    buildAltOpShuffleMask(const function_ref<bool(Instruction *)> IsAltOp,
+                          SmallVectorImpl<int> &Mask,
+                          SmallVectorImpl<Value *> *OpScalars = nullptr,
+                          SmallVectorImpl<Value *> *AltScalars = nullptr) const;
+
 #ifndef NDEBUG
     /// Debug printer.
     LLVM_DUMP_METHOD void dump() const {
@@ -6364,16 +6372,11 @@ getVectorCallCosts(CallInst *CI, FixedVectorType *VecTy,
   return {IntrinsicCost, LibCost};
 }
 
-/// Build shuffle mask for shuffle graph entries and lists of main and alternate
-/// operations operands.
-static void
-buildShuffleEntryMask(ArrayRef<Value *> VL, ArrayRef<unsigned> ReorderIndices,
-                      ArrayRef<int> ReusesIndices,
-                      const function_ref<bool(Instruction *)> IsAltOp,
-                      SmallVectorImpl<int> &Mask,
-                      SmallVectorImpl<Value *> *OpScalars = nullptr,
-                      SmallVectorImpl<Value *> *AltScalars = nullptr) {
-  unsigned Sz = VL.size();
+void BoUpSLP::TreeEntry::buildAltOpShuffleMask(
+    const function_ref<bool(Instruction *)> IsAltOp, SmallVectorImpl<int> &Mask,
+    SmallVectorImpl<Value *> *OpScalars,
+    SmallVectorImpl<Value *> *AltScalars) const {
+  unsigned Sz = Scalars.size();
   Mask.assign(Sz, PoisonMaskElem);
   SmallVector<int> OrderMask;
   if (!ReorderIndices.empty())
@@ -6382,7 +6385,7 @@ buildShuffleEntryMask(ArrayRef<Value *> VL, ArrayRef<unsigned> ReorderIndices,
     unsigned Idx = I;
     if (!ReorderIndices.empty())
       Idx = OrderMask[I];
-    auto *OpInst = cast<Instruction>(VL[Idx]);
+    auto *OpInst = cast<Instruction>(Scalars[Idx]);
     if (IsAltOp(OpInst)) {
       Mask[I] = Sz + Idx;
       if (AltScalars)
@@ -6393,9 +6396,9 @@ buildShuffleEntryMask(ArrayRef<Value *> VL, ArrayRef<unsigned> ReorderIndices,
         OpScalars->push_back(OpInst);
     }
   }
-  if (!ReusesIndices.empty()) {
-    SmallVector<int> NewMask(ReusesIndices.size(), PoisonMaskElem);
-    transform(ReusesIndices, NewMask.begin(), [&Mask](int Idx) {
+  if (!ReuseShuffleIndices.empty()) {
+    SmallVector<int> NewMask(ReuseShuffleIndices.size(), PoisonMaskElem);
+    transform(ReuseShuffleIndices, NewMask.begin(), [&Mask](int Idx) {
       return Idx != PoisonMaskElem ? Mask[Idx] : PoisonMaskElem;
     });
     Mask.swap(NewMask);
@@ -8040,8 +8043,7 @@ BoUpSLP::getEntryCost(const TreeEntry *E, ArrayRef<Value *> VectorizedVals,
                                          TTI::CastContextHint::None, CostKind);
       }
       SmallVector<int> Mask;
-      buildShuffleEntryMask(
-          E->Scalars, E->ReorderIndices, E->ReuseShuffleIndices,
+      E->buildAltOpShuffleMask(
           [E](Instruction *I) {
             assert(E->isOpcodeOrAlt(I) && "Unexpected main/alternate opcode");
             return I->getOpcode() == E->getAltOpcode();
@@ -10791,8 +10793,7 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E) {
       // each vector operation.
       ValueList OpScalars, AltScalars;
       SmallVector<int> Mask;
-      buildShuffleEntryMask(
-          E->Scalars, E->ReorderIndices, E->ReuseShuffleIndices,
+      E->buildAltOpShuffleMask(
           [E, this](Instruction *I) {
             assert(E->isOpcodeOrAlt(I) && "Unexpected main/alternate opcode");
             return isAlternateInstruction(I, E->getMainOp(), E->getAltOp(),
@@ -13516,10 +13517,12 @@ public:
         // Check if the reduction value was not overriden by the extractelement
         // instruction because of the vectorization and exclude it, if it is not
         // compatible with other values.
-        if (auto *Inst = dyn_cast<Instruction>(RdxVal))
-          if (isVectorLikeInstWithConstOps(Inst) &&
-              (!S.getOpcode() || !S.isOpcodeOrAlt(Inst)))
-            continue;
+        // Also check if the instruction was folded to constant/other value.
+        auto *Inst = dyn_cast<Instruction>(RdxVal);
+        if ((Inst && isVectorLikeInstWithConstOps(Inst) &&
+             (!S.getOpcode() || !S.isOpcodeOrAlt(Inst))) ||
+            (S.getOpcode() && !Inst))
+          continue;
         Candidates.push_back(RdxVal);
         TrackedToOrig.try_emplace(RdxVal, OrigReducedVals[Cnt]);
       }
@@ -13743,7 +13746,7 @@ public:
         // Update LocalExternallyUsedValues for the scalar, replaced by
         // extractelement instructions.
         for (const std::pair<Value *, Value *> &Pair : ReplacedExternals) {
-          auto It = ExternallyUsedValues.find(Pair.first);
+          auto *It = ExternallyUsedValues.find(Pair.first);
           if (It == ExternallyUsedValues.end())
             continue;
           LocalExternallyUsedValues[Pair.second].append(It->second);
@@ -13757,7 +13760,8 @@ public:
         InstructionCost ReductionCost =
             getReductionCost(TTI, VL, IsCmpSelMinMax, ReduxWidth, RdxFMF);
         InstructionCost Cost = TreeCost + ReductionCost;
-        LLVM_DEBUG(dbgs() << "SLP: Found cost = " << Cost << " for reduction\n");
+        LLVM_DEBUG(dbgs() << "SLP: Found cost = " << Cost
+                          << " for reduction\n");
         if (!Cost.isValid())
           return nullptr;
         if (Cost >= -SLPCostThreshold) {

@@ -120,21 +120,17 @@ def LLVM_AbsOp : LLVM_OneResultIntrOp<"abs", [], [0], [Pure]> {
   }];
 }
 
-def LLVM_IsFPClass : LLVM_OneResultIntrOp<"is.fpclass", [], [0], [Pure],
-                                          /*requiresFastmath=*/1> {
-  let arguments = (ins LLVM_ScalarOrVectorOf<LLVM_AnyFloat>:$in,
-                       I32Attr:$kinds,
-                       DefaultValuedAttr<LLVM_FastmathFlagsAttr, "{}">:$fastmathFlags);
+def LLVM_IsFPClass : LLVM_OneResultIntrOp<"is.fpclass", [], [0], [Pure]> {
+  let arguments = (ins LLVM_ScalarOrVectorOf<LLVM_AnyFloat>:$in, I32Attr:$bit);
   string mlirBuilder = [{
     auto op = $_builder.create<$_qualCppClassName>($_location,
-      $_resultType, $in, $_int_attr($kinds), nullptr);
-    moduleImport.setFastmathFlagsAttr(inst, op);
-    $res = op;
+      $_resultType, $in, $_int_attr($bit));
+      $res = op;
   }];
   string llvmBuilder = [{
     auto *inst = createIntrinsicCall(
       builder, llvm::Intrinsic::}] # llvmEnumName # [{,
-      {$in, builder.getInt32(op.getKinds())},
+      {$in, builder.getInt32(op.getBit())},
       }] # declTypes # [{);
     $res = inst;
   }];
@@ -618,12 +614,12 @@ def LLVM_EhTypeidForOp : LLVM_OneResultIntrOp<"eh.typeid.for"> {
 // Stack save/restore intrinsics.
 //
 
-def LLVM_StackSaveOp : LLVM_OneResultIntrOp<"stacksave"> {
-  let assemblyFormat = "attr-dict `:` type($res)";
+def LLVM_StackSaveOp : LLVM_OneResultIntrOp<"stacksave", [0]> {
+  let assemblyFormat = "attr-dict `:` qualified(type($res))";
 }
 
-def LLVM_StackRestoreOp : LLVM_ZeroResultIntrOp<"stackrestore"> {
-  let arguments = (ins LLVM_i8Ptr:$ptr);
+def LLVM_StackRestoreOp : LLVM_ZeroResultIntrOp<"stackrestore", [0]> {
+  let arguments = (ins LLVM_AnyPointer:$ptr);
   let assemblyFormat = "$ptr attr-dict `:` qualified(type($ptr))";
 }
 
