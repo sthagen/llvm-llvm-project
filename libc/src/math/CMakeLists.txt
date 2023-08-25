@@ -27,6 +27,7 @@ function(add_math_entrypoint_object name)
       ALIAS
       DEPENDS
         .${LIBC_TARGET_ARCHITECTURE}.vendor.${name}
+      VENDOR
     )
     return()
   endif()
@@ -78,6 +79,7 @@ add_math_entrypoint_object(coshf)
 
 add_math_entrypoint_object(erff)
 
+add_math_entrypoint_object(exp)
 add_math_entrypoint_object(expf)
 
 add_math_entrypoint_object(exp2f)

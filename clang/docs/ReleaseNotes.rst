@@ -46,6 +46,8 @@ C++ Specific Potentially Breaking Changes
 
 ABI Changes in This Version
 ---------------------------
+- Following the SystemV ABI for x86-64, ``__int128`` arguments will no longer
+  be split between a register and a stack slot.
 
 What's New in Clang |release|?
 ==============================
@@ -85,6 +87,9 @@ C++2c Feature Support
       int _; // Previously diagnosed under -Wunused, no longer diagnosed
     }
 
+- Attributes now expect unevaluated strings in attributes parameters that are string literals.
+  This is applied to both C++ standard attributes, and other attributes supported by Clang.
+  This completes the implementation of `P2361R6 Unevaluated Strings <https://wg21.link/P2361R6>`_
 
 
 Resolutions to C++ Defect Reports
@@ -115,6 +120,8 @@ Deprecated Compiler Flags
 Modified Compiler Flags
 -----------------------
 
+* ``-Woverriding-t-option`` is renamed to ``-Woverriding-option``.
+
 Removed Compiler Flags
 -------------------------
 
@@ -129,6 +136,10 @@ Improvements to Clang's diagnostics
   of a base class is not called in the constructor of its derived class.
 - Clang no longer emits ``-Wmissing-variable-declarations`` for variables declared
   with the ``register`` storage class.
+- Clang's ``-Wtautological-negation-compare`` flag now diagnoses logical
+  tautologies like ``x && !x`` and ``!x || x`` in expressions. This also
+  makes ``-Winfinite-recursion`` diagnose more cases.
+  (`#56035: <https://github.com/llvm/llvm-project/issues/56035>`_).
 
 Bug Fixes in This Version
 -------------------------
@@ -138,6 +149,26 @@ Bug Fixes in This Version
   class, which can result in miscompiles in some cases.
 - Fix crash on use of a variadic overloaded operator.
   (`#42535 <https://github.com/llvm/llvm-project/issues/42535>_`)
+- Fix a hang on valid C code passing a function type as an argument to
+  ``typeof`` to form a function declaration.
+  (`#64713 <https://github.com/llvm/llvm-project/issues/64713>_`)
+- Clang now reports missing-field-initializers warning for missing designated
+  initializers in C++.
+  (`#56628 <https://github.com/llvm/llvm-project/issues/56628>`_)
+- Clang now respects ``-fwrapv`` and ``-ftrapv`` for ``__builtin_abs`` and
+  ``abs`` builtins.
+  (`#45129 <https://github.com/llvm/llvm-project/issues/45129>`_,
+  `#45794 <https://github.com/llvm/llvm-project/issues/45794>`_)
+- Fixed an issue where accesses to the local variables of a coroutine during
+  ``await_suspend`` could be misoptimized, including accesses to the awaiter
+  object itself.
+  (`#56301 <https://github.com/llvm/llvm-project/issues/56301>`_)
+  The current solution may bring performance regressions if the awaiters have
+  non-static data members. See
+  `#64945 <https://github.com/llvm/llvm-project/issues/64945>`_ for details.
+- Clang now prints unnamed members in diagnostic messages instead of giving an
+  empty ''. Fixes
+  (`#63759 <https://github.com/llvm/llvm-project/issues/63759>`_)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -155,17 +186,25 @@ Bug Fixes to C++ Support
 
 - Fix a crash caused by some named unicode escape sequences designating
   a Unicode character whose name contains a ``-``.
-  (`Fixes #64161 <https://github.com/llvm/llvm-project/issues/64161>_`)
+  (Fixes `#64161 <https://github.com/llvm/llvm-project/issues/64161>`_)
 
-- Fix cases where we ignore ambiguous name lookup when looking up memebers.
-  (`#22413 <https://github.com/llvm/llvm-project/issues/22413>_`),
-  (`#29942 <https://github.com/llvm/llvm-project/issues/29942>_`),
-  (`#35574 <https://github.com/llvm/llvm-project/issues/35574>_`) and
-  (`#27224 <https://github.com/llvm/llvm-project/issues/27224>_`).
+- Fix cases where we ignore ambiguous name lookup when looking up members.
+  (`#22413 <https://github.com/llvm/llvm-project/issues/22413>`_),
+  (`#29942 <https://github.com/llvm/llvm-project/issues/29942>`_),
+  (`#35574 <https://github.com/llvm/llvm-project/issues/35574>`_) and
+  (`#27224 <https://github.com/llvm/llvm-project/issues/27224>`_).
 
 - Clang emits an error on substitution failure within lambda body inside a
   requires-expression. This fixes:
-  (`#64138 <https://github.com/llvm/llvm-project/issues/64138>_`).
+  (`#64138 <https://github.com/llvm/llvm-project/issues/64138>`_).
+
+- Update ``FunctionDeclBitfields.NumFunctionDeclBits``. This fixes:
+  (`#64171 <https://github.com/llvm/llvm-project/issues/64171>`_).
+
+- Expressions producing ``nullptr`` are correctly evaluated
+  by the constant interpreter when appearing as the operand
+  of a binary comparision.
+  (`#64923 <https://github.com/llvm/llvm-project/issues/64923>_``)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -249,6 +288,7 @@ AST Matchers
 ------------
 - Add ``convertVectorExpr``.
 - Add ``dependentSizedExtVectorType``.
+- Add ``macroQualifiedType``.
 
 clang-format
 ------------
@@ -261,10 +301,17 @@ libclang
 Static Analyzer
 ---------------
 
+- Added a new checker ``core.BitwiseShift`` which reports situations where
+  bitwise shift operators produce undefined behavior (because some operand is
+  negative or too large).
+
 .. _release-notes-sanitizers:
 
 Sanitizers
 ----------
+
+- ``-fsanitize=signed-integer-overflow`` now instruments ``__builtin_abs`` and
+  ``abs`` builtins.
 
 Python Binding Changes
 ----------------------
