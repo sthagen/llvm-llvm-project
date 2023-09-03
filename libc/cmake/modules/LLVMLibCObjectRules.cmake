@@ -109,6 +109,10 @@ function(get_nvptx_compile_options output_var gpu_arch)
     list(APPEND nvptx_options "--cuda-feature=+ptx72")
   elseif(${gpu_arch} STREQUAL "sm_86")
     list(APPEND nvptx_options "--cuda-feature=+ptx72")
+  elseif(${gpu_arch} STREQUAL "sm_89")
+    list(APPEND nvptx_options "--cuda-feature=+ptx72")
+  elseif(${gpu_arch} STREQUAL "sm_90")
+    list(APPEND nvptx_options "--cuda-feature=+ptx72")
   else()
     message(FATAL_ERROR "Unknown Nvidia GPU architecture '${gpu_arch}'")
   endif()
@@ -360,9 +364,8 @@ function(create_object_library fq_target_name)
     target_include_directories(
       ${fq_target_name}
       PRIVATE
-        ${LIBC_BUILD_DIR}/include
         ${LIBC_SOURCE_DIR}
-        ${LIBC_BUILD_DIR}
+        ${LIBC_INCLUDE_DIR}
     )
     target_compile_options(${fq_target_name} PRIVATE ${compile_options})
   endif()

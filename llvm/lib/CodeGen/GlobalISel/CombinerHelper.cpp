@@ -3229,7 +3229,7 @@ bool CombinerHelper::matchFoldBinOpIntoSelect(MachineInstr &MI,
 
   unsigned BinOpcode = MI.getOpcode();
 
-  // We know know one of the operands is a select of constants. Now verify that
+  // We know that one of the operands is a select of constants. Now verify that
   // the other binary operator operand is either a constant, or we can handle a
   // variable.
   bool CanFoldNonConst =
@@ -6011,6 +6011,22 @@ bool CombinerHelper::matchShiftsTooBig(MachineInstr &MI) {
     return CI && CI->uge(ResTy.getScalarSizeInBits());
   };
   return matchUnaryPredicate(MRI, ShiftReg, IsShiftTooBig);
+}
+
+bool CombinerHelper::matchCommuteConstantToRHS(MachineInstr &MI) {
+  Register LHS = MI.getOperand(1).getReg();
+  Register RHS = MI.getOperand(2).getReg();
+  auto *LHSDef = MRI.getVRegDef(LHS);
+  if (getIConstantVRegVal(LHS, MRI).has_value())
+    return true;
+
+  // LHS may be a G_CONSTANT_FOLD_BARRIER. If so we commute
+  // as long as we don't already have a constant on the RHS.
+  if (LHSDef->getOpcode() != TargetOpcode::G_CONSTANT_FOLD_BARRIER)
+    return false;
+  return MRI.getVRegDef(RHS)->getOpcode() !=
+             TargetOpcode::G_CONSTANT_FOLD_BARRIER &&
+         !getIConstantVRegVal(RHS, MRI);
 }
 
 bool CombinerHelper::tryCombine(MachineInstr &MI) {

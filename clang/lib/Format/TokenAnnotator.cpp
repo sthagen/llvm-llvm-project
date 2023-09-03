@@ -3132,7 +3132,7 @@ static FormatToken *getFunctionName(const AnnotatedLine &Line) {
       assert(Tok->Next);
       Tok = Tok->Next->Next;
       if (!Tok)
-        break;
+        return nullptr;
     }
 
     // Skip the `~` if a destructor name.
