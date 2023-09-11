@@ -178,7 +178,12 @@ int __kmp_get_global_thread_id() {
       if (stack_diff <= stack_size) {
         /* The only way we can be closer than the allocated */
         /* stack size is if we are running on this thread. */
-        KMP_DEBUG_ASSERT(__kmp_gtid_get_specific() == i);
+        // __kmp_gtid_get_specific can return negative value because this
+        // function can be called by thread destructor. However, before the
+        // thread destructor is called, the value of the corresponding
+        // thread-specific data will be reset to NULL.
+        KMP_DEBUG_ASSERT(__kmp_gtid_get_specific() < 0 ||
+                         __kmp_gtid_get_specific() == i);
         return i;
       }
     }
@@ -8825,7 +8830,7 @@ __kmp_determine_reduction_method(
     int atomic_available = FAST_REDUCTION_ATOMIC_METHOD_GENERATED;
 
 #if KMP_ARCH_X86_64 || KMP_ARCH_PPC64 || KMP_ARCH_AARCH64 ||                   \
-    KMP_ARCH_MIPS64 || KMP_ARCH_RISCV64 || KMP_ARCH_LOONGARCH64
+    KMP_ARCH_MIPS64 || KMP_ARCH_RISCV64 || KMP_ARCH_LOONGARCH64 || KMP_ARCH_VE
 
 #if KMP_OS_LINUX || KMP_OS_DRAGONFLY || KMP_OS_FREEBSD || KMP_OS_NETBSD ||     \
     KMP_OS_OPENBSD || KMP_OS_WINDOWS || KMP_OS_DARWIN || KMP_OS_HURD

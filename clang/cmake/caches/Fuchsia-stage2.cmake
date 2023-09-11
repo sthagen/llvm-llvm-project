@@ -31,7 +31,10 @@ set(LLDB_ENABLE_LIBEDIT OFF CACHE BOOL "")
 
 if(WIN32)
   set(LLVM_USE_CRT_RELEASE "MT" CACHE STRING "")
-else()
+  set(FUCHSIA_DISABLE_DRIVER_BUILD ON)
+endif()
+
+if (NOT FUCHSIA_DISABLE_DRIVER_BUILD)
   set(LLVM_TOOL_LLVM_DRIVER_BUILD ON CACHE BOOL "")
   set(LLVM_DRIVER_TARGET llvm-driver)
 endif()
@@ -177,6 +180,9 @@ foreach(target aarch64-unknown-linux-gnu;armv7-unknown-linux-gnueabihf;i386-unkn
     set(RUNTIMES_${target}_SANITIZER_TEST_CXX_INTREE ON CACHE BOOL "")
     set(RUNTIMES_${target}_LLVM_TOOLS_DIR "${CMAKE_BINARY_DIR}/bin" CACHE BOOL "")
     set(RUNTIMES_${target}_LLVM_ENABLE_RUNTIMES "compiler-rt;libcxx;libcxxabi;libunwind" CACHE STRING "")
+
+    # TODO: Remove this once #65859 lands.
+    set(RUNTIMES_${target}_LIBCXX_ENABLE_TIME_ZONE_DATABASE OFF CACHE STRING "")
 
     # Use .build-id link.
     list(APPEND RUNTIME_BUILD_ID_LINK "${target}")

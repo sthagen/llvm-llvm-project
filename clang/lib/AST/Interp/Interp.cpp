@@ -213,6 +213,16 @@ bool CheckRange(InterpState &S, CodePtr OpPC, const Pointer &Ptr,
   return false;
 }
 
+bool CheckSubobject(InterpState &S, CodePtr OpPC, const Pointer &Ptr,
+                    CheckSubobjectKind CSK) {
+  if (!Ptr.isOnePastEnd())
+    return true;
+
+  const SourceInfo &Loc = S.Current->getSource(OpPC);
+  S.FFDiag(Loc, diag::note_constexpr_past_end_subobject) << CSK;
+  return false;
+}
+
 bool CheckConst(InterpState &S, CodePtr OpPC, const Pointer &Ptr) {
   assert(Ptr.isLive() && "Pointer is not live");
   if (!Ptr.isConst())
@@ -251,9 +261,8 @@ bool CheckInitialized(InterpState &S, CodePtr OpPC, const Pointer &Ptr,
     return true;
 
   if (!S.checkingPotentialConstantExpression()) {
-    const SourceInfo &Loc = S.Current->getSource(OpPC);
-    S.FFDiag(Loc, diag::note_constexpr_access_uninit)
-        << AK << /*uninitialized=*/true;
+    S.FFDiag(S.Current->getSource(OpPC), diag::note_constexpr_access_uninit)
+        << AK << /*uninitialized=*/true << S.Current->getRange(OpPC);
   }
   return false;
 }
