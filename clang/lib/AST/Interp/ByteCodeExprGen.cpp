@@ -243,12 +243,6 @@ bool ByteCodeExprGen<Emitter>::VisitBinaryOperator(const BinaryOperator *BO) {
   std::optional<PrimType> RT = classify(RHS->getType());
   std::optional<PrimType> T = classify(BO->getType());
 
-  auto Discard = [this, T, BO](bool Result) {
-    if (!Result)
-      return false;
-    return DiscardResult ? this->emitPop(*T, BO) : true;
-  };
-
   // Deal with operations which have composite or void types.
   if (BO->isCommaOp()) {
     if (!this->discard(LHS))
@@ -256,9 +250,7 @@ bool ByteCodeExprGen<Emitter>::VisitBinaryOperator(const BinaryOperator *BO) {
     if (RHS->getType()->isVoidType())
       return this->discard(RHS);
 
-    // Otherwise, visit RHS and optionally discard its value.
-    return Discard(Initializing ? this->visitInitializer(RHS)
-                                : this->visit(RHS));
+    return this->delegate(RHS);
   }
 
   if (!LT || !RT || !T)
@@ -283,6 +275,12 @@ bool ByteCodeExprGen<Emitter>::VisitBinaryOperator(const BinaryOperator *BO) {
     if (T != PT_Bool)
       return this->emitCast(PT_Bool, *T, BO);
     return true;
+  };
+
+  auto Discard = [this, T, BO](bool Result) {
+    if (!Result)
+      return false;
+    return DiscardResult ? this->emitPop(*T, BO) : true;
   };
 
   switch (BO->getOpcode()) {
@@ -634,8 +632,14 @@ bool ByteCodeExprGen<Emitter>::VisitSubstNonTypeTemplateParmExpr(
 
 template <class Emitter>
 bool ByteCodeExprGen<Emitter>::VisitConstantExpr(const ConstantExpr *E) {
-  // TODO: Check if the ConstantExpr already has a value set and if so,
-  //   use that instead of evaluating it again.
+  // Try to emit the APValue directly, without visiting the subexpr.
+  // This will only fail if we can't emit the APValue, so won't emit any
+  // diagnostics or any double values.
+  std::optional<PrimType> T = classify(E->getType());
+  if (T && E->hasAPValueResult() &&
+      this->visitAPValue(E->getAPValueResult(), *T, E))
+    return true;
+
   return this->delegate(E->getSubExpr());
 }
 
@@ -1451,6 +1455,41 @@ bool ByteCodeExprGen<Emitter>::VisitSourceLocExpr(const SourceLocExpr *E) {
 
   // Leave the pointer to the global on the stack.
   return true;
+}
+
+template <class Emitter>
+bool ByteCodeExprGen<Emitter>::VisitOffsetOfExpr(const OffsetOfExpr *E) {
+  unsigned N = E->getNumComponents();
+  if (N == 0)
+    return false;
+
+  for (unsigned I = 0; I != N; ++I) {
+    const OffsetOfNode &Node = E->getComponent(I);
+    if (Node.getKind() == OffsetOfNode::Array) {
+      const Expr *ArrayIndexExpr = E->getIndexExpr(Node.getArrayExprIndex());
+      PrimType IndexT = classifyPrim(ArrayIndexExpr->getType());
+
+      if (DiscardResult) {
+        if (!this->discard(ArrayIndexExpr))
+          return false;
+        continue;
+      }
+
+      if (!this->visit(ArrayIndexExpr))
+        return false;
+      // Cast to Sint64.
+      if (IndexT != PT_Sint64) {
+        if (!this->emitCast(IndexT, PT_Sint64, E))
+          return false;
+      }
+    }
+  }
+
+  if (DiscardResult)
+    return true;
+
+  PrimType T = classifyPrim(E->getType());
+  return this->emitOffsetOf(T, E, E);
 }
 
 template <class Emitter> bool ByteCodeExprGen<Emitter>::discard(const Expr *E) {
@@ -2359,9 +2398,7 @@ bool ByteCodeExprGen<Emitter>::VisitUnaryOperator(const UnaryOperator *E) {
   case UO_Real:   // __real x
   case UO_Imag:   // __imag x
   case UO_Extension:
-    if (DiscardResult)
-      return this->discard(SubExpr);
-    return this->visit(SubExpr);
+    return this->delegate(SubExpr);
   case UO_Coawait:
     assert(false && "Unhandled opcode");
   }

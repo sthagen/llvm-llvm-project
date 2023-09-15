@@ -41,13 +41,11 @@
 // TODO: Investigate the output generated for SVE, see https://github.com/llvm/llvm-project/issues/60626
 
 #CSR = #sparse_tensor.encoding<{
-  lvlTypes = [ "dense", "compressed" ],
-  dimToLvl = affine_map<(i,j) -> (i,j)>
+  map = (d0, d1) -> (d0 : dense, d1 : compressed)
 }>
 
 #DCSR = #sparse_tensor.encoding<{
-  lvlTypes = [ "compressed", "compressed" ],
-  dimToLvl = affine_map<(i,j) -> (i,j)>
+  map = (d0, d1) -> (d0 : compressed, d1 : compressed)
 }>
 
 module {

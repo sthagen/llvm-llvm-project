@@ -30,8 +30,8 @@
 // Do the same run, but now with  VLA vectorization.
 // RUN: %if mlir_arm_sve_tests %{ %{compile_sve} | %{run_sve} | FileCheck %s %}
 
-#SparseVector = #sparse_tensor.encoding<{lvlTypes = ["compressed"]}>
-#DCSR = #sparse_tensor.encoding<{lvlTypes = ["compressed", "compressed"]}>
+#SparseVector = #sparse_tensor.encoding<{map = (d0) -> (d0 : compressed)}>
+#DCSR = #sparse_tensor.encoding<{map = (d0, d1) -> (d0 : compressed, d1 : compressed)}>
 
 //
 // Traits for tensor operations.

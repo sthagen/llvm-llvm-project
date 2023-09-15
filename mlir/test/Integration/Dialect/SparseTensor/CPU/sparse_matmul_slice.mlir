@@ -23,7 +23,7 @@
 // TODO: support lib path.
 
 #DCSR = #sparse_tensor.encoding<{
-  lvlTypes = [ "compressed", "compressed" ]
+  map = (d0, d1) -> (d0 : compressed, d1 : compressed)
 }>
 
 #DCSR_SLICE = #sparse_tensor.encoding<{
@@ -32,7 +32,7 @@
 }>
 
 #CSR = #sparse_tensor.encoding<{
-  lvlTypes = [ "dense", "compressed" ]
+  map = (d0, d1) -> (d0 : dense, d1 : compressed)
 }>
 
 #CSR_SLICE = #sparse_tensor.encoding<{

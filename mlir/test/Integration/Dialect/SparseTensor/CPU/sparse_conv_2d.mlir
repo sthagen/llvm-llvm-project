@@ -30,12 +30,11 @@
 // Do the same run, but now with direct IR generation and VLA vectorization.
 // RUN: %if mlir_arm_sve_tests %{ %{compile_sve} | %{run_sve} | FileCheck %s %}
 
-#DCSR = #sparse_tensor.encoding<{ lvlTypes = [ "compressed", "compressed" ] }>
-#CSR = #sparse_tensor.encoding<{lvlTypes = ["dense", "compressed"]}>
-#CDR = #sparse_tensor.encoding<{lvlTypes = ["compressed", "dense"]}>
+#DCSR = #sparse_tensor.encoding<{ map = (d0, d1) -> (d0 : compressed, d1 : compressed) }>
+#CSR = #sparse_tensor.encoding<{ map = (d0, d1) -> (d0 : dense, d1 : compressed) }>
+#CDR = #sparse_tensor.encoding<{map = (d0, d1) -> (d0 : compressed, d1 : dense)}>
 #CSC = #sparse_tensor.encoding<{
-  lvlTypes = [ "dense", "compressed" ],
-  dimToLvl = affine_map<(i,j) -> (j,i)>
+  map = (d0, d1) -> (d1 : dense, d0 : compressed)
 }>
 
 // An example of a 2D convolution with a sparse filter.

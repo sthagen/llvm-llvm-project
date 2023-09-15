@@ -104,8 +104,12 @@ void Ctx::reset() {
   nonPrevailingSyms.clear();
   whyExtractRecords.clear();
   backwardReferences.clear();
+  auxiliaryFiles.clear();
   hasSympart.store(false, std::memory_order_relaxed);
+  hasTlsIe.store(false, std::memory_order_relaxed);
   needsTlsLd.store(false, std::memory_order_relaxed);
+  scriptSymOrderCounter = 1;
+  scriptSymOrder.clear();
 }
 
 llvm::raw_fd_ostream Ctx::openAuxiliaryFile(llvm::StringRef filename,
@@ -1582,8 +1586,8 @@ static void readConfigs(opt::InputArgList &args) {
 
   // Page alignment can be disabled by the -n (--nmagic) and -N (--omagic).
   // As PT_GNU_RELRO relies on Paging, do not create it when we have disabled
-  // it.
-  if (config->nmagic || config->omagic)
+  // it. Also disable RELRO for -r.
+  if (config->nmagic || config->omagic || config->relocatable)
     config->zRelro = false;
 
   std::tie(config->buildId, config->buildIdVector) = getBuildId(args);

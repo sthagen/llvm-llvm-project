@@ -31,11 +31,11 @@
 // RUN: %if mlir_arm_sve_tests %{ %{compile_sve} | %{run_sve} | FileCheck %s %}
 
 #SparseVector = #sparse_tensor.encoding<{
-  lvlTypes = ["compressed"]
+  map = (d0) -> (d0 : compressed)
 }>
 
 #SparseMatrix = #sparse_tensor.encoding<{
-  lvlTypes = ["compressed", "compressed"]
+  map = (d0, d1) -> (d0 : compressed, d1 : compressed)
 }>
 
 #trait_1d = {

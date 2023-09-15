@@ -681,7 +681,7 @@ public:
   bool isFMAFasterThanFMulAndFAdd(const Function &F, Type *Ty) const override;
 
   bool generateFMAsInMachineCombiner(EVT VT,
-                                     CodeGenOpt::Level OptLevel) const override;
+                                     CodeGenOptLevel OptLevel) const override;
 
   const MCPhysReg *getScratchRegisters(CallingConv::ID CC) const override;
   ArrayRef<MCPhysReg> getRoundingControlRegisters() const override;
@@ -1169,9 +1169,10 @@ private:
                                     std::vector<SDValue> &Ops,
                                     SelectionDAG &DAG) const override;
 
-  unsigned getInlineAsmMemConstraint(StringRef ConstraintCode) const override {
+  InlineAsm::ConstraintCode
+  getInlineAsmMemConstraint(StringRef ConstraintCode) const override {
     if (ConstraintCode == "Q")
-      return InlineAsm::Constraint_Q;
+      return InlineAsm::ConstraintCode::Q;
     // FIXME: clang has code for 'Ump', 'Utf', 'Usa', and 'Ush' but these are
     //        followed by llvm_unreachable so we'll leave them unimplemented in
     //        the backend for now.

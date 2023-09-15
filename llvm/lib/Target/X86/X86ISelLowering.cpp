@@ -116,7 +116,7 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
   setStackPointerRegisterToSaveRestore(RegInfo->getStackRegister());
 
   // Bypass expensive divides and use cheaper ones.
-  if (TM.getOptLevel() >= CodeGenOpt::Default) {
+  if (TM.getOptLevel() >= CodeGenOptLevel::Default) {
     if (Subtarget.hasSlowDivide32())
       addBypassSlowDiv(32, 8);
     if (Subtarget.hasSlowDivide64() && Subtarget.is64Bit())
@@ -20369,7 +20369,7 @@ SDValue X86TargetLowering::LowerTRUNCATE(SDValue Op, SelectionDAG &DAG) const {
 
   // If we're called by the type legalizer, handle a few cases.
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
-  if (!TLI.isTypeLegal(InVT)) {
+  if (!TLI.isTypeLegal(VT) || !TLI.isTypeLegal(InVT)) {
     if ((InVT == MVT::v8i64 || InVT == MVT::v16i32 || InVT == MVT::v16i64) &&
         VT.is128BitVector() && Subtarget.hasAVX512()) {
       assert((InVT == MVT::v16i64 || Subtarget.hasVLX()) &&
@@ -21513,7 +21513,7 @@ static SDValue LowerFABSorFNEG(SDValue Op, SelectionDAG &DAG) {
          DAG.getTargetLoweringInfo().isTypeLegal(VT) &&
          "Unexpected type in LowerFABSorFNEG");
 
-  // FIXME: Use function attribute "OptimizeForSize" and/or CodeGenOpt::Level to
+  // FIXME: Use function attribute "OptimizeForSize" and/or CodeGenOptLevel to
   // decide if we should generate a 16-byte constant mask when we only need 4 or
   // 8 bytes for the scalar case.
 
@@ -42023,6 +42023,19 @@ SDValue X86TargetLowering::SimplifyMultipleUseDemandedBitsForTargetNode(
         ISD::isBuildVectorAllZeros(Op.getOperand(0).getNode()))
       return Op.getOperand(1);
     break;
+  case X86ISD::BLENDV: {
+    // BLENDV: Cond (MSB) ? LHS : RHS
+    SDValue Cond = Op.getOperand(0);
+    SDValue LHS = Op.getOperand(1);
+    SDValue RHS = Op.getOperand(2);
+
+    KnownBits CondKnown = DAG.computeKnownBits(Cond, DemandedElts, Depth + 1);
+    if (CondKnown.isNegative())
+      return LHS;
+    if (CondKnown.isNonNegative())
+      return RHS;
+    break;
+  }
   case X86ISD::ANDNP: {
     // ANDNP = (~LHS & RHS);
     SDValue LHS = Op.getOperand(0);
@@ -52131,12 +52144,11 @@ static SDValue combineSignExtendInReg(SDNode *N, SelectionDAG &DAG,
   return SDValue();
 }
 
-/// sext(add_nsw(x, C)) --> add_nsw(sext(x), C_sext)
-/// zext(add_nuw(x, C)) --> add_nuw(zext(x), C_zext)
-/// zext(addlike(x, C)) --> add(zext(x), C_zext)
-/// Promoting a sign/zero extension ahead of a no overflow 'add' or 'addlike'
-/// exposes opportunities to combine math ops, use an LEA, or use a complex
-/// addressing mode. This can eliminate extend, add, and shift instructions.
+/// sext(add_nsw(x, C)) --> add(sext(x), C_sext)
+/// zext(add_nuw(x, C)) --> add(zext(x), C_zext)
+/// Promoting a sign/zero extension ahead of a no overflow 'add' exposes
+/// opportunities to combine math ops, use an LEA, or use a complex addressing
+/// mode. This can eliminate extend, add, and shift instructions.
 static SDValue promoteExtBeforeAdd(SDNode *Ext, SelectionDAG &DAG,
                                    const X86Subtarget &Subtarget) {
   if (Ext->getOpcode() != ISD::SIGN_EXTEND &&
@@ -52148,19 +52160,17 @@ static SDValue promoteExtBeforeAdd(SDNode *Ext, SelectionDAG &DAG,
   if (VT != MVT::i64)
     return SDValue();
 
-  bool NSW = false, NUW = false;
-  bool Sext = Ext->getOpcode() == ISD::SIGN_EXTEND;
-
   SDValue Add = Ext->getOperand(0);
-  unsigned AddOpc = Add->getOpcode();
-  if (AddOpc == ISD::ADD) {
-    NSW = Add->getFlags().hasNoSignedWrap();
-    NUW = Add->getFlags().hasNoUnsignedWrap();
-    // We need an 'add nsw' feeding into the 'sext' or 'add nuw' feeding
-    // into the 'zext'
-    if ((Sext && !NSW) || (!Sext && !NUW))
-      return SDValue();
-  } else if (!(!Sext && DAG.isADDLike(Add)))
+  if (Add.getOpcode() != ISD::ADD)
+    return SDValue();
+
+  bool Sext = Ext->getOpcode() == ISD::SIGN_EXTEND;
+  bool NSW = Add->getFlags().hasNoSignedWrap();
+  bool NUW = Add->getFlags().hasNoUnsignedWrap();
+
+  // We need an 'add nsw' feeding into the 'sext' or 'add nuw' feeding
+  // into the 'zext'
+  if ((Sext && !NSW) || (!Sext && !NUW))
     return SDValue();
 
   // Having a constant operand to the 'add' ensures that we are not increasing
@@ -52196,7 +52206,7 @@ static SDValue promoteExtBeforeAdd(SDNode *Ext, SelectionDAG &DAG,
   SDNodeFlags Flags;
   Flags.setNoSignedWrap(NSW);
   Flags.setNoUnsignedWrap(NUW);
-  return DAG.getNode(AddOpc, SDLoc(Add), VT, NewExt, NewConstant, Flags);
+  return DAG.getNode(ISD::ADD, SDLoc(Add), VT, NewExt, NewConstant, Flags);
 }
 
 // If we face {ANY,SIGN,ZERO}_EXTEND that is applied to a CMOV with constant
