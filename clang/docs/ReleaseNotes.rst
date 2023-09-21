@@ -50,13 +50,15 @@ C++ Specific Potentially Breaking Changes
   account the possibility that functions could be overloaded on their template
   parameter lists or requires-clauses. This causes mangled names to change for
   function templates in the following cases:
-    - When the function has any constraints, whether from constrained template
+
+  - When the function has any constraints, whether from constrained template
       parameters or requires-clauses.
-    - When the template parameter list includes a deduced type -- either
+  - When the template parameter list includes a deduced type -- either
       ``auto``, ``decltype(auto)``, or a deduced class template specialization
       type.
-    - When a template template parameter is given a template template argument
+  - When a template template parameter is given a template template argument
       that has a different template parameter list.
+
   This fixes a number of issues where valid programs would be rejected due to
   mangling collisions, or would in some cases be silently miscompiled. Clang
   will use the old manglings if ``-fclang-abi-compat=17`` or lower is
@@ -242,6 +244,8 @@ Bug Fixes in This Version
   (`#65156 <https://github.com/llvm/llvm-project/issues/65156>`_)
 - Clang no longer considers the loss of ``__unaligned`` qualifier from objects as
   an invalid conversion during method function overload resolution.
+- Fix lack of comparison of declRefExpr in ASTStructuralEquivalence
+  (`#66047 <https://github.com/llvm/llvm-project/issues/66047>`_)
 - Fix parser crash when dealing with ill-formed objective C++ header code. Fixes
   (`#64836 <https://github.com/llvm/llvm-project/issues/64836>`_)
 - Clang now allows an ``_Atomic`` qualified integer in a switch statement. Fixes
@@ -330,6 +334,10 @@ Bug Fixes to C++ Support
 
 - Clang now no longer asserts when an UnresolvedLookupExpr is used as an
   expression requirement. (`#66612 https://github.com/llvm/llvm-project/issues/66612`)
+
+- Clang now disambiguates NTTP types when printing diagnostics where the
+  NTTP types are compared with the 'diff' method.
+  (`#66744 https://github.com/llvm/llvm-project/issues/66744`)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
