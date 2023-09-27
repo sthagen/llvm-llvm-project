@@ -206,6 +206,12 @@ Improvements to Clang's diagnostics
 - Clang no longer emits irrelevant notes about unsatisfied constraint expressions
   on the left-hand side of ``||`` when the right-hand side constraint is satisfied.
   (`#54678: <https://github.com/llvm/llvm-project/issues/54678>`_).
+- Clang now diagnoses wider cases of tautological use of consteval if or
+  ``std::is_constant_evaluated``. This also suppresses some false positives.
+  (`#43760: <https://github.com/llvm/llvm-project/issues/43760>`_)
+  (`#51567: <https://github.com/llvm/llvm-project/issues/51567>`_)
+- Clang now diagnoses narrowing implicit conversions on variable initializers in immediate
+  function context and on constexpr variable template initializers.
 
 Bug Fixes in This Version
 -------------------------
@@ -353,6 +359,10 @@ Bug Fixes to C++ Support
   NTTP types are compared with the 'diff' method.
   (`#66744 https://github.com/llvm/llvm-project/issues/66744`)
 
+- Fix crash caused by a spaceship operator returning a comparision category by
+  reference. Fixes:
+  (`#64162 <https://github.com/llvm/llvm-project/issues/64162>`_)
+
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 - Fixed an import failure of recursive friend class template.
@@ -497,6 +507,9 @@ Static Analyzer
 - Added a new checker ``core.BitwiseShift`` which reports situations where
   bitwise shift operators produce undefined behavior (because some operand is
   negative or too large).
+
+- Fix false positive in mutation check when using pointer to member function.
+  (`#66204: <https://github.com/llvm/llvm-project/issues/66204>`_).
 
 - The ``alpha.security.taint.TaintPropagation`` checker no longer propagates
   taint on ``strlen`` and ``strnlen`` calls, unless these are marked
