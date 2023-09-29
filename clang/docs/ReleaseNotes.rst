@@ -266,6 +266,9 @@ Bug Fixes in This Version
   (`#64836 <https://github.com/llvm/llvm-project/issues/64836>`_)
 - Clang now allows an ``_Atomic`` qualified integer in a switch statement. Fixes
   (`#65557 <https://github.com/llvm/llvm-project/issues/65557>`_)
+- Fixes crash when trying to obtain the common sugared type of
+  `decltype(instantiation-dependent-expr)`.
+  Fixes (`#67603 <https://github.com/llvm/llvm-project/issues/67603>`_)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -362,6 +365,10 @@ Bug Fixes to C++ Support
 - Clang no longer tries to capture non-odr-used variables that appear
   in the enclosing expression of a lambda expression with a noexcept specifier.
   (`#67492 <https://github.com/llvm/llvm-project/issues/67492>`_)
+
+- Fix crash when fold expression was used in the initialization of default
+  argument. Fixes:
+  (`#67395 <https://github.com/llvm/llvm-project/issues/67395>`_)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^

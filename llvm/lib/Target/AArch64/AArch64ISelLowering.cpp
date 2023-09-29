@@ -10052,18 +10052,22 @@ static PredicateConstraint parsePredicateConstraint(StringRef Constraint) {
 
 static const TargetRegisterClass *
 getPredicateRegisterClass(PredicateConstraint Constraint, EVT VT) {
-  if (!VT.isScalableVector() || VT.getVectorElementType() != MVT::i1)
+  if (VT != MVT::aarch64svcount &&
+      (!VT.isScalableVector() || VT.getVectorElementType() != MVT::i1))
     return nullptr;
 
   switch (Constraint) {
   default:
     return nullptr;
   case PredicateConstraint::Uph:
-    return &AArch64::PPR_p8to15RegClass;
+    return VT == MVT::aarch64svcount ? &AArch64::PNR_p8to15RegClass
+                                     : &AArch64::PPR_p8to15RegClass;
   case PredicateConstraint::Upl:
-    return &AArch64::PPR_3bRegClass;
+    return VT == MVT::aarch64svcount ? &AArch64::PNR_3bRegClass
+                                     : &AArch64::PPR_3bRegClass;
   case PredicateConstraint::Upa:
-    return &AArch64::PPRRegClass;
+    return VT == MVT::aarch64svcount ? &AArch64::PNRRegClass
+                                     : &AArch64::PPRRegClass;
   }
 }
 
@@ -11802,7 +11806,7 @@ SDValue AArch64TargetLowering::LowerVECTOR_SHUFFLE(SDValue Op,
 
   if (((VT.getVectorNumElements() == 8 && VT.getScalarSizeInBits() == 16) ||
        (VT.getVectorNumElements() == 16 && VT.getScalarSizeInBits() == 8)) &&
-      ShuffleVectorInst::isReverseMask(ShuffleMask, ShuffleMask.size())) {
+      ShuffleVectorInst::isReverseMask(ShuffleMask)) {
     SDValue Rev = DAG.getNode(AArch64ISD::REV64, dl, VT, V1);
     return DAG.getNode(AArch64ISD::EXT, dl, VT, Rev, Rev,
                        DAG.getConstant(8, dl, MVT::i32));
@@ -19390,17 +19394,6 @@ static SDValue performIntrinsicCombine(SDNode *N,
   case Intrinsic::aarch64_neon_sshl:
   case Intrinsic::aarch64_neon_ushl:
     return tryCombineShiftImm(IID, N, DAG);
-  case Intrinsic::aarch64_neon_rshrn: {
-    EVT VT = N->getOperand(1).getValueType();
-    SDLoc DL(N);
-    SDValue Imm =
-        DAG.getConstant(1LLU << (N->getConstantOperandVal(2) - 1), DL, VT);
-    SDValue Add = DAG.getNode(ISD::ADD, DL, VT, N->getOperand(1), Imm);
-    SDValue Sht =
-        DAG.getNode(ISD::SRL, DL, VT, Add,
-                    DAG.getConstant(N->getConstantOperandVal(2), DL, VT));
-    return DAG.getNode(ISD::TRUNCATE, DL, N->getValueType(0), Sht);
-  }
   case Intrinsic::aarch64_neon_sabd:
     return DAG.getNode(ISD::ABDS, SDLoc(N), N->getValueType(0),
                        N->getOperand(1), N->getOperand(2));
@@ -25946,8 +25939,7 @@ SDValue AArch64TargetLowering::LowerFixedLengthVECTOR_SHUFFLEToSVE(
   unsigned MinSVESize = Subtarget->getMinSVEVectorSizeInBits();
   unsigned MaxSVESize = Subtarget->getMaxSVEVectorSizeInBits();
   if (MinSVESize == MaxSVESize && MaxSVESize == VT.getSizeInBits()) {
-    if (ShuffleVectorInst::isReverseMask(ShuffleMask, ShuffleMask.size()) &&
-        Op2.isUndef()) {
+    if (ShuffleVectorInst::isReverseMask(ShuffleMask) && Op2.isUndef()) {
       Op = DAG.getNode(ISD::VECTOR_REVERSE, DL, ContainerVT, Op1);
       return convertFromScalableVector(DAG, VT, Op);
     }
