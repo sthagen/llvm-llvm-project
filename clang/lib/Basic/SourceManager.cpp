@@ -681,14 +681,14 @@ SourceManager::createExpansionLocImpl(const ExpansionInfo &Info,
 }
 
 std::optional<llvm::MemoryBufferRef>
-SourceManager::getMemoryBufferForFileOrNone(const FileEntry *File) {
-  SrcMgr::ContentCache &IR = getOrCreateContentCache(File->getLastRef());
+SourceManager::getMemoryBufferForFileOrNone(FileEntryRef File) {
+  SrcMgr::ContentCache &IR = getOrCreateContentCache(File);
   return IR.getBufferOrNone(Diag, getFileManager(), SourceLocation());
 }
 
 void SourceManager::overrideFileContents(
-    const FileEntry *SourceFile, std::unique_ptr<llvm::MemoryBuffer> Buffer) {
-  SrcMgr::ContentCache &IR = getOrCreateContentCache(SourceFile->getLastRef());
+    FileEntryRef SourceFile, std::unique_ptr<llvm::MemoryBuffer> Buffer) {
+  SrcMgr::ContentCache &IR = getOrCreateContentCache(SourceFile);
 
   IR.setBuffer(std::move(Buffer));
   IR.BufferOverridden = true;
@@ -2343,11 +2343,11 @@ SourceManager::MemoryBufferSizes SourceManager::getMemoryBufferSizes() const {
 }
 
 size_t SourceManager::getDataStructureSizes() const {
-  size_t size = llvm::capacity_in_bytes(MemBufferInfos)
-    + llvm::capacity_in_bytes(LocalSLocEntryTable)
-    + llvm::capacity_in_bytes(LoadedSLocEntryTable)
-    + llvm::capacity_in_bytes(SLocEntryLoaded)
-    + llvm::capacity_in_bytes(FileInfos);
+  size_t size = llvm::capacity_in_bytes(MemBufferInfos) +
+                llvm::capacity_in_bytes(LocalSLocEntryTable) +
+                llvm::capacity_in_bytes(LoadedSLocEntryTable) +
+                llvm::capacity_in_bytes(SLocEntryLoaded) +
+                llvm::capacity_in_bytes(FileInfos);
 
   if (OverriddenFilesInfo)
     size += llvm::capacity_in_bytes(OverriddenFilesInfo->OverriddenFiles);
