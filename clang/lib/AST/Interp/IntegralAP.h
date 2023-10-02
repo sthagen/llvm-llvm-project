@@ -39,7 +39,9 @@ public:
   using AsUnsigned = IntegralAP<false>;
 
   template <typename T>
-  IntegralAP(T Value) : V(APInt(sizeof(T) * 8, Value, std::is_signed_v<T>)) {}
+  IntegralAP(T Value)
+      : V(APInt(sizeof(T) * 8, static_cast<uint64_t>(Value),
+                std::is_signed_v<T>)) {}
 
   IntegralAP(APInt V) : V(V) {}
   IntegralAP(APSInt V) : V(V) {}
@@ -64,7 +66,7 @@ public:
 
   template <typename T> static IntegralAP from(T Value, unsigned NumBits = 0) {
     assert(NumBits > 0);
-    APSInt Copy = APSInt(APInt(NumBits, Value, Signed), !Signed);
+    APSInt Copy = APSInt(APInt(NumBits, static_cast<int64_t>(Value), Signed), !Signed);
 
     return IntegralAP<Signed>(Copy);
   }
@@ -208,7 +210,6 @@ public:
   }
 
   static bool comp(IntegralAP A, IntegralAP *R) {
-    assert(false);
     *R = IntegralAP(~A.V);
     return false;
   }

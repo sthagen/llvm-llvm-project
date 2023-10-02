@@ -27,7 +27,7 @@ static_assert(number != 10, ""); // expected-error{{failed}} \
                                  // ref-note{{evaluates to}}
 
 
-#ifdef __SIZEOF__INT128__
+#ifdef __SIZEOF_INT128__
 namespace i128 {
   typedef __int128 int128_t;
   typedef unsigned __int128 uint128_t;
@@ -51,6 +51,9 @@ namespace i128 {
                                          // ref-note {{outside the range}}
   constexpr int128_t Two = (int128_t)1 << 1ul;
   static_assert(Two == 2, "");
+
+  constexpr uint128_t AllOnes = ~static_cast<uint128_t>(0);
+  static_assert(AllOnes == static_cast<uint128_t>(-1), "");
 
 #if __cplusplus >= 201402L
   template <typename T>
