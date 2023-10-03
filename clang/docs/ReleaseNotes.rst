@@ -213,6 +213,9 @@ Improvements to Clang's diagnostics
   (`#54678: <https://github.com/llvm/llvm-project/issues/54678>`_).
 - Clang now prints its 'note' diagnostic in cyan instead of black, to be more compatible
   with terminals with dark background colors. This is also more consistent with GCC.
+- The fix-it emitted by ``-Wformat`` for scoped enumerations now take the
+  enumeration's underlying type into account instead of suggesting a type just
+  based on the format string specifier being used.
 
 Bug Fixes in This Version
 -------------------------
@@ -407,6 +410,8 @@ Miscellaneous Clang Crashes Fixed
   `Issue 64065 <https://github.com/llvm/llvm-project/issues/64065>`_
 - Fixed a crash when check array access on zero-length element.
   `Issue 64564 <https://github.com/llvm/llvm-project/issues/64564>`_
+- Fixed a crash when an ObjC ivar has an invalid type. See
+  (`#68001 <https://github.com/llvm/llvm-project/pull/68001>`_)
 
 Target Specific Changes
 -----------------------
