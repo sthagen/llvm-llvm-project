@@ -216,6 +216,47 @@ Improvements to Clang's diagnostics
 - The fix-it emitted by ``-Wformat`` for scoped enumerations now take the
   enumeration's underlying type into account instead of suggesting a type just
   based on the format string specifier being used.
+- Clang now displays an improved diagnostic and a note when a defaulted special
+  member is marked ``constexpr`` in a class with a virtual base class
+  (`#64843: <https://github.com/llvm/llvm-project/issues/64843>`_).
+- ``-Wfixed-enum-extension`` and ``-Wmicrosoft-fixed-enum`` diagnostics are no longer
+  emitted when building as C23, since C23 standardizes support for enums with a
+  fixed underlying type.
+- When describing the failure of static assertion of `==` expression, clang prints the integer
+  representation of the value as well as its character representation when
+  the user-provided expression is of character type. If the character is
+  non-printable, clang now shows the escpaed character.
+  Clang also prints multi-byte characters if the user-provided expression
+  is of multi-byte character type.
+
+  *Example Code*:
+
+  .. code-block:: c++
+
+     static_assert("A\n"[1] == U'🌍');
+
+  *BEFORE*:
+
+  .. code-block:: text
+
+    source:1:15: error: static assertion failed due to requirement '"A\n"[1] == U'\U0001f30d''
+    1 | static_assert("A\n"[1] == U'🌍');
+      |               ^~~~~~~~~~~~~~~~~
+    source:1:24: note: expression evaluates to ''
+    ' == 127757'
+    1 | static_assert("A\n"[1] == U'🌍');
+      |               ~~~~~~~~~^~~~~~~~
+
+  *AFTER*:
+
+  .. code-block:: text
+
+    source:1:15: error: static assertion failed due to requirement '"A\n"[1] == U'\U0001f30d''
+    1 | static_assert("A\n"[1] == U'🌍');
+      |               ^~~~~~~~~~~~~~~~~
+    source:1:24: note: expression evaluates to ''\n' (0x0A, 10) == U'🌍' (0x1F30D, 127757)'
+    1 | static_assert("A\n"[1] == U'🌍');
+      |               ~~~~~~~~~^~~~~~~~
 
 Bug Fixes in This Version
 -------------------------
@@ -282,6 +323,10 @@ Bug Fixes in This Version
   Fixes (`#67603 <https://github.com/llvm/llvm-project/issues/67603>`_)
 - Fixes a crash caused by a multidimensional array being captured by a lambda
   (`#67722 <https://github.com/llvm/llvm-project/issues/67722>`_).
+- Fixes a crash when instantiating a lambda with requires clause.
+  (`#64462 <https://github.com/llvm/llvm-project/issues/64462>`_)
+- Fixes a regression where the ``UserDefinedLiteral`` was not properly preserved
+  while evaluating consteval functions. (`#63898 <https://github.com/llvm/llvm-project/issues/63898>`_).
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -549,11 +594,11 @@ Static Analyzer
 
 - A few crashes have been found and fixed using randomized testing related
   to the use of ``_BitInt()`` in tidy checks and in clang analysis. See
- `#67212 <https://github.com/llvm/llvm-project/pull/67212>`_,
- `#66782 <https://github.com/llvm/llvm-project/pull/66782>`_,
- `#65889 <https://github.com/llvm/llvm-project/pull/65889>`_,
- `#65888 <https://github.com/llvm/llvm-project/pull/65888>`_, and
- `#65887 <https://github.com/llvm/llvm-project/pull/65887>`_
+  `#67212 <https://github.com/llvm/llvm-project/pull/67212>`_,
+  `#66782 <https://github.com/llvm/llvm-project/pull/66782>`_,
+  `#65889 <https://github.com/llvm/llvm-project/pull/65889>`_,
+  `#65888 <https://github.com/llvm/llvm-project/pull/65888>`_, and
+  `#65887 <https://github.com/llvm/llvm-project/pull/65887>`_
 
 .. _release-notes-sanitizers:
 
