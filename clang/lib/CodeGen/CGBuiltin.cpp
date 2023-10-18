@@ -9853,6 +9853,41 @@ Value *CodeGenFunction::EmitSVETupleCreate(const SVETypeFlags &TypeFlags,
   return Call;
 }
 
+Value *CodeGenFunction::FormSVEBuiltinResult(Value *Call) {
+  // Multi-vector results should be broken up into a single (wide) result
+  // vector.
+  auto *StructTy = dyn_cast<StructType>(Call->getType());
+  if (!StructTy)
+    return Call;
+
+  auto *VTy = dyn_cast<ScalableVectorType>(StructTy->getTypeAtIndex(0U));
+  if (!VTy)
+    return Call;
+  unsigned N = StructTy->getNumElements();
+
+  // We may need to emit a cast to a svbool_t
+  bool IsPredTy = VTy->getElementType()->isIntegerTy(1);
+  unsigned MinElts = IsPredTy ? 16 : VTy->getMinNumElements();
+
+  ScalableVectorType *WideVTy =
+      ScalableVectorType::get(VTy->getElementType(), MinElts * N);
+  Value *Ret = llvm::PoisonValue::get(WideVTy);
+  for (unsigned I = 0; I < N; ++I) {
+    Value *SRet = Builder.CreateExtractValue(Call, I);
+    assert(SRet->getType() == VTy && "Unexpected type for result value");
+    Value *Idx = ConstantInt::get(CGM.Int64Ty, I * MinElts);
+
+    if (IsPredTy)
+      SRet = EmitSVEPredicateCast(
+          SRet, ScalableVectorType::get(Builder.getInt1Ty(), 16));
+
+    Ret = Builder.CreateInsertVector(WideVTy, Ret, SRet, Idx);
+  }
+  Call = Ret;
+
+  return Call;
+}
+
 Value *CodeGenFunction::EmitAArch64SVEBuiltinExpr(unsigned BuiltinID,
                                                   const CallExpr *E) {
   // Find out if any arguments are required to be integer constant expressions.
@@ -9966,13 +10001,39 @@ Value *CodeGenFunction::EmitAArch64SVEBuiltinExpr(unsigned BuiltinID,
       if (PredTy->getScalarType()->isIntegerTy(1))
         Call = EmitSVEPredicateCast(Call, cast<llvm::ScalableVectorType>(Ty));
 
-    return Call;
+    return FormSVEBuiltinResult(Call);
   }
 
   switch (BuiltinID) {
   default:
     return nullptr;
+  case SVE::BI__builtin_sve_svpsel_lane_b8:
+  case SVE::BI__builtin_sve_svpsel_lane_b16:
+  case SVE::BI__builtin_sve_svpsel_lane_b32:
+  case SVE::BI__builtin_sve_svpsel_lane_b64:
+  case SVE::BI__builtin_sve_svpsel_lane_c8:
+  case SVE::BI__builtin_sve_svpsel_lane_c16:
+  case SVE::BI__builtin_sve_svpsel_lane_c32:
+  case SVE::BI__builtin_sve_svpsel_lane_c64: {
+    bool IsSVCount = isa<TargetExtType>(Ops[0]->getType());
+    assert(((!IsSVCount || cast<TargetExtType>(Ops[0]->getType())->getName() ==
+                               "aarch64.svcount")) &&
+           "Unexpected TargetExtType");
+    auto SVCountTy =
+        llvm::TargetExtType::get(getLLVMContext(), "aarch64.svcount");
+    Function *CastFromSVCountF =
+        CGM.getIntrinsic(Intrinsic::aarch64_sve_convert_to_svbool, SVCountTy);
+    Function *CastToSVCountF =
+        CGM.getIntrinsic(Intrinsic::aarch64_sve_convert_from_svbool, SVCountTy);
 
+    auto OverloadedTy = getSVEType(SVETypeFlags(Builtin->TypeModifier));
+    Function *F = CGM.getIntrinsic(Intrinsic::aarch64_sve_psel, OverloadedTy);
+    llvm::Value *Ops0 =
+        IsSVCount ? Builder.CreateCall(CastFromSVCountF, Ops[0]) : Ops[0];
+    llvm::Value *Ops1 = EmitSVEPredicateCast(Ops[1], OverloadedTy);
+    llvm::Value *PSel = Builder.CreateCall(F, {Ops0, Ops1, Ops[2]});
+    return IsSVCount ? Builder.CreateCall(CastToSVCountF, PSel) : PSel;
+  }
   case SVE::BI__builtin_sve_svmov_b_z: {
     // svmov_b_z(pg, op) <=> svand_b_z(pg, op, op)
     SVETypeFlags TypeFlags(Builtin->TypeModifier);
