@@ -557,10 +557,6 @@ public:
     return false;
   }
 
-  virtual bool isEHLabel(const MCInst &Inst) const {
-    return Inst.getOpcode() == TargetOpcode::EH_LABEL;
-  }
-
   virtual bool isPop(const MCInst &Inst) const { return false; }
 
   /// Return true if the instruction is used to terminate an indirect branch.
@@ -1181,7 +1177,7 @@ public:
 
   /// Set the label of \p Inst. This label will be emitted right before \p Inst
   /// is emitted to MCStreamer.
-  bool setLabel(MCInst &Inst, MCSymbol *Label, AllocatorIdTy AllocatorId = 0);
+  bool setLabel(MCInst &Inst, MCSymbol *Label) const;
 
   /// Return MCSymbol that represents a target of this instruction at a given
   /// operand number \p OpNum. If there's no symbol associated with
@@ -1736,15 +1732,6 @@ public:
     return false;
   }
 
-  virtual bool createEHLabel(MCInst &Inst, const MCSymbol *Label,
-                             MCContext *Ctx) const {
-    Inst.setOpcode(TargetOpcode::EH_LABEL);
-    Inst.clear();
-    Inst.addOperand(MCOperand::createExpr(
-        MCSymbolRefExpr::create(Label, MCSymbolRefExpr::VK_None, *Ctx)));
-    return true;
-  }
-
   /// Extract a symbol and an addend out of the fixup value expression.
   ///
   /// Only the following limited expression types are supported:
@@ -1816,6 +1803,8 @@ public:
   const ValueType &addAnnotation(MCInst &Inst, unsigned Index,
                                  const ValueType &Val,
                                  AllocatorIdTy AllocatorId = 0) {
+    assert(Index >= MCPlus::MCAnnotation::kGeneric &&
+           "Generic annotation type expected.");
     assert(!hasAnnotation(Inst, Index));
     AnnotationAllocator &Allocator = getAnnotationAllocator(AllocatorId);
     auto *A = new (Allocator.ValueAllocator)
