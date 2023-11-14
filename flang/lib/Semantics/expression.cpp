@@ -403,19 +403,28 @@ void ExpressionAnalyzer::CheckConstantSubscripts(ArrayRef &ref) {
     }
     for (int j{0}; j < vals; ++j) {
       if (val[j]) {
+        std::optional<parser::MessageFixedText> msg;
+        std::optional<ConstantSubscript> bound;
         if (dimLB && *val[j] < *dimLB) {
-          AttachDeclaration(
-              Say("Subscript %jd is less than lower bound %jd for dimension %d of array"_err_en_US,
-                  static_cast<std::intmax_t>(*val[j]),
-                  static_cast<std::intmax_t>(*dimLB), dim + 1),
-              ref.base().GetLastSymbol());
+          msg =
+              "Subscript %jd is less than lower bound %jd for dimension %d of array"_err_en_US;
+          bound = *dimLB;
+        } else if (dimUB && *val[j] > *dimUB) {
+          msg =
+              "Subscript %jd is greater than upper bound %jd for dimension %d of array"_err_en_US;
+          bound = *dimUB;
+          if (dim + 1 == arraySymbol.Rank() && IsDummy(arraySymbol) &&
+              *bound == 1) {
+            // Old-school overindexing of a dummy array isn't fatal when
+            // it's on the last dimension and the extent is 1.
+            msg->set_severity(parser::Severity::Warning);
+          }
         }
-        if (dimUB && *val[j] > *dimUB) {
+        if (msg) {
           AttachDeclaration(
-              Say("Subscript %jd is greater than upper bound %jd for dimension %d of array"_err_en_US,
-                  static_cast<std::intmax_t>(*val[j]),
-                  static_cast<std::intmax_t>(*dimUB), dim + 1),
-              ref.base().GetLastSymbol());
+              Say(std::move(*msg), static_cast<std::intmax_t>(*val[j]),
+                  static_cast<std::intmax_t>(bound.value()), dim + 1),
+              arraySymbol);
         }
       }
     }
@@ -1059,13 +1068,35 @@ MaybeExpr ExpressionAnalyzer::Analyze(const parser::Substring &ss) {
           const parser::SubstringRange &range{
               std::get<parser::SubstringRange>(ss.t)};
           std::optional<Expr<SubscriptInteger>> first{
-              GetSubstringBound(std::get<0>(range.t))};
+              Fold(GetSubstringBound(std::get<0>(range.t)))};
           std::optional<Expr<SubscriptInteger>> last{
-              GetSubstringBound(std::get<1>(range.t))};
+              Fold(GetSubstringBound(std::get<1>(range.t)))};
           const Symbol &symbol{checked->GetLastSymbol()};
           if (std::optional<DynamicType> dynamicType{
                   DynamicType::From(symbol)}) {
             if (dynamicType->category() == TypeCategory::Character) {
+              auto lbValue{ToInt64(first)};
+              if (!lbValue) {
+                lbValue = 1;
+              }
+              auto ubValue{ToInt64(last)};
+              auto len{dynamicType->knownLength()};
+              if (!ubValue) {
+                ubValue = len;
+              }
+              if (lbValue && ubValue && *lbValue > *ubValue) {
+                // valid, substring is empty
+              } else if (lbValue && *lbValue < 1 && (ubValue || !last)) {
+                Say("Substring must begin at 1 or later, not %jd"_err_en_US,
+                    static_cast<std::intmax_t>(*lbValue));
+                return std::nullopt;
+              } else if (ubValue && len && *ubValue > *len &&
+                  (lbValue || !first)) {
+                Say("Substring must end at %zd or earlier, not %jd"_err_en_US,
+                    static_cast<std::intmax_t>(*len),
+                    static_cast<std::intmax_t>(*ubValue));
+                return std::nullopt;
+              }
               return WrapperHelper<TypeCategory::Character, Designator,
                   Substring>(dynamicType->kind(),
                   Substring{std::move(checked.value()), std::move(first),
