@@ -10221,7 +10221,7 @@ public:
                                       });
                                     })) &&
                "Expected first part or all previous parts masked.");
-        copy(SubMask, VecMask.begin());
+        copy(SubMask, std::next(VecMask.begin(), Part * SliceSize));
       } else {
         unsigned VF = cast<FixedVectorType>(Vec->getType())->getNumElements();
         if (Vec->getType() != SubVec->getType()) {
@@ -10569,8 +10569,12 @@ ResTy BoUpSLP::processBuildVector(const TreeEntry *E, Args &...Params) {
         });
     if (It == VectorizableTree.end())
       return false;
-    if (Mask.size() <= InputVF &&
-        ShuffleVectorInst::isIdentityMask(Mask, Mask.size())) {
+    int Idx;
+    if ((Mask.size() < InputVF &&
+         ShuffleVectorInst::isExtractSubvectorMask(Mask, InputVF, Idx) &&
+         Idx == 0) ||
+        (Mask.size() == InputVF &&
+         ShuffleVectorInst::isIdentityMask(Mask, Mask.size()))) {
       std::iota(Mask.begin(), Mask.end(), 0);
     } else {
       unsigned I =
