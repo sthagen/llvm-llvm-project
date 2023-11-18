@@ -26,12 +26,30 @@ namespace {
 OpenACCDirectiveKind GetOpenACCDirectiveKind(StringRef Name) {
   return llvm::StringSwitch<OpenACCDirectiveKind>(Name)
       .Case("parallel", OpenACCDirectiveKind::Parallel)
+      .Case("serial", OpenACCDirectiveKind::Serial)
+      .Case("kernels", OpenACCDirectiveKind::Kernels)
+      .Case("data", OpenACCDirectiveKind::Data)
+      .Case("host_data", OpenACCDirectiveKind::HostData)
+      .Case("loop", OpenACCDirectiveKind::Loop)
+      .Case("declare", OpenACCDirectiveKind::Declare)
+      .Case("init", OpenACCDirectiveKind::Init)
+      .Case("shutdown", OpenACCDirectiveKind::Shutdown)
+      .Case("set", OpenACCDirectiveKind::Shutdown)
+      .Case("update", OpenACCDirectiveKind::Update)
       .Default(OpenACCDirectiveKind::Invalid);
 }
 
 // Parse and consume the tokens for OpenACC Directive/Construct kinds.
 OpenACCDirectiveKind ParseOpenACCDirectiveKind(Parser &P) {
   Token FirstTok = P.getCurToken();
+
+  // Just #pragma acc can get us immediately to the end, make sure we don't
+  // introspect on the spelling before then.
+  if (FirstTok.isAnnotation()) {
+    P.Diag(FirstTok, diag::err_acc_missing_directive);
+    return OpenACCDirectiveKind::Invalid;
+  }
+
   P.ConsumeToken();
   std::string FirstTokSpelling = P.getPreprocessor().getSpelling(FirstTok);
 
