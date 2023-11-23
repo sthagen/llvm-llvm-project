@@ -1423,6 +1423,7 @@ static void emitDefineCFAWithFP(MachineFunction &MF, MachineBasicBlock &MBB,
       .setMIFlags(MachineInstr::FrameSetup);
 }
 
+#ifndef NDEBUG
 /// Collect live registers from the end of \p MI's parent up to (including) \p
 /// MI in \p LiveRegs.
 static void getLivePhysRegsUpTo(MachineInstr &MI, const TargetRegisterInfo &TRI,
@@ -1434,6 +1435,7 @@ static void getLivePhysRegsUpTo(MachineInstr &MI, const TargetRegisterInfo &TRI,
        reverse(make_range(MI.getIterator(), MBB.instr_end())))
     LiveRegs.stepBackward(MI);
 }
+#endif
 
 void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
                                         MachineBasicBlock &MBB) const {
@@ -1443,7 +1445,6 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
   const AArch64Subtarget &Subtarget = MF.getSubtarget<AArch64Subtarget>();
   const AArch64RegisterInfo *RegInfo = Subtarget.getRegisterInfo();
   const TargetInstrInfo *TII = Subtarget.getInstrInfo();
-  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   MachineModuleInfo &MMI = MF.getMMI();
   AArch64FunctionInfo *AFI = MF.getInfo<AArch64FunctionInfo>();
@@ -1456,6 +1457,7 @@ void AArch64FrameLowering::emitPrologue(MachineFunction &MF,
 
   MachineBasicBlock::iterator End = MBB.end();
 #ifndef NDEBUG
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
   // Collect live register from the end of MBB up to the start of the existing
   // frame setup instructions.
   MachineBasicBlock::iterator NonFrameStart = MBB.begin();
