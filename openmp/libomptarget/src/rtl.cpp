@@ -195,8 +195,6 @@ bool RTLsTy::attemptLoadRTL(const std::string &RTLName, RTLInfoTy &RTL) {
   // Optional functions
   *((void **)&RTL.is_valid_binary_info) =
       DynLibrary->getAddressOfSymbol("__tgt_rtl_is_valid_binary_info");
-  *((void **)&RTL.deinit_device) =
-      DynLibrary->getAddressOfSymbol("__tgt_rtl_deinit_device");
   *((void **)&RTL.init_requires) =
       DynLibrary->getAddressOfSymbol("__tgt_rtl_init_requires");
   *((void **)&RTL.data_submit_async) =
@@ -405,33 +403,30 @@ void RTLsTy::registerRequires(int64_t Flags) {
 
 void RTLsTy::initRTLonce(RTLInfoTy &R) {
   // If this RTL is not already in use, initialize it.
-  if (!R.IsUsed && R.NumberOfDevices != 0) {
-    // Initialize the device information for the RTL we are about to use.
-    const size_t Start = PM->Devices.size();
-    PM->Devices.reserve(Start + R.NumberOfDevices);
-    for (int32_t DeviceId = 0; DeviceId < R.NumberOfDevices; DeviceId++) {
-      PM->Devices.push_back(std::make_unique<DeviceTy>(&R));
-      // global device ID
-      PM->Devices[Start + DeviceId]->DeviceID = Start + DeviceId;
-      // RTL local device ID
-      PM->Devices[Start + DeviceId]->RTLDeviceID = DeviceId;
-    }
+  if (R.IsUsed || !R.NumberOfDevices)
+    return;
 
-    // Initialize the index of this RTL and save it in the used RTLs.
-    R.Idx = (UsedRTLs.empty())
-                ? 0
-                : UsedRTLs.back()->Idx + UsedRTLs.back()->NumberOfDevices;
-    assert((size_t)R.Idx == Start &&
-           "RTL index should equal the number of devices used so far.");
-    R.IsUsed = true;
-    UsedRTLs.push_back(&R);
-
-    // If possible, set the device identifier offset
-    if (R.set_device_offset)
-      R.set_device_offset(Start);
-
-    DP("RTL " DPxMOD " has index %d!\n", DPxPTR(R.LibraryHandler.get()), R.Idx);
+  // Initialize the device information for the RTL we are about to use.
+  const size_t Start = PM->Devices.size();
+  PM->Devices.reserve(Start + R.NumberOfDevices);
+  for (int32_t DeviceId = 0; DeviceId < R.NumberOfDevices; DeviceId++) {
+    PM->Devices.push_back(std::make_unique<DeviceTy>(&R));
+    // global device ID
+    PM->Devices[Start + DeviceId]->DeviceID = Start + DeviceId;
+    // RTL local device ID
+    PM->Devices[Start + DeviceId]->RTLDeviceID = DeviceId;
   }
+
+  // Initialize the index of this RTL and save it in the used RTLs.
+  R.Idx = Start;
+  R.IsUsed = true;
+  UsedRTLs.push_back(&R);
+
+  // If possible, set the device identifier offset
+  if (R.set_device_offset)
+    R.set_device_offset(Start);
+
+  DP("RTL " DPxMOD " has index %d!\n", DPxPTR(R.LibraryHandler.get()), R.Idx);
 }
 
 void RTLsTy::initAllRTLs() {
