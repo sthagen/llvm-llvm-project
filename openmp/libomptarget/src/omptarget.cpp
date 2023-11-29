@@ -12,11 +12,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "omptarget.h"
-#include "OmptCallback.h"
-#include "OmptInterface.h"
+#include "OpenMP/OMPT/Callback.h"
+#include "OpenMP/OMPT/Interface.h"
 #include "device.h"
 #include "private.h"
 #include "rtl.h"
+
+#include "Shared/Profile.h"
+
+#include "OpenMP/omp.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/bit.h"

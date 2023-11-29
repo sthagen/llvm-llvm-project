@@ -542,7 +542,7 @@ static bool memOpsHaveSameBasePtr(const MachineInstr &MI1,
 
 bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
                                       ArrayRef<const MachineOperand *> BaseOps2,
-                                      unsigned NumLoads,
+                                      unsigned ClusterSize,
                                       unsigned NumBytes) const {
   // If the mem ops (to be clustered) do not have the same base ptr, then they
   // should not be clustered
@@ -568,8 +568,8 @@ bool SIInstrInfo::shouldClusterMemOps(ArrayRef<const MachineOperand *> BaseOps1,
   // (3) 9 <= LoadSize <= 12: cluster at max 2 mem ops
   // (4) 13 <= LoadSize <= 16: cluster at max 2 mem ops
   // (5) LoadSize >= 17: do not cluster
-  const unsigned LoadSize = NumBytes / NumLoads;
-  const unsigned NumDWORDs = ((LoadSize + 3) / 4) * NumLoads;
+  const unsigned LoadSize = NumBytes / ClusterSize;
+  const unsigned NumDWORDs = ((LoadSize + 3) / 4) * ClusterSize;
   return NumDWORDs <= 8;
 }
 
@@ -4144,12 +4144,15 @@ bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
   case AMDGPU::OPERAND_REG_IMM_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_C_V2INT16:
   case AMDGPU::OPERAND_REG_INLINE_AC_V2INT16:
-    // This suffers the same problem as the scalar 16-bit cases.
-    return AMDGPU::isInlinableIntLiteralV216(Imm);
+    return (isInt<16>(Imm) || isUInt<16>(Imm)) &&
+           AMDGPU::isInlinableIntLiteral((int16_t)Imm);
   case AMDGPU::OPERAND_REG_IMM_FP16:
   case AMDGPU::OPERAND_REG_IMM_FP16_DEFERRED:
   case AMDGPU::OPERAND_REG_INLINE_C_FP16:
-  case AMDGPU::OPERAND_REG_INLINE_AC_FP16: {
+  case AMDGPU::OPERAND_REG_INLINE_AC_FP16:
+  case AMDGPU::OPERAND_REG_IMM_V2FP16:
+  case AMDGPU::OPERAND_REG_INLINE_C_V2FP16:
+  case AMDGPU::OPERAND_REG_INLINE_AC_V2FP16: {
     if (isInt<16>(Imm) || isUInt<16>(Imm)) {
       // A few special case instructions have 16-bit operands on subtargets
       // where 16-bit instructions are not legal.
@@ -4161,12 +4164,6 @@ bool SIInstrInfo::isInlineConstant(const MachineOperand &MO,
     }
 
     return false;
-  }
-  case AMDGPU::OPERAND_REG_IMM_V2FP16:
-  case AMDGPU::OPERAND_REG_INLINE_C_V2FP16:
-  case AMDGPU::OPERAND_REG_INLINE_AC_V2FP16: {
-    uint32_t Trunc = static_cast<uint32_t>(Imm);
-    return AMDGPU::isInlinableLiteralV216(Trunc, ST.hasInv2PiInlineImm());
   }
   case AMDGPU::OPERAND_KIMM32:
   case AMDGPU::OPERAND_KIMM16:

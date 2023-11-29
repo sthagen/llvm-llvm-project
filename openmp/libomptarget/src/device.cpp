@@ -11,13 +11,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "device.h"
-#include "OmptCallback.h"
-#include "OmptInterface.h"
+#include "OpenMP/OMPT/Callback.h"
+#include "OpenMP/OMPT/Interface.h"
 #include "omptarget.h"
 #include "private.h"
 #include "rtl.h"
 
-#include "Utilities.h"
+#include "Shared/Utils.h"
 
 #include <cassert>
 #include <climits>
