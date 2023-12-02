@@ -57,11 +57,10 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
 
   getActionDefinitionsBuilder({G_SADDO, G_SSUBO}).minScalar(0, sXLen).lower();
 
-  getActionDefinitionsBuilder({G_ASHR, G_LSHR, G_SHL})
-      .customIf([=, &ST](const LegalityQuery &Query) {
-        return ST.is64Bit() && typeIs(0, s32)(Query) && typeIs(1, s32)(Query);
-      })
-      .legalFor({{s32, s32}, {s32, sXLen}, {sXLen, sXLen}})
+  auto &ShiftActions = getActionDefinitionsBuilder({G_ASHR, G_LSHR, G_SHL});
+  if (ST.is64Bit())
+    ShiftActions.customFor({{s32, s32}});
+  ShiftActions.legalFor({{s32, s32}, {s32, sXLen}, {sXLen, sXLen}})
       .widenScalarToNextPow2(0)
       .clampScalar(1, s32, sXLen)
       .clampScalar(0, s32, sXLen)
@@ -196,7 +195,8 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
       .widenScalarToNextPow2(0)
       .clampScalar(0, sXLen, sXLen);
 
-  getActionDefinitionsBuilder({G_GLOBAL_VALUE, G_JUMP_TABLE}).legalFor({p0});
+  getActionDefinitionsBuilder({G_GLOBAL_VALUE, G_JUMP_TABLE, G_CONSTANT_POOL})
+      .legalFor({p0});
 
   if (ST.hasStdExtM() || ST.hasStdExtZmmul()) {
     getActionDefinitionsBuilder(G_MUL)
@@ -242,7 +242,10 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
         .widenScalarToNextPow2(0);
   }
 
-  getActionDefinitionsBuilder(G_ABS).lower();
+  auto &AbsActions = getActionDefinitionsBuilder(G_ABS);
+  if (ST.hasStdExtZbb())
+    AbsActions.customFor({s32, sXLen}).minScalar(0, sXLen);
+  AbsActions.lower();
 
   auto &MinMaxActions =
       getActionDefinitionsBuilder({G_UMAX, G_UMIN, G_SMAX, G_SMIN});
@@ -284,7 +287,9 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
   getActionDefinitionsBuilder(G_IS_FPCLASS)
       .customIf(all(typeIs(0, s1), typeIsScalarFPArith(1, ST)));
 
-  getActionDefinitionsBuilder(G_FCONSTANT).legalIf(typeIsScalarFPArith(0, ST));
+  getActionDefinitionsBuilder(G_FCONSTANT)
+      .legalIf(typeIsScalarFPArith(0, ST))
+      .lowerFor({s32, s64});
 
   getActionDefinitionsBuilder({G_FPTOSI, G_FPTOUI})
       .legalIf(all(typeInSet(0, {s32, sXLen}), typeIsScalarFPArith(1, ST)))
@@ -331,8 +336,7 @@ bool RISCVLegalizerInfo::legalizeShlAshrLshr(
 }
 
 bool RISCVLegalizerInfo::legalizeVAStart(MachineInstr &MI,
-                                         MachineIRBuilder &MIRBuilder,
-                                         GISelChangeObserver &Observer) const {
+                                         MachineIRBuilder &MIRBuilder) const {
   // Stores the address of the VarArgsFrameIndex slot into the memory location
   assert(MI.getOpcode() == TargetOpcode::G_VASTART);
   MachineFunction *MF = MI.getParent()->getParent();
@@ -341,10 +345,8 @@ bool RISCVLegalizerInfo::legalizeVAStart(MachineInstr &MI,
   LLT AddrTy = MIRBuilder.getMRI()->getType(MI.getOperand(0).getReg());
   auto FINAddr = MIRBuilder.buildFrameIndex(AddrTy, FI);
   assert(MI.hasOneMemOperand());
-  MachineInstr *LoweredMI = MIRBuilder.buildStore(
-      MI.getOperand(0).getReg(), FINAddr, *MI.memoperands()[0]);
-  Observer.createdInstr(*LoweredMI);
-  Observer.erasingInstr(MI);
+  MIRBuilder.buildStore(MI.getOperand(0).getReg(), FINAddr,
+                        *MI.memoperands()[0]);
   MI.eraseFromParent();
   return true;
 }
@@ -357,6 +359,8 @@ bool RISCVLegalizerInfo::legalizeCustom(LegalizerHelper &Helper,
   default:
     // No idea what to do.
     return false;
+  case TargetOpcode::G_ABS:
+    return Helper.lowerAbsToMaxNeg(MI);
   case TargetOpcode::G_SHL:
   case TargetOpcode::G_ASHR:
   case TargetOpcode::G_LSHR:
@@ -390,7 +394,7 @@ bool RISCVLegalizerInfo::legalizeCustom(LegalizerHelper &Helper,
     return true;
   }
   case TargetOpcode::G_VASTART:
-    return legalizeVAStart(MI, MIRBuilder, Observer);
+    return legalizeVAStart(MI, MIRBuilder);
   }
 
   llvm_unreachable("expected switch to return");
