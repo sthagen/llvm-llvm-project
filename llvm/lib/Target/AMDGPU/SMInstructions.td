@@ -818,6 +818,14 @@ def smrd_load : PatFrag <(ops node:$ptr), (load node:$ptr), [{ return isUniformL
   }];
 }
 
+def smrd_prefetch : PatFrag <(ops node:$ptr, node:$rw, node:$loc, node:$type),
+                             (prefetch node:$ptr, node:$rw, node:$loc, node:$type),
+                             [{ return !N->getOperand(1)->isDivergent();}]> {
+  let GISelPredicateCode = [{
+    return isInstrUniform(MI);
+  }];
+}
+
 def SMRDImm         : ComplexPattern<iPTR, 2, "SelectSMRDImm">;
 def SMRDImm32       : ComplexPattern<iPTR, 2, "SelectSMRDImm32">;
 def SMRDSgpr        : ComplexPattern<iPTR, 2, "SelectSMRDSgpr">;
@@ -826,7 +834,7 @@ def SMRDBufferImm   : ComplexPattern<iPTR, 1, "SelectSMRDBufferImm">;
 def SMRDBufferImm32 : ComplexPattern<iPTR, 1, "SelectSMRDBufferImm32">;
 def SMRDBufferSgprImm : ComplexPattern<iPTR, 2, "SelectSMRDBufferSgprImm">;
 
-multiclass SMRD_Pattern <string Instr, ValueType vt> {
+multiclass SMRD_Pattern <string Instr, ValueType vt, bit immci = true> {
 
   // 1. IMM offset
   def : GCNPat <
@@ -835,7 +843,7 @@ multiclass SMRD_Pattern <string Instr, ValueType vt> {
   >;
 
   // 2. 32-bit IMM offset on CI
-  def : GCNPat <
+  if immci then def : GCNPat <
     (smrd_load (SMRDImm32 i64:$sbase, i32:$offset)),
     (vt (!cast<InstSI>(Instr#"_IMM_ci") $sbase, $offset, 0))> {
     let OtherPredicates = [isGFX7Only];
@@ -867,7 +875,7 @@ multiclass SMRD_Pattern <string Instr, ValueType vt> {
   >;
 }
 
-multiclass SMLoad_Pattern <string Instr, ValueType vt> {
+multiclass SMLoad_Pattern <string Instr, ValueType vt, bit immci = true> {
   // 1. Offset as an immediate
   def : GCNPat <
     (SIsbuffer_load v4i32:$sbase, (SMRDBufferImm i32:$offset), timm:$cachepolicy),
@@ -876,7 +884,7 @@ multiclass SMLoad_Pattern <string Instr, ValueType vt> {
   }
 
   // 2. 32-bit IMM offset on CI
-  def : GCNPat <
+  if immci then def : GCNPat <
     (vt (SIsbuffer_load v4i32:$sbase, (SMRDBufferImm32 i32:$offset), timm:$cachepolicy)),
     (!cast<InstSI>(Instr#"_IMM_ci") SReg_128:$sbase, smrd_literal_offset:$offset,
                                     (extract_cpol $cachepolicy))> {
@@ -919,6 +927,10 @@ foreach vt = SReg_64.RegTypes in {
 defm : SMRD_Pattern <"S_LOAD_DWORDX2", vt>;
 }
 
+foreach vt = SReg_96.RegTypes in {
+defm : SMRD_Pattern <"S_LOAD_DWORDX3", vt, false>;
+}
+
 foreach vt = SReg_128.RegTypes in {
 defm : SMRD_Pattern <"S_LOAD_DWORDX4", vt>;
 }
@@ -935,12 +947,14 @@ defm : SMRD_Pattern <"S_LOAD_DWORDX16", vt>;
 
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORD",     i32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX2",   v2i32>;
+defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX3",   v3i32, false>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX4",   v4i32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX8",   v8i32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX16",  v16i32>;
 
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORD",     f32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX2",   v2f32>;
+defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX3",   v3f32, false>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX4",   v4f32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX8",   v8f32>;
 defm : SMLoad_Pattern <"S_BUFFER_LOAD_DWORDX16",  v16f32>;
@@ -962,6 +976,21 @@ def : GCNPat <
   let AddedComplexity = 1;
 }
 } // let OtherPredicates = [HasShaderCyclesRegister]
+
+multiclass SMPrefetchPat<string type, int cache_type> {
+  def : GCNPat <
+    (smrd_prefetch (SMRDImm i64:$sbase, i32:$offset), timm, timm, (i32 cache_type)),
+    (!cast<SM_Prefetch_Pseudo>("S_PREFETCH_"#type) $sbase, $offset, (i32 SGPR_NULL), (i8 0))
+  >;
+
+  def : GCNPat <
+    (smrd_prefetch (i64 SReg_64:$sbase), timm, timm, (i32 cache_type)),
+    (!cast<SM_Prefetch_Pseudo>("S_PREFETCH_"#type) $sbase, 0, (i32 SGPR_NULL), (i8 0))
+  >;
+}
+
+defm : SMPrefetchPat<"INST", 0>;
+defm : SMPrefetchPat<"DATA", 1>;
 
 //===----------------------------------------------------------------------===//
 // GFX10.

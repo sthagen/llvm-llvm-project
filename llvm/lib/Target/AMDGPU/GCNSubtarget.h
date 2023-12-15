@@ -199,6 +199,7 @@ protected:
   bool HasSALUFloatInsts = false;
   bool HasVGPRSingleUseHintInsts = false;
   bool HasPseudoScalarTrans = false;
+  bool HasRestrictedSOffset = false;
 
   bool HasVcmpxPermlaneHazard = false;
   bool HasVMEMtoScalarWriteHazard = false;
@@ -832,6 +833,8 @@ public:
 
   bool hasInstPrefetch() const { return getGeneration() >= GFX10; }
 
+  bool hasPrefetch() const { return GFX12Insts; }
+
   // Has s_cmpk_* instructions.
   bool hasSCmpK() const { return getGeneration() < GFX12; }
 
@@ -1162,6 +1165,8 @@ public:
   bool hasVGPRSingleUseHintInsts() const { return HasVGPRSingleUseHintInsts; }
 
   bool hasPseudoScalarTrans() const { return HasPseudoScalarTrans; }
+
+  bool hasRestrictedSOffset() const { return HasRestrictedSOffset; }
 
   /// Return the maximum number of waves per SIMD for kernels using \p SGPRs
   /// SGPRs
