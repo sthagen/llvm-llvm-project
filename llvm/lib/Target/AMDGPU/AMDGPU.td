@@ -411,6 +411,12 @@ def FeatureVGPRIndexMode : SubtargetFeature<"vgpr-index-mode",
   "Has VGPR mode register indexing"
 >;
 
+def FeatureScalarDwordx3Loads : SubtargetFeature<"scalar-dwordx3-loads",
+  "HasScalarDwordx3Loads",
+  "true",
+  "Has 96-bit scalar load instructions"
+>;
+
 def FeatureScalarStores : SubtargetFeature<"scalar-stores",
   "HasScalarStores",
   "true",
@@ -814,6 +820,12 @@ def FeatureVGPRSingleUseHintInsts : SubtargetFeature<"vgpr-singleuse-hint",
   "HasVGPRSingleUseHintInsts",
   "true",
   "Has single-use VGPR hint instructions"
+>;
+
+def FeaturePseudoScalarTrans : SubtargetFeature<"pseudo-scalar-trans",
+  "HasPseudoScalarTrans",
+  "true",
+  "Has Pseudo Scalar Transcendental instructions"
 >;
 
 //===------------------------------------------------------------===//
@@ -1461,8 +1473,10 @@ def FeatureISAVersion12 : FeatureSet<
    FeaturePackedTID,
    FeatureVcmpxPermlaneHazard,
    FeatureSALUFloatInsts,
+   FeaturePseudoScalarTrans,
    FeatureVGPRSingleUseHintInsts,
-   FeatureMADIntraFwdBug]>;
+   FeatureMADIntraFwdBug,
+   FeatureScalarDwordx3Loads]>;
 
 //===----------------------------------------------------------------------===//
 
@@ -2002,6 +2016,9 @@ def HasSALUFloatInsts : Predicate<"Subtarget->hasSALUFloatInsts()">,
 def HasVGPRSingleUseHintInsts : Predicate<"Subtarget->hasVGPRSingleUseHintInsts()">,
   AssemblerPredicate<(all_of FeatureVGPRSingleUseHintInsts)>;
 
+def HasPseudoScalarTrans : Predicate<"Subtarget->hasPseudoScalarTrans()">,
+  AssemblerPredicate<(all_of FeaturePseudoScalarTrans)>;
+
 def HasGDS : Predicate<"Subtarget->hasGDS()">;
 
 def HasGWS : Predicate<"Subtarget->hasGWS()">;
@@ -2010,6 +2027,8 @@ def HasCvtFP8VOP1Bug : Predicate<"Subtarget->hasCvtFP8VOP1Bug()">;
 def HasNoCvtFP8VOP1Bug : Predicate<"!Subtarget->hasCvtFP8VOP1Bug()">;
 
 def HasAtomicCSubNoRtnInsts : Predicate<"Subtarget->hasAtomicCSubNoRtnInsts()">;
+
+def HasScalarDwordx3Loads : Predicate<"Subtarget->hasScalarDwordx3Loads()">;
 
 // Include AMDGPU TD files
 include "SISchedule.td"

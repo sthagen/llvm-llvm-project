@@ -119,6 +119,7 @@ protected:
   bool HasFmaMixInsts = false;
   bool HasMovrel = false;
   bool HasVGPRIndexMode = false;
+  bool HasScalarDwordx3Loads = false;
   bool HasScalarStores = false;
   bool HasScalarAtomics = false;
   bool HasSDWAOmod = false;
@@ -197,6 +198,7 @@ protected:
   bool ScalarizeGlobal = false;
   bool HasSALUFloatInsts = false;
   bool HasVGPRSingleUseHintInsts = false;
+  bool HasPseudoScalarTrans = false;
 
   bool HasVcmpxPermlaneHazard = false;
   bool HasVMEMtoScalarWriteHazard = false;
@@ -889,6 +891,8 @@ public:
     return getGeneration() >= VOLCANIC_ISLANDS;
   }
 
+  bool hasScalarDwordx3Loads() const { return HasScalarDwordx3Loads; }
+
   bool hasScalarStores() const {
     return HasScalarStores;
   }
@@ -1156,6 +1160,8 @@ public:
   bool hasSALUFloatInsts() const { return HasSALUFloatInsts; }
 
   bool hasVGPRSingleUseHintInsts() const { return HasVGPRSingleUseHintInsts; }
+
+  bool hasPseudoScalarTrans() const { return HasPseudoScalarTrans; }
 
   /// Return the maximum number of waves per SIMD for kernels using \p SGPRs
   /// SGPRs
