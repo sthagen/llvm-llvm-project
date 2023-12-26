@@ -1089,36 +1089,30 @@ def : Pat<(X86testpat (loadi64 addr:$src1), i64relocImmSExt32_su:$src2),
 //===----------------------------------------------------------------------===//
 // ANDN Instruction
 //
-multiclass bmi_andn<string mnemonic, RegisterClass RC, X86MemOperand x86memop,
-                    PatFrag ld_frag, X86FoldableSchedWrite sched> {
-let Predicates = [HasBMI, NoEGPR] in {
-  def rr : I<0xF2, MRMSrcReg, (outs RC:$dst), (ins RC:$src1, RC:$src2),
-             !strconcat(mnemonic, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-             [(set RC:$dst, EFLAGS, (X86and_flag (not RC:$src1), RC:$src2))]>,
-           VEX, VVVV, Sched<[sched]>;
-  def rm : I<0xF2, MRMSrcMem, (outs RC:$dst), (ins RC:$src1, x86memop:$src2),
-             !strconcat(mnemonic, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-             [(set RC:$dst, EFLAGS,
-              (X86and_flag (not RC:$src1), (ld_frag addr:$src2)))]>,
-           VEX, VVVV, Sched<[sched.Folded, sched.ReadAfterFold]>;
-}
-let Predicates = [HasBMI, HasEGPR, In64BitMode] in {
-  def rr_EVEX : I<0xF2, MRMSrcReg, (outs RC:$dst), (ins RC:$src1, RC:$src2),
-                  !strconcat(mnemonic, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-                  [(set RC:$dst, EFLAGS, (X86and_flag (not RC:$src1), RC:$src2))]>,
-                EVEX, VVVV, Sched<[sched]>;
-  def rm_EVEX : I<0xF2, MRMSrcMem, (outs RC:$dst), (ins RC:$src1, x86memop:$src2),
-                  !strconcat(mnemonic, "\t{$src2, $src1, $dst|$dst, $src1, $src2}"),
-                  [(set RC:$dst, EFLAGS,
-                   (X86and_flag (not RC:$src1), (ld_frag addr:$src2)))]>,
-                EVEX, VVVV, Sched<[sched.Folded, sched.ReadAfterFold]>;
-}
+multiclass AndN<X86TypeInfo t, string suffix> {
+  defvar andn_rr_p =
+    [(set t.RegClass:$dst, EFLAGS, (X86and_flag (not t.RegClass:$src1),
+     t.RegClass:$src2))];
+  defvar andn_rm_p =
+    [(set t.RegClass:$dst, EFLAGS, (X86and_flag (not t.RegClass:$src1),
+     (t.LoadNode addr:$src2)))];
+  def rr#suffix : ITy<0xF2, MRMSrcReg, t, (outs t.RegClass:$dst),
+                      (ins t.RegClass:$src1, t.RegClass:$src2), "andn",
+                      binop_ndd_args, andn_rr_p>, VVVV, Sched<[WriteALU]>,
+                     T8, DefEFLAGS;
+  def rm#suffix : ITy<0xF2, MRMSrcMem, t, (outs t.RegClass:$dst),
+                       (ins t.RegClass:$src1, t.MemOperand:$src2), "andn",
+                       binop_ndd_args, andn_rm_p>, VVVV,
+                       Sched<[WriteALU.Folded, WriteALU.ReadAfterFold]>,
+                       T8, DefEFLAGS;
 }
 
 // Complexity is reduced to give and with immediate a chance to match first.
-let Defs = [EFLAGS], AddedComplexity = -6 in {
-  defm ANDN32 : bmi_andn<"andn{l}", GR32, i32mem, loadi32, WriteALU>, T8;
-  defm ANDN64 : bmi_andn<"andn{q}", GR64, i64mem, loadi64, WriteALU>, T8, REX_W;
+let AddedComplexity = -6 in {
+defm ANDN32 : AndN<Xi32, "">, VEX, Requires<[HasBMI, NoEGPR]>;
+defm ANDN64 : AndN<Xi64, "">, VEX, REX_W, Requires<[HasBMI, NoEGPR]>;
+defm ANDN32 : AndN<Xi32, "_EVEX">, EVEX, Requires<[HasBMI, HasEGPR, In64BitMode]>;
+defm ANDN64 : AndN<Xi64, "_EVEX">, EVEX, REX_W, Requires<[HasBMI, HasEGPR, In64BitMode]>;
 }
 
 let Predicates = [HasBMI], AddedComplexity = -6 in {
@@ -1135,78 +1129,65 @@ let Predicates = [HasBMI], AddedComplexity = -6 in {
 //===----------------------------------------------------------------------===//
 // MULX Instruction
 //
-multiclass bmi_mulx<string mnemonic, RegisterClass RC, X86MemOperand x86memop,
-                    X86FoldableSchedWrite sched> {
-let hasSideEffects = 0 in {
-let Predicates = [HasBMI2, NoEGPR] in {
-  def rr : I<0xF6, MRMSrcReg, (outs RC:$dst1, RC:$dst2), (ins RC:$src),
-             !strconcat(mnemonic, "\t{$src, $dst2, $dst1|$dst1, $dst2, $src}"),
-             []>, T8, XD, VEX, VVVV, Sched<[WriteIMulH, sched]>;
+multiclass MulX<X86TypeInfo t, X86FoldableSchedWrite sched> {
+  defvar mulx_args = "{$src, $dst2, $dst1|$dst1, $dst2, $src}";
+  defvar mulx_rm_sched =
+    [WriteIMulHLd, sched.Folded,
+     // Memory operand.
+     ReadDefault, ReadDefault, ReadDefault, ReadDefault, ReadDefault,
+     // Implicit read of EDX/RDX
+     sched.ReadAfterFold];
 
+  def rr : ITy<0xF6, MRMSrcReg, t, (outs t.RegClass:$dst1, t.RegClass:$dst2),
+               (ins t.RegClass:$src), "mulx", mulx_args, []>, T8, XD, VEX,
+           VVVV, Sched<[WriteIMulH, sched]>;
   let mayLoad = 1 in
-  def rm : I<0xF6, MRMSrcMem, (outs RC:$dst1, RC:$dst2), (ins x86memop:$src),
-             !strconcat(mnemonic, "\t{$src, $dst2, $dst1|$dst1, $dst2, $src}"),
-             []>, T8, XD, VEX, VVVV,
-             Sched<[WriteIMulHLd, sched.Folded,
-                    // Memory operand.
-                    ReadDefault, ReadDefault, ReadDefault, ReadDefault, ReadDefault,
-                    // Implicit read of EDX/RDX
-                    sched.ReadAfterFold]>;
+  def rm : ITy<0xF6, MRMSrcMem, t, (outs t.RegClass:$dst1, t.RegClass:$dst2),
+               (ins t.MemOperand:$src), "mulx", mulx_args, []>, T8, XD, VEX,
+               VVVV, Sched<mulx_rm_sched>;
 
+  let Predicates = [In64BitMode] in {
+  def rr_EVEX : ITy<0xF6, MRMSrcReg, t,
+                    (outs t.RegClass:$dst1, t.RegClass:$dst2),
+                    (ins t.RegClass:$src), "mulx", mulx_args, []>, T8, XD,
+                EVEX, VVVV, Sched<[WriteIMulH, sched]>;
+    let mayLoad = 1 in
+    def rm_EVEX : ITy<0xF6, MRMSrcMem, t,
+                      (outs t.RegClass:$dst1, t.RegClass:$dst2),
+                      (ins t.MemOperand:$src), "mulx", mulx_args, []>, T8, XD,
+                  EVEX, VVVV, Sched<mulx_rm_sched>;
+  }
   // Pseudo instructions to be used when the low result isn't used. The
   // instruction is defined to keep the high if both destinations are the same.
-  def Hrr : PseudoI<(outs RC:$dst), (ins RC:$src),
-                    []>, Sched<[sched]>;
-
+  def Hrr : PseudoI<(outs t.RegClass:$dst), (ins t.RegClass:$src), []>,
+            Sched<[sched]>;
   let mayLoad = 1 in
-  def Hrm : PseudoI<(outs RC:$dst), (ins x86memop:$src),
-                    []>, Sched<[sched.Folded]>;
-}
-let Predicates = [HasBMI2, HasEGPR, In64BitMode] in
-  def rr#_EVEX : I<0xF6, MRMSrcReg, (outs RC:$dst1, RC:$dst2), (ins RC:$src),
-                   !strconcat(mnemonic, "\t{$src, $dst2, $dst1|$dst1, $dst2, $src}"),
-                   []>, T8, XD, EVEX, VVVV, Sched<[WriteIMulH, sched]>;
-let Predicates = [HasBMI2, HasEGPR, In64BitMode], mayLoad = 1 in
-  def rm#_EVEX : I<0xF6, MRMSrcMem, (outs RC:$dst1, RC:$dst2), (ins x86memop:$src),
-                   !strconcat(mnemonic, "\t{$src, $dst2, $dst1|$dst1, $dst2, $src}"),
-                   []>, T8, XD, EVEX, VVVV,
-                 Sched<[WriteIMulHLd, sched.Folded,
-                        // Memory operand.
-                        ReadDefault, ReadDefault, ReadDefault, ReadDefault, ReadDefault,
-                        // Implicit read of EDX/RDX
-                        sched.ReadAfterFold]>;
-}
+  def Hrm : PseudoI<(outs t.RegClass:$dst), (ins t.MemOperand:$src), []>,
+            Sched<[sched.Folded]>;
 }
 
 let Uses = [EDX] in
-  defm MULX32 : bmi_mulx<"mulx{l}", GR32, i32mem, WriteMULX32>;
+defm MULX32 : MulX<Xi32, WriteMULX32>;
+
 let Uses = [RDX] in
-  defm MULX64 : bmi_mulx<"mulx{q}", GR64, i64mem, WriteMULX64>, REX_W;
+defm MULX64 : MulX<Xi64, WriteMULX64>, REX_W;
 
 //===----------------------------------------------------------------------===//
 // ADCX and ADOX Instructions
 //
 // We don't have patterns for these as there is no advantage over ADC for
 // most code.
-class ADCOXOpRR <string m, X86TypeInfo t>
-  : BinOpRRF_RF<0xF6, m, t, null_frag> {
-  let Form = MRMSrcReg;
-  let isCommutable = 1;
-}
-
-class ADCOXOpRM <string m, X86TypeInfo t>
-  : BinOpRMF_RF<0xF6, m, t, null_frag> {
-  let Form = MRMSrcMem;
-}
-
-let OpSize = OpSizeFixed, Constraints = "$src1 = $dst",
-    Predicates = [HasADX] in {
-def ADCX32rr : ADCOXOpRR<"adcx", Xi32>, T8, PD;
-def ADCX64rr : ADCOXOpRR<"adcx", Xi64>, T8, PD;
-def ADOX32rr : ADCOXOpRR<"adox", Xi32>, T8, XS;
-def ADOX64rr : ADCOXOpRR<"adox", Xi64>, T8, XS;
-def ADCX32rm : ADCOXOpRM<"adcx", Xi32>, T8, PD;
-def ADCX64rm : ADCOXOpRM<"adcx", Xi64>, T8, PD;
-def ADOX32rm : ADCOXOpRM<"adox", Xi32>, T8, XS;
-def ADOX64rm : ADCOXOpRM<"adox", Xi64>, T8, XS;
+let Constraints = "$src1 = $dst" in {
+  let Form = MRMSrcReg in {
+  def ADCX32rr : BinOpRRF_RF<0xF6, "adcx", Xi32, null_frag>, T8, PD;
+  def ADCX64rr : BinOpRRF_RF<0xF6, "adcx", Xi64, null_frag>, T8, PD;
+  def ADOX32rr : BinOpRRF_RF<0xF6, "adox", Xi32, null_frag>, T8, XS;
+  def ADOX64rr : BinOpRRF_RF<0xF6, "adox", Xi64, null_frag>, T8, XS;
+  }
+  let Form = MRMSrcMem in {
+  def ADCX32rm : BinOpRMF_RF<0xF6, "adcx", Xi32, null_frag>, T8, PD;
+  def ADCX64rm : BinOpRMF_RF<0xF6, "adcx", Xi64, null_frag>, T8, PD;
+  def ADOX32rm : BinOpRMF_RF<0xF6, "adox", Xi32, null_frag>, T8, XS;
+  def ADOX64rm : BinOpRMF_RF<0xF6, "adox", Xi64, null_frag>, T8, XS;
+  }
 }
