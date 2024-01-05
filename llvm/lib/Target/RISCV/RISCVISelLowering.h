@@ -525,7 +525,8 @@ public:
 
   InstructionCost getVRGatherVVCost(MVT VT) const;
   InstructionCost getVRGatherVICost(MVT VT) const;
-  InstructionCost getVSlideCost(MVT VT) const;
+  InstructionCost getVSlideVXCost(MVT VT) const;
+  InstructionCost getVSlideVICost(MVT VT) const;
 
   // Provide custom lowering hooks for some operations.
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
@@ -773,8 +774,7 @@ public:
   bool isVScaleKnownToBeAPowerOfTwo() const override;
 
   bool getIndexedAddressParts(SDNode *Op, SDValue &Base, SDValue &Offset,
-                              ISD::MemIndexedMode &AM, bool &IsInc,
-                              SelectionDAG &DAG) const;
+                              ISD::MemIndexedMode &AM, SelectionDAG &DAG) const;
   bool getPreIndexedAddressParts(SDNode *N, SDValue &Base, SDValue &Offset,
                                  ISD::MemIndexedMode &AM,
                                  SelectionDAG &DAG) const override;
