@@ -229,6 +229,11 @@ C++2c Feature Support
 
 Resolutions to C++ Defect Reports
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+- Implemented `CWG2137 <https://wg21.link/CWG2137>`_ which allows
+  list-initialization from objects of the same type.
+- Implemented `CWG2311 <https://wg21.link/CWG2311>`_: given a prvalue ``e`` of object type
+  ``T``, ``T{e}`` will try to resolve an initializer list constructor and will use it if successful (CWG2137).
+  Otherwise, if there is no initializer list constructor, the copy will be elided as if it was ``T(e)``.
 
 - Implemented `CWG2598 <https://wg21.link/CWG2598>`_ and `CWG2096 <https://wg21.link/CWG2096>`_,
   making unions (that have either no members or at least one literal member) literal types.
@@ -995,6 +1000,9 @@ Bug Fixes to C++ Support
 
 - Clang now allows parenthesized initialization of arrays in `operator new[]`.
   Fixes: (`#68198 <https://github.com/llvm/llvm-project/issues/68198>`_)
+
+- Fixes CTAD for aggregates on nested template classes. Fixes:
+  (`#77599 <https://github.com/llvm/llvm-project/issues/77599>`_)
 
 - Fix crash when importing the same module with an dynamic initializer twice
   in different visibility.
