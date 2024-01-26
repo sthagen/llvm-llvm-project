@@ -1113,6 +1113,12 @@ static const SpecificIntrinsicInterface specificIntrinsicFunction[]{
     {{"kiabs", {{"a", TypePattern{IntType, KindCode::exactKind, 8}}},
          TypePattern{IntType, KindCode::exactKind, 8}},
         "abs"},
+    {{"kidnnt", {{"a", DoublePrecision}},
+         TypePattern{IntType, KindCode::exactKind, 8}},
+        "nint"},
+    {{"knint", {{"a", DefaultReal}},
+         TypePattern{IntType, KindCode::exactKind, 8}},
+        "nint"},
     {{"len", {{"string", DefaultChar, Rank::anyOrAssumedRank}}, DefaultInt,
         Rank::scalar, IntrinsicClass::inquiryFunction}},
     {{"lge", {{"string_a", DefaultChar}, {"string_b", DefaultChar}},
@@ -1395,6 +1401,19 @@ static const IntrinsicInterface intrinsicSubroutine[]{
             {"count_max", AnyInt, Rank::scalar, Optionality::optional,
                 common::Intent::Out}},
         {}, Rank::elemental, IntrinsicClass::impureSubroutine},
+    {"signal",
+        {{"number", AnyInt, Rank::scalar, Optionality::required,
+             common::Intent::In},
+            // note: any pointer also accepts AnyInt
+            {"handler", AnyPointer, Rank::scalar, Optionality::required,
+                common::Intent::In},
+            {"status", AnyInt, Rank::scalar, Optionality::optional,
+                common::Intent::Out}},
+        {}, Rank::elemental, IntrinsicClass::impureSubroutine},
+    {"sleep",
+        {{"seconds", AnyInt, Rank::scalar, Optionality::required,
+            common::Intent::In}},
+        {}, Rank::elemental, IntrinsicClass::impureSubroutine},
 };
 
 // TODO: Intrinsic subroutine EVENT_QUERY
@@ -1412,9 +1431,12 @@ static DynamicType GetBuiltinDerivedType(
   auto iter{
       builtinsScope->find(semantics::SourceName{which, std::strlen(which)})};
   if (iter == builtinsScope->cend()) {
+    // keep the string all together
+    // clang-format off
     common::die(
         "INTERNAL: The __fortran_builtins module does not define the type '%s'",
         which);
+    // clang-format on
   }
   const semantics::Symbol &symbol{*iter->second};
   const semantics::Scope &scope{DEREF(symbol.scope())};
@@ -3105,23 +3127,31 @@ std::optional<SpecificCall> IntrinsicProcTable::Implementation::Probe(
             if (auto specificCall{
                     matchOrBufferMessages(*genIter->second, specificBuffer)}) {
               // Force the call result type to the specific intrinsic result
-              // type
+              // type, if possible.
+              DynamicType genericType{
+                  DEREF(specificCall->specificIntrinsic.characteristics.value()
+                            .functionResult.value()
+                            .GetTypeAndShape())
+                      .type()};
               DynamicType newType{GetReturnType(*specIter->second, defaults_)};
-              if (context.languageFeatures().ShouldWarn(
-                      common::LanguageFeature::
-                          UseGenericIntrinsicWhenSpecificDoesntMatch)) {
-                context.messages().Say(
-                    "Argument types do not match specific intrinsic '%s' "
-                    "requirements; using '%s' generic instead and converting "
-                    "the "
-                    "result to %s if needed"_port_en_US,
-                    call.name, genericName, newType.AsFortran());
+              if (genericType.category() == newType.category() ||
+                  ((genericType.category() == TypeCategory::Integer ||
+                       genericType.category() == TypeCategory::Real) &&
+                      (newType.category() == TypeCategory::Integer ||
+                          newType.category() == TypeCategory::Real))) {
+                if (context.languageFeatures().ShouldWarn(
+                        common::LanguageFeature::
+                            UseGenericIntrinsicWhenSpecificDoesntMatch)) {
+                  context.messages().Say(
+                      "Argument types do not match specific intrinsic '%s' requirements; using '%s' generic instead and converting the result to %s if needed"_port_en_US,
+                      call.name, genericName, newType.AsFortran());
+                }
+                specificCall->specificIntrinsic.name = call.name;
+                specificCall->specificIntrinsic.characteristics.value()
+                    .functionResult.value()
+                    .SetType(newType);
+                return specificCall;
               }
-              specificCall->specificIntrinsic.name = call.name;
-              specificCall->specificIntrinsic.characteristics.value()
-                  .functionResult.value()
-                  .SetType(newType);
-              return specificCall;
             }
           }
         }
