@@ -151,6 +151,8 @@ Bug Fixes in This Version
 - Clang now accepts elaborated-type-specifiers that explicitly specialize
   a member class template for an implicit instantiation of a class template.
 
+- Fixed missing warnings when doing bool-like conversions in C23 (`#79435 <https://github.com/llvm/llvm-project/issues/79435>`_).
+
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -178,8 +180,6 @@ Bug Fixes to C++ Support
 - Fix for crash when using a erroneous type in a return statement.
   Fixes (`#63244 <https://github.com/llvm/llvm-project/issues/63244>`_)
   and (`#79745 <https://github.com/llvm/llvm-project/issues/79745>`_)
-- Fix incorrect code generation caused by the object argument of ``static operator()`` and ``static operator[]`` calls not being evaluated.
-  Fixes (`#67976 <https://github.com/llvm/llvm-project/issues/67976>`_)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
