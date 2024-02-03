@@ -411,11 +411,11 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
   if (Subtarget.hasShortForwardBranchOpt())
     setOperationAction(ISD::ABS, XLenVT, Legal);
 
-  if (!Subtarget.hasVendorXTHeadCondMov())
+  if (!Subtarget.hasVendorXTHeadCondMov()) {
     setOperationAction(ISD::SELECT, XLenVT, Custom);
-
-  if (RV64LegalI32 && Subtarget.is64Bit())
-    setOperationAction(ISD::SELECT, MVT::i32, Promote);
+    if (RV64LegalI32 && Subtarget.is64Bit())
+      setOperationAction(ISD::SELECT, MVT::i32, Promote);
+  }
 
   static const unsigned FPLegalNodeTypes[] = {
       ISD::FMINNUM,        ISD::FMAXNUM,       ISD::LRINT,
@@ -10823,6 +10823,9 @@ RISCVTargetLowering::lowerVPSpliceExperimental(SDValue Op,
     MVT MaskVT = getMaskTypeFor(ContainerVT);
     Mask = convertToScalableVector(MaskVT, Mask, DAG, Subtarget);
   }
+
+  // EVL1 may need to be extended to XLenVT with RV64LegalI32.
+  EVL1 = DAG.getNode(ISD::ZERO_EXTEND, DL, XLenVT, EVL1);
 
   bool IsMaskVector = VT.getVectorElementType() == MVT::i1;
   if (IsMaskVector) {

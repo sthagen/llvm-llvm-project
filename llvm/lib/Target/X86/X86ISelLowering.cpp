@@ -31037,12 +31037,22 @@ static SDValue LowerCTPOP(SDValue N, const X86Subtarget &Subtarget,
   SDLoc DL(N);
 
   if (VT.isScalarInteger()) {
+    // Compute the lower/upper bounds of the active bits of the value,
+    // allowing us to shift the active bits down if necessary to fit into the
+    // special cases below.
     KnownBits Known = DAG.computeKnownBits(Op);
-    unsigned ActiveBits = Known.countMaxActiveBits();
+    unsigned LZ = Known.countMinLeadingZeros();
+    unsigned TZ = Known.countMinTrailingZeros();
+    assert((LZ + TZ) < Known.getBitWidth() && "Illegal shifted mask");
+    unsigned ActiveBits = Known.getBitWidth() - LZ;
+    unsigned ShiftedActiveBits = Known.getBitWidth() - (LZ + TZ);
 
     // i8 CTPOP - with efficient i32 MUL, then attempt multiply-mask-multiply.
-    if (ActiveBits <= 8) {
+    if (ShiftedActiveBits <= 8) {
       SDValue Mask11 = DAG.getConstant(0x11111111U, DL, MVT::i32);
+      if (ActiveBits > 8)
+        Op = DAG.getNode(ISD::SRL, DL, VT, Op,
+                         DAG.getShiftAmountConstant(TZ, VT, DL));
       Op = DAG.getZExtOrTrunc(Op, DL, MVT::i32);
       Op = DAG.getNode(ISD::MUL, DL, MVT::i32, Op,
                        DAG.getConstant(0x08040201U, DL, MVT::i32));
@@ -32842,6 +32852,8 @@ void X86TargetLowering::ReplaceNodeResults(SDNode *N,
       return;
     bool IsStrict = N->isStrictFPOpcode();
     SDValue Src = N->getOperand(IsStrict ? 1 : 0);
+    if (Src.getValueType().getVectorElementType() != MVT::f16)
+      return;
     SDValue Ext = IsStrict ? DAG.getConstantFP(0.0, dl, MVT::v2f16)
                            : DAG.getUNDEF(MVT::v2f16);
     SDValue V = DAG.getNode(ISD::CONCAT_VECTORS, dl, MVT::v4f16, Src, Ext);
