@@ -5,10 +5,8 @@ set(LLVM_LINK_COMPONENTS
 
 add_llvm_library(LLVMTableGenGlobalISel STATIC DISABLE_LLVM_LINK_LLVM_DYLIB
   CodeExpander.cpp
-  CombinerUtils.cpp
   CXXPredicates.cpp
   MatchDataInfo.cpp
-  PatternParser.cpp
   Patterns.cpp
 
   DEPENDS
@@ -17,6 +15,6 @@ add_llvm_library(LLVMTableGenGlobalISel STATIC DISABLE_LLVM_LINK_LLVM_DYLIB
 
 # Users may include its headers as "GlobalISel/*.h"
 target_include_directories(LLVMTableGenGlobalISel
-  PUBLIC
+  INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>
   )
