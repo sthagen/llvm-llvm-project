@@ -253,11 +253,6 @@ CodeGenRegister::RegUnitList RegUnitIterator::Sentinel;
 
 } // end anonymous namespace
 
-// Return true of this unit appears in RegUnits.
-static bool hasRegUnit(CodeGenRegister::RegUnitList &RegUnits, unsigned Unit) {
-  return RegUnits.test(Unit);
-}
-
 // Inherit register units from subregisters.
 // Return true if the RegUnits changed.
 bool CodeGenRegister::inheritRegUnits(CodeGenRegBank &RegBank) {
@@ -1842,9 +1837,8 @@ static bool normalizeWeight(CodeGenRegister *Reg,
     // for this register, has not been used to normalize a subregister's set,
     // and has not already been used to singularly determine this UberRegSet.
     unsigned AdjustUnit = *Reg->getRegUnits().begin();
-    if (Reg->getRegUnits().count() != 1 ||
-        hasRegUnit(NormalUnits, AdjustUnit) ||
-        hasRegUnit(UberSet->SingularDeterminants, AdjustUnit)) {
+    if (Reg->getRegUnits().count() != 1 || NormalUnits.test(AdjustUnit) ||
+        UberSet->SingularDeterminants.test(AdjustUnit)) {
       // We don't have an adjustable unit, so adopt a new one.
       AdjustUnit = RegBank.newRegUnit(UberSet->Weight - RegWeight);
       Reg->adoptRegUnit(AdjustUnit);
@@ -2113,10 +2107,8 @@ void CodeGenRegBank::computeRegUnitSets() {
        ++UnitIdx) {
     std::vector<unsigned> RUSets;
     for (unsigned i = 0, e = RegUnitSets.size(); i != e; ++i) {
-      RegUnitSet &RUSet = RegUnitSets[i];
-      if (!is_contained(RUSet.Units, UnitIdx))
-        continue;
-      RUSets.push_back(i);
+      if (is_contained(RegUnitSets[i].Units, UnitIdx))
+        RUSets.push_back(i);
     }
     unsigned RCUnitSetsIdx = 0;
     for (unsigned e = RegClassUnitSets.size(); RCUnitSetsIdx != e;
