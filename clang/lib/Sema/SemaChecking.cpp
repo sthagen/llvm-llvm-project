@@ -2180,9 +2180,11 @@ static bool SemaBuiltinCpu(Sema &S, const TargetInfo &TI, CallExpr *TheCall,
 
   // Check the contents of the string.
   StringRef Feature = cast<StringLiteral>(Arg)->getString();
-  if (IsCPUSupports && !TheTI->validateCpuSupports(Feature))
-    return S.Diag(TheCall->getBeginLoc(), diag::err_invalid_cpu_supports)
-           << Arg->getSourceRange();
+  if (IsCPUSupports && !TheTI->validateCpuSupports(Feature)) {
+    S.Diag(TheCall->getBeginLoc(), diag::warn_invalid_cpu_supports)
+        << Arg->getSourceRange();
+    return false;
+  }
   if (!IsCPUSupports && !TheTI->validateCpuIs(Feature))
     return S.Diag(TheCall->getBeginLoc(), diag::err_invalid_cpu_is)
            << Arg->getSourceRange();
@@ -5246,6 +5248,23 @@ bool CheckVectorElementCallArgs(Sema *S, CallExpr *TheCall) {
   return true;
 }
 
+bool CheckAllArgsHaveFloatRepresentation(Sema *S, CallExpr *TheCall) {
+  QualType ExpectedType = S->Context.FloatTy;
+  for (unsigned i = 0; i < TheCall->getNumArgs(); ++i) {
+    QualType PassedType = TheCall->getArg(i)->getType();
+    if (!PassedType->hasFloatingRepresentation()) {
+      if (auto *VecTyA = PassedType->getAs<VectorType>())
+        ExpectedType = S->Context.getVectorType(
+            ExpectedType, VecTyA->getNumElements(), VecTyA->getVectorKind());
+      S->Diag(TheCall->getArg(0)->getBeginLoc(),
+              diag::err_typecheck_convert_incompatible)
+          << PassedType << ExpectedType << 1 << 0 << 0;
+      return true;
+    }
+  }
+  return false;
+}
+
 // Note: returning true in this case results in CheckBuiltinFunctionCall
 // returning an ExprError
 bool Sema::CheckHLSLBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
@@ -5259,12 +5278,21 @@ bool Sema::CheckHLSLBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
       return true;
     break;
   }
+  case Builtin::BI__builtin_hlsl_elementwise_frac: {
+    if (PrepareBuiltinElementwiseMathOneArgCall(TheCall))
+      return true;
+    if (CheckAllArgsHaveFloatRepresentation(this, TheCall))
+      return true;
+    break;
+  }
   case Builtin::BI__builtin_hlsl_lerp: {
     if (checkArgCount(*this, TheCall, 3))
       return true;
     if (CheckVectorElementCallArgs(this, TheCall))
       return true;
     if (SemaBuiltinElementwiseTernaryMath(TheCall))
+      return true;
+    if (CheckAllArgsHaveFloatRepresentation(this, TheCall))
       return true;
     break;
   }

@@ -765,7 +765,7 @@ def err_builtin_redeclare : Error<"cannot redeclare builtin function %0">;
 def err_arm_invalid_specialreg : Error<"invalid special register for builtin">;
 def err_arm_invalid_coproc : Error<"coprocessor %0 must be configured as "
   "%select{GCP|CDE}1">;
-def err_invalid_cpu_supports : Error<"invalid cpu feature string for builtin">;
+def warn_invalid_cpu_supports : Warning<"invalid cpu feature string for builtin">;
 def err_invalid_cpu_is : Error<"invalid cpu name for builtin">;
 def err_invalid_cpu_specific_dispatch_value : Error<
 "invalid option '%0' for %select{cpu_specific|cpu_dispatch}1">;
@@ -10270,7 +10270,7 @@ def err_vec_builtin_non_vector_all : Error<
  "all arguments to %0 must be vectors">;
 def err_vec_builtin_incompatible_vector_all : Error<
   "all arguments to %0 must have vectors of the same type">;
-  
+
 def err_vec_builtin_non_vector : Error<
  "first two arguments to %0 must be vectors">;
 def err_vec_builtin_incompatible_vector : Error<
