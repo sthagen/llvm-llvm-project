@@ -51,6 +51,7 @@ set(TARGET_LIBC_ENTRYPOINTS
     libc.src.string.mempcpy
     libc.src.string.memrchr
     libc.src.string.memset
+    libc.src.string.memset_explicit
     libc.src.string.rindex
     libc.src.string.stpcpy
     libc.src.string.stpncpy
@@ -152,6 +153,11 @@ set(TARGET_LIBC_ENTRYPOINTS
     libc.src.stdbit.stdc_bit_width_ui
     libc.src.stdbit.stdc_bit_width_ul
     libc.src.stdbit.stdc_bit_width_ull
+    libc.src.stdbit.stdc_bit_floor_uc
+    libc.src.stdbit.stdc_bit_floor_us
+    libc.src.stdbit.stdc_bit_floor_ui
+    libc.src.stdbit.stdc_bit_floor_ul
+    libc.src.stdbit.stdc_bit_floor_ull
 
     # stdlib.h entrypoints
     libc.src.stdlib.abs
