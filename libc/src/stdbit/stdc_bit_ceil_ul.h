@@ -1,4 +1,4 @@
-//===-- GPU Implementation of malloc --------------------------------------===//
+//===-- Implementation header for stdc_bit_ceil_ul --------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,15 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/stdlib/malloc.h"
-
-#include "src/__support/GPU/allocator.h"
-#include "src/__support/common.h"
+#ifndef LLVM_LIBC_SRC_STDBIT_STDC_BIT_CEIL_UL_H
+#define LLVM_LIBC_SRC_STDBIT_STDC_BIT_CEIL_UL_H
 
 namespace LIBC_NAMESPACE {
 
-LLVM_LIBC_FUNCTION(void *, malloc, (size_t size)) {
-  return gpu::allocate(size);
-}
+unsigned long stdc_bit_ceil_ul(unsigned long value);
 
 } // namespace LIBC_NAMESPACE
+
+#endif // LLVM_LIBC_SRC_STDBIT_STDC_BIT_CEIL_UL_H
