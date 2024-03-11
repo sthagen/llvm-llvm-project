@@ -1,4 +1,4 @@
-//===-- Implementation of the GPU modf function ---------------------------===//
+//===-- Implementation header for msync function ----------------*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,13 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "src/math/modf.h"
-#include "src/__support/common.h"
+#ifndef LLVM_LIBC_SRC_SYS_MMAN_MSYNC_H
+#define LLVM_LIBC_SRC_SYS_MMAN_MSYNC_H
+
+#include <sys/mman.h>
+#include <sys/syscall.h>
 
 namespace LIBC_NAMESPACE {
 
-LLVM_LIBC_FUNCTION(double, modf, (double x, double *iptr)) {
-  return __builtin_modf(x, iptr);
-}
+int msync(void *addr, size_t len, int flags);
 
 } // namespace LIBC_NAMESPACE
+
+#endif // LLVM_LIBC_SRC_SYS_MMAN_MSYNC_H
