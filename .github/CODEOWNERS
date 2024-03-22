@@ -96,6 +96,7 @@ clang/test/AST/Interp/ @tbaederr
 # Transform Dialect in MLIR.
 /mlir/include/mlir/Dialect/Transform/* @ftynse @nicolasvasilache
 /mlir/lib/Dialect/Transform/* @ftynse @nicolasvasilache
+/mlir/**/*TransformOps* @ftynse @nicolasvasilache
 
 # SPIR-V Dialect in MLIR.
 /mlir/**/SPIRV/ @antiagainst @kuhar
@@ -119,3 +120,8 @@ clang/test/AST/Interp/ @tbaederr
 
 # Bazel build system.
 /utils/bazel/ @rupprecht
+
+# InstallAPI and TextAPI
+/llvm/**/TextAPI/ @cyndyishida
+/clang/**/InstallAPI/ @cyndyishida
+/clang/tools/clang-installapi/ @cyndyishida
