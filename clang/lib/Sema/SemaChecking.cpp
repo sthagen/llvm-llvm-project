@@ -5624,6 +5624,21 @@ bool Sema::CheckHLSLBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
             TheCall, /*CheckForFloatArgs*/
             TheCall->getArg(0)->getType()->hasFloatingRepresentation()))
       return true;
+    break;
+  }
+  // Note these are llvm builtins that we want to catch invalid intrinsic
+  // generation. Normal handling of these builitns will occur elsewhere.
+  case Builtin::BI__builtin_elementwise_cos:
+  case Builtin::BI__builtin_elementwise_sin:
+  case Builtin::BI__builtin_elementwise_log:
+  case Builtin::BI__builtin_elementwise_log2:
+  case Builtin::BI__builtin_elementwise_log10:
+  case Builtin::BI__builtin_elementwise_pow:
+  case Builtin::BI__builtin_elementwise_sqrt:
+  case Builtin::BI__builtin_elementwise_trunc: {
+    if (CheckFloatOrHalfRepresentations(this, TheCall))
+      return true;
+    break;
   }
   }
   return false;
@@ -9694,7 +9709,7 @@ bool Sema::SemaBuiltinFPClassification(CallExpr *TheCall, unsigned NumArgs,
   // vector argument can be supported in all of them.
   if (ElementTy->isVectorType() && IsFPClass) {
     VectorResultTy = GetSignedVectorType(ElementTy);
-    ElementTy = ElementTy->getAs<VectorType>()->getElementType();
+    ElementTy = ElementTy->castAs<VectorType>()->getElementType();
   }
 
   // This operation requires a non-_Complex floating-point number.
