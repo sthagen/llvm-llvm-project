@@ -103,13 +103,6 @@ public:
                                                  DC);
   }
 
-  /// Read the record that describes the visible contents of a DC.
-  bool readVisibleDeclContextStorage(uint64_t Offset,
-                                     serialization::DeclID ID) {
-    return Reader->ReadVisibleDeclContextStorage(*F, F->DeclsCursor, Offset,
-                                                 ID);
-  }
-
   ExplicitSpecifier readExplicitSpec() {
     uint64_t Kind = readInt();
     bool HasExpr = Kind & 0x1;
@@ -189,7 +182,7 @@ public:
   /// Reads a declaration ID from the given position in this record.
   ///
   /// \returns The declaration ID read from the record, adjusted to a global ID.
-  serialization::DeclID readDeclID() {
+  serialization::GlobalDeclID readDeclID() {
     return Reader->ReadDeclID(*F, Record, Idx);
   }
 
