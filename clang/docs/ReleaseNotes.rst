@@ -90,6 +90,11 @@ C++ Language Changes
 --------------------
 - Implemented ``_BitInt`` literal suffixes ``__wb`` or ``__WB`` as a Clang extension with ``unsigned`` modifiers also allowed. (#GH85223).
 
+C++14 Feature Support
+^^^^^^^^^^^^^^^^^^^^^
+- Sized deallocation is enabled by default in C++14 onwards. The user may specify
+  ``-fno-sized-deallocation`` to disable it if there are some regressions.
+
 C++20 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 
@@ -385,18 +390,6 @@ Improvements to Clang's diagnostics
 
 - Clang now diagnoses requires expressions with explicit object parameters.
 
-- Clang now looks up members of the current instantiation in the template definition context
-  if the current instantiation has no dependent base classes.
-
-  .. code-block:: c++
-
-     template<typename T>
-     struct A {
-       int f() {
-         return this->x; // error: no member named 'x' in 'A<T>'
-       }
-     };
-
 Improvements to Clang's time-trace
 ----------------------------------
 
@@ -640,6 +633,9 @@ Arm and AArch64 Support
     * Arm Cortex-A78AE (cortex-a78ae).
     * Arm Cortex-A520AE (cortex-a520ae).
     * Arm Cortex-A720AE (cortex-a720ae).
+    * Arm Neoverse-N3 (neoverse-n3).
+    * Arm Neoverse-V3 (neoverse-v3).
+    * Arm Neoverse-V3AE (neoverse-v3ae).
 
 Android Support
 ^^^^^^^^^^^^^^^
