@@ -451,9 +451,18 @@ RISCVISAInfo::parseNormalizedArchString(StringRef Arch) {
   // Each extension is of the form ${name}${major_version}p${minor_version}
   // and separated by _. Split by _ and then extract the name and version
   // information for each extension.
-  SmallVector<StringRef, 8> Split;
-  Arch.split(Split, '_');
-  for (StringRef Ext : Split) {
+  while (!Arch.empty()) {
+    if (Arch[0] == '_') {
+      if (Arch.size() == 1 || Arch[1] == '_')
+        return createStringError(errc::invalid_argument,
+                                 "extension name missing after separator '_'");
+      Arch = Arch.drop_front();
+    }
+
+    size_t Idx = Arch.find('_');
+    StringRef Ext = Arch.slice(0, Idx);
+    Arch = Arch.slice(Idx, StringRef::npos);
+
     StringRef Prefix, MinorVersionStr;
     std::tie(Prefix, MinorVersionStr) = Ext.rsplit('p');
     if (MinorVersionStr.empty())
@@ -989,19 +998,19 @@ RISCVISAInfo::postProcessAndChecking(std::unique_ptr<RISCVISAInfo> &&ISAInfo) {
 
 StringRef RISCVISAInfo::computeDefaultABI() const {
   if (XLen == 32) {
-    if (hasExtension("e"))
+    if (Exts.count("e"))
       return "ilp32e";
-    if (hasExtension("d"))
+    if (Exts.count("d"))
       return "ilp32d";
-    if (hasExtension("f"))
+    if (Exts.count("f"))
       return "ilp32f";
     return "ilp32";
   } else if (XLen == 64) {
-    if (hasExtension("e"))
+    if (Exts.count("e"))
       return "lp64e";
-    if (hasExtension("d"))
+    if (Exts.count("d"))
       return "lp64d";
-    if (hasExtension("f"))
+    if (Exts.count("f"))
       return "lp64f";
     return "lp64";
   }
