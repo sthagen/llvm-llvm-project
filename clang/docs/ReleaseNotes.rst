@@ -317,7 +317,8 @@ New Compiler Flags
 
 - ``-fexperimental-late-parse-attributes`` enables an experimental feature to
   allow late parsing certain attributes in specific contexts where they would
-  not normally be late parsed.
+  not normally be late parsed. Currently this allows late parsing the
+  `counted_by` attribute in C. See `Attribute Changes in Clang`_.
 
 - ``-fseparate-named-sections`` uses separate unique sections for global
   symbols in named special sections (i.e. symbols annotated with
@@ -406,6 +407,24 @@ Attribute Changes in Clang
 - The ``clspv_libclc_builtin`` attribute has been added to allow clspv
   (`OpenCL-C to Vulkan SPIR-V compiler <https://github.com/google/clspv>`_) to identify functions coming from libclc
   (`OpenCL-C builtin library <https://libclc.llvm.org>`_).
+- The ``counted_by`` attribute is now allowed on pointers that are members of a
+  struct in C.
+
+- The ``counted_by`` attribute can now be late parsed in C when
+  ``-fexperimental-late-parse-attributes`` is passed but only when attribute is
+  used in the declaration attribute position. This allows using the
+  attribute on existing code where it previously impossible to do so without
+  re-ordering struct field declarations would break ABI as shown below.
+
+  .. code-block:: c
+
+     struct BufferTy {
+       /* Refering to `count` requires late parsing */
+       char* buffer __counted_by(count);
+       /* Swapping `buffer` and `count` to avoid late parsing would break ABI */
+       size_t count;
+     };
+
 
 Improvements to Clang's diagnostics
 -----------------------------------
@@ -737,6 +756,8 @@ Bug Fixes to C++ Support
   templates during partial ordering when deducing template arguments from a function declaration or when
   taking the address of a function template.
 - Fix a bug with checking constrained non-type template parameters for equivalence. Fixes (#GH77377).
+- Fix a bug where the last argument was not considered when considering the most viable function for
+  explicit object argument member functions. Fixes (#GH92188).
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
