@@ -2022,6 +2022,10 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       setOperationAction(ISD::ROTL, MVT::v32i16, Custom);
       setOperationAction(ISD::ROTR, MVT::v32i16, Custom);
     }
+
+    setOperationAction(ISD::FNEG, MVT::v32f16, Custom);
+    setOperationAction(ISD::FABS, MVT::v32f16, Custom);
+    setOperationAction(ISD::FCOPYSIGN, MVT::v32f16, Custom);
   }// useAVX512Regs
 
   if (!Subtarget.useSoftFloat() && Subtarget.hasVBMI2()) {
@@ -2098,9 +2102,6 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
       for (auto VT : { MVT::v4i32, MVT::v8i32, MVT::v2i64, MVT::v4i64 })
         setOperationAction(ISD::CTPOP, VT, Legal);
     }
-    setOperationAction(ISD::FNEG, MVT::v32f16, Custom);
-    setOperationAction(ISD::FABS, MVT::v32f16, Custom);
-    setOperationAction(ISD::FCOPYSIGN, MVT::v32f16, Custom);
   }
 
   // This block control legalization of v32i1/v64i1 which are available with
@@ -33825,18 +33826,8 @@ const char *X86TargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(ADDSUB)
   NODE_NAME_CASE(RCP14)
   NODE_NAME_CASE(RCP14S)
-  NODE_NAME_CASE(RCP28)
-  NODE_NAME_CASE(RCP28_SAE)
-  NODE_NAME_CASE(RCP28S)
-  NODE_NAME_CASE(RCP28S_SAE)
-  NODE_NAME_CASE(EXP2)
-  NODE_NAME_CASE(EXP2_SAE)
   NODE_NAME_CASE(RSQRT14)
   NODE_NAME_CASE(RSQRT14S)
-  NODE_NAME_CASE(RSQRT28)
-  NODE_NAME_CASE(RSQRT28_SAE)
-  NODE_NAME_CASE(RSQRT28S)
-  NODE_NAME_CASE(RSQRT28S_SAE)
   NODE_NAME_CASE(FADD_RND)
   NODE_NAME_CASE(FADDS)
   NODE_NAME_CASE(FADDS_RND)
@@ -42939,7 +42930,6 @@ bool X86TargetLowering::isGuaranteedNotToBeUndefOrPoisonForTargetNode(
     bool PoisonOnly, unsigned Depth) const {
   unsigned NumElts = DemandedElts.getBitWidth();
 
-  // TODO: Add more target shuffles.
   switch (Op.getOpcode()) {
   case X86ISD::PSHUFD:
   case X86ISD::VPERMILPI: {
@@ -42975,8 +42965,12 @@ bool X86TargetLowering::canCreateUndefOrPoisonForTargetNode(
     SDValue Op, const APInt &DemandedElts, const SelectionDAG &DAG,
     bool PoisonOnly, bool ConsiderFlags, unsigned Depth) const {
 
-  // TODO: Add more target shuffles.
   switch (Op.getOpcode()) {
+  // SSE vector shifts handle out of bounds shift amounts.
+  case X86ISD::VSHLI:
+  case X86ISD::VSRLI:
+  case X86ISD::VSRAI:
+    return false;
   case X86ISD::PSHUFD:
   case X86ISD::VPERMILPI:
   case X86ISD::UNPCKH:
