@@ -803,12 +803,14 @@ Miscellaneous Bug Fixes
 - Fixed an infinite recursion in ASTImporter, on return type declared inside
   body of C++11 lambda without trailing return (#GH68775).
 - Fixed declaration name source location of instantiated function definitions (GH71161).
+- Improve diagnostic output to print an expression instead of 'no argument` when comparing Values as template arguments.
 
 Miscellaneous Clang Crashes Fixed
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - Do not attempt to dump the layout of dependent types or invalid declarations
   when ``-fdump-record-layouts-complete`` is passed. Fixes #GH83684.
+- Unhandled StructuralValues in the template differ (#GH93068).
 
 OpenACC Specific Changes
 ------------------------
@@ -875,6 +877,10 @@ Windows Support
   This also means that if all intrinsic features are enabled at compile time
   including STL headers will no longer slow down compile times since ``intrin.h``
   is not included from MSVC STL.
+
+- When the target triple is `*-windows-msvc` strict aliasing is now disabled by default
+  to ensure compatibility with msvc. Previously strict aliasing was only disabled if the
+  driver mode was cl.
 
 LoongArch Support
 ^^^^^^^^^^^^^^^^^
