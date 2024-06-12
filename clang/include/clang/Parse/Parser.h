@@ -2122,8 +2122,6 @@ private:
     QualType PreferredBaseType;
   };
   ExprResult ParseInitializerWithPotentialDesignator(DesignatorCompletionInfo);
-  ExprResult createEmbedExpr();
-  void ExpandEmbedDirective(SmallVectorImpl<Expr *> &Exprs);
 
   //===--------------------------------------------------------------------===//
   // clang Expressions
@@ -3130,6 +3128,20 @@ private:
                             IdentifierInfo *ScopeName, SourceLocation ScopeLoc,
                             ParsedAttr::Form Form);
 
+  void ParseGuardedByAttribute(IdentifierInfo &AttrName,
+                               SourceLocation AttrNameLoc,
+                               ParsedAttributes &Attrs,
+                               IdentifierInfo *ScopeName,
+                               SourceLocation ScopeLoc, SourceLocation *EndLoc,
+                               ParsedAttr::Form Form);
+
+  void ParseAcquiredAttribute(IdentifierInfo &AttrName,
+                              SourceLocation AttrNameLoc,
+                              ParsedAttributes &Attrs,
+                              IdentifierInfo *ScopeName,
+                              SourceLocation ScopeLoc, SourceLocation *EndLoc,
+                              ParsedAttr::Form Form);
+
   void ParseTypeofSpecifier(DeclSpec &DS);
   SourceLocation ParseDecltypeSpecifier(DeclSpec &DS);
   void AnnotateExistingDecltypeSpecifier(const DeclSpec &DS,
@@ -3815,7 +3827,6 @@ private:
   AnnotateTemplateIdTokenAsType(CXXScopeSpec &SS,
                                 ImplicitTypenameContext AllowImplicitTypename,
                                 bool IsClassName = false);
-  void ExpandEmbedIntoTemplateArgList(TemplateArgList &TemplateArgs);
   bool ParseTemplateArgumentList(TemplateArgList &TemplateArgs,
                                  TemplateTy Template, SourceLocation OpenLoc);
   ParsedTemplateArgument ParseTemplateTemplateArgument();
