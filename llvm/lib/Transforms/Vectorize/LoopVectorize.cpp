@@ -7314,25 +7314,41 @@ InstructionCost LoopVectorizationPlanner::cost(VPlan &Plan,
   // compared to the recipes that are generated. To match here initially during
   // VPlan cost model bring up directly use the induction costs from the legacy
   // cost model. Note that we do this as pre-processing; the VPlan may not have
-  // any recipes associated with the original induction increment instruction.
-  // We precompute the cost of both induction increment instructions that are
-  // represented by recipes and those that are not, to avoid distinguishing
-  // between them here, and skip all recipes that represent induction increments
-  // (the former case) later on, if they exist, to avoid counting them twice.
+  // any recipes associated with the original induction increment instruction
+  // and may replace truncates with VPWidenIntOrFpInductionRecipe. We precompute
+  // the cost of both induction increment instructions that are represented by
+  // recipes and those that are not, to avoid distinguishing between them here,
+  // and skip all recipes that represent induction increments (the former case)
+  // later on, if they exist, to avoid counting them twice. Similarly we
+  // pre-compute the cost of any optimized truncates.
   // TODO: Switch to more accurate costing based on VPlan.
-  for (const auto &[IV, _] : Legal->getInductionVars()) {
+  for (const auto &[IV, IndDesc] : Legal->getInductionVars()) {
     Instruction *IVInc = cast<Instruction>(
         IV->getIncomingValueForBlock(OrigLoop->getLoopLatch()));
-    assert(!CostCtx.SkipCostComputation.contains(IVInc) &&
-           "Same IV increment for multiple inductions?");
-    CostCtx.SkipCostComputation.insert(IVInc);
-    InstructionCost InductionCost = CostCtx.getLegacyCost(IVInc, VF);
-    LLVM_DEBUG({
-      dbgs() << "Cost of " << InductionCost << " for VF " << VF
-             << ":\n induction increment " << *IVInc << "\n";
-      IVInc->dump();
-    });
-    Cost += InductionCost;
+    if (CostCtx.SkipCostComputation.insert(IVInc).second) {
+      InstructionCost InductionCost = CostCtx.getLegacyCost(IVInc, VF);
+      LLVM_DEBUG({
+        dbgs() << "Cost of " << InductionCost << " for VF " << VF
+               << ":\n induction increment " << *IVInc << "\n";
+        IVInc->dump();
+      });
+      Cost += InductionCost;
+    }
+    for (User *U : IV->users()) {
+      auto *CI = cast<Instruction>(U);
+      if (!CostCtx.CM.isOptimizableIVTruncate(CI, VF))
+        continue;
+      assert(!CostCtx.SkipCostComputation.contains(CI) &&
+             "Same cast for multiple inductions?");
+      CostCtx.SkipCostComputation.insert(CI);
+      InstructionCost CastCost = CostCtx.getLegacyCost(CI, VF);
+      LLVM_DEBUG({
+        dbgs() << "Cost of " << CastCost << " for VF " << VF
+               << ":\n induction cast " << *CI << "\n";
+        CI->dump();
+      });
+      Cost += CastCost;
+    }
   }
 
   /// Compute the cost of all exiting conditions of the loop using the legacy
@@ -7341,16 +7357,30 @@ InstructionCost LoopVectorizationPlanner::cost(VPlan &Plan,
   /// be a single condition to control the vector loop.
   SmallVector<BasicBlock *> Exiting;
   CM.TheLoop->getExitingBlocks(Exiting);
-  // Add the cost of all exit conditions.
+  SetVector<Instruction *> ExitInstrs;
+  // Collect all exit conditions.
   for (BasicBlock *EB : Exiting) {
     auto *Term = dyn_cast<BranchInst>(EB->getTerminator());
     if (!Term)
       continue;
     if (auto *CondI = dyn_cast<Instruction>(Term->getOperand(0))) {
-      assert(!CostCtx.SkipCostComputation.contains(CondI) &&
-             "Condition already skipped?");
-      CostCtx.SkipCostComputation.insert(CondI);
-      Cost += CostCtx.getLegacyCost(CondI, VF);
+      ExitInstrs.insert(CondI);
+    }
+  }
+  // Compute the cost of all instructions only feeding the exit conditions.
+  for (unsigned I = 0; I != ExitInstrs.size(); ++I) {
+    Instruction *CondI = ExitInstrs[I];
+    if (!OrigLoop->contains(CondI) ||
+        !CostCtx.SkipCostComputation.insert(CondI).second)
+      continue;
+    Cost += CostCtx.getLegacyCost(CondI, VF);
+    for (Value *Op : CondI->operands()) {
+      auto *OpI = dyn_cast<Instruction>(Op);
+      if (!OpI || any_of(OpI->users(), [&ExitInstrs](User *U) {
+            return !ExitInstrs.contains(cast<Instruction>(U));
+          }))
+        continue;
+      ExitInstrs.insert(OpI);
     }
   }
 
