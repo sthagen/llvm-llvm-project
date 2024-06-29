@@ -5389,7 +5389,7 @@ def err_not_class_template_specialization : Error<
   "cannot specialize a %select{dependent template|template template "
   "parameter}0">;
 def ext_explicit_specialization_storage_class : ExtWarn<
-  "explicit specialization cannot have a storage class">;
+  "explicit specialization cannot have a storage class">, InGroup<ExplicitSpecializationStorageClass>;
 def err_dependent_function_template_spec_no_match : Error<
   "no candidate function template was found for dependent"
   " %select{member|friend}0 function template specialization">;
@@ -11117,7 +11117,7 @@ def err_omp_loop_variable_type : Error<
 def err_omp_loop_incr_not_compatible : Error<
   "increment expression must cause %0 to %select{decrease|increase}1 "
   "on each iteration of OpenMP for loop">;
-def note_omp_loop_cond_requres_compatible_incr : Note<
+def note_omp_loop_cond_requires_compatible_incr : Note<
   "loop step is expected to be %select{negative|positive}0 due to this condition">;
 def err_omp_loop_diff_cxx : Error<
   "could not calculate number of iterations calling 'operator-' with "
