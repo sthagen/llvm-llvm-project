@@ -204,8 +204,8 @@ bool MCAssembler::evaluateFixup(const MCFixup &Fixup, const MCFragment *DF,
                   MCFixupKindInfo::FKF_IsTarget;
 
   if (IsTarget)
-    return getBackend().evaluateTargetFixup(*this, *Layout, Fixup, DF, Target,
-                                            STI, Value, WasForced);
+    return getBackend().evaluateTargetFixup(*this, Fixup, DF, Target, STI,
+                                            Value, WasForced);
 
   unsigned FixupFlags = getBackendPtr()->getFixupKindInfo(Fixup.getKind()).Flags;
   bool IsPCRel = getBackendPtr()->getFixupKindInfo(Fixup.getKind()).Flags &
@@ -270,7 +270,7 @@ bool MCAssembler::evaluateFixup(const MCFixup &Fixup, const MCFragment *DF,
   // recordRelocation handle non-VK_None cases like A@plt-B+C.
   if (!IsResolved && Target.getSymA() && Target.getSymB() &&
       Target.getSymA()->getKind() == MCSymbolRefExpr::VK_None &&
-      getBackend().handleAddSubRelocations(*Layout, *DF, Fixup, Target, Value))
+      getBackend().handleAddSubRelocations(*this, *DF, Fixup, Target, Value))
     return true;
 
   return IsResolved;
@@ -494,10 +494,6 @@ uint64_t MCAssembler::getFragmentOffset(const MCFragment &F) const {
   return F.Offset;
 }
 
-uint64_t MCAsmLayout::getFragmentOffset(const MCFragment *F) const {
-  return Assembler.getFragmentOffset(*F);
-}
-
 // Simple getSymbolOffset helper for the non-variable case.
 static bool getLabelOffset(const MCAssembler &Asm, const MCSymbol &S,
                            bool ReportError, uint64_t &Val) {
@@ -607,18 +603,12 @@ uint64_t MCAssembler::getSectionAddressSize(const MCSection &Sec) const {
   const MCFragment &F = *Sec.curFragList()->Tail;
   return getFragmentOffset(F) + computeFragmentSize(F);
 }
-uint64_t MCAsmLayout::getSectionAddressSize(const MCSection *Sec) const {
-  return Assembler.getSectionAddressSize(*Sec);
-}
 
 uint64_t MCAssembler::getSectionFileSize(const MCSection &Sec) const {
   // Virtual sections have no file size.
   if (Sec.isVirtualSection())
     return 0;
   return getSectionAddressSize(Sec);
-}
-uint64_t MCAsmLayout::getSectionFileSize(const MCSection *Sec) const {
-  return Assembler.getSectionFileSize(*Sec);
 }
 
 bool MCAssembler::registerSymbol(const MCSymbol &Symbol) {
@@ -667,7 +657,7 @@ void MCAssembler::writeFragmentPadding(raw_ostream &OS,
 
 /// Write the fragment \p F to the output file.
 static void writeFragment(raw_ostream &OS, const MCAssembler &Asm,
-                          const MCAsmLayout &Layout, const MCFragment &F) {
+                          const MCFragment &F) {
   // FIXME: Embed in fragments instead?
   uint64_t FragmentSize = Asm.computeFragmentSize(F);
 
@@ -884,13 +874,13 @@ static void writeFragment(raw_ostream &OS, const MCAssembler &Asm,
          "The stream should advance by fragment size");
 }
 
-void MCAssembler::writeSectionData(raw_ostream &OS, const MCSection *Sec,
-                                   const MCAsmLayout &Layout) const {
+void MCAssembler::writeSectionData(raw_ostream &OS,
+                                   const MCSection *Sec) const {
   assert(getBackendPtr() && "Expected assembler backend");
 
   // Ignore virtual sections.
   if (Sec->isVirtualSection()) {
-    assert(Layout.getSectionFileSize(Sec) == 0 && "Invalid size for section!");
+    assert(getSectionFileSize(*Sec) == 0 && "Invalid size for section!");
 
     // Check that contents are only things legal inside a virtual section.
     for (const MCFragment &F : *Sec) {
@@ -938,10 +928,10 @@ void MCAssembler::writeSectionData(raw_ostream &OS, const MCSection *Sec,
   (void)Start;
 
   for (const MCFragment &F : *Sec)
-    writeFragment(OS, *this, Layout, F);
+    writeFragment(OS, *this, F);
 
   assert(getContext().hadError() ||
-         OS.tell() - Start == Layout.getSectionAddressSize(Sec));
+         OS.tell() - Start == getSectionAddressSize(*Sec));
 }
 
 std::tuple<MCValue, uint64_t, bool>
@@ -957,7 +947,7 @@ MCAssembler::handleFixup(MCFragment &F, const MCFixup &Fixup,
     // The fixup was unresolved, we need a relocation. Inform the object
     // writer of the relocation, and give it an opportunity to adjust the
     // fixup value if need be.
-    getWriter().recordRelocation(*this, *Layout, &F, Fixup, Target, FixedValue);
+    getWriter().recordRelocation(*this, &F, Fixup, Target, FixedValue);
   }
   return std::make_tuple(Target, FixedValue, IsResolved);
 }
@@ -1022,7 +1012,7 @@ void MCAssembler::layout(MCAsmLayout &Layout) {
 
   // Allow the object writer a chance to perform post-layout binding (for
   // example, to set the index fields in the symbol data).
-  getWriter().executePostLayoutBinding(*this, Layout);
+  getWriter().executePostLayoutBinding(*this);
 
   // Evaluate and apply the fixups, generating relocation entries as necessary.
   for (MCSection &Sec : *this) {
@@ -1040,7 +1030,7 @@ void MCAssembler::layout(MCAsmLayout &Layout) {
         // Insert fixup type for code alignment if the target define
         // shouldInsertFixupForCodeAlign target hook.
         if (Sec.useCodeAlign() && AF.hasEmitNops())
-          getBackend().shouldInsertFixupForCodeAlign(*this, Layout, AF);
+          getBackend().shouldInsertFixupForCodeAlign(*this, AF);
         continue;
       }
       case MCFragment::FT_Data: {
@@ -1109,7 +1099,7 @@ void MCAssembler::Finish() {
   layout(Layout);
 
   // Write the object file.
-  stats::ObjectBytes += getWriter().writeObject(*this, Layout);
+  stats::ObjectBytes += getWriter().writeObject(*this);
 
   this->Layout = nullptr;
 }
@@ -1126,8 +1116,8 @@ bool MCAssembler::fixupNeedsRelaxation(const MCFixup &Fixup,
       Target.getSymA()->getKind() == MCSymbolRefExpr::VK_X86_ABS8 &&
       Fixup.getKind() == FK_Data_1)
     return false;
-  return getBackend().fixupNeedsRelaxationAdvanced(Fixup, Resolved, Value, DF,
-                                                   *Layout, WasForced);
+  return getBackend().fixupNeedsRelaxationAdvanced(*this, Fixup, Resolved,
+                                                   Value, DF, WasForced);
 }
 
 bool MCAssembler::fragmentNeedsRelaxation(const MCRelaxableFragment *F) const {
