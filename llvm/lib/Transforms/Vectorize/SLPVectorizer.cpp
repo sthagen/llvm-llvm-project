@@ -4099,7 +4099,14 @@ BoUpSLP::~BoUpSLP() {
   SmallVector<WeakTrackingVH> DeadInsts;
   for (auto *I : DeletedInstructions) {
     if (!I->getParent()) {
-      I->insertBefore(F->getEntryBlock().getTerminator());
+      // Temporarily insert instruction back to erase them from parent and
+      // memory later.
+      if (isa<PHINode>(I))
+        // Phi nodes must be the very first instructions in the block.
+        I->insertBefore(F->getEntryBlock(),
+                        F->getEntryBlock().getFirstNonPHIIt());
+      else
+        I->insertBefore(F->getEntryBlock().getTerminator());
       continue;
     }
     for (Use &U : I->operands()) {
@@ -16889,9 +16896,8 @@ public:
                              SmallVectorImpl<Value *> &ExtraArgs,
                              SmallVectorImpl<Value *> &PossibleReducedVals,
                              SmallVectorImpl<Instruction *> &ReductionOps) {
-      for (int I = getFirstOperandIndex(TreeN),
-               End = getNumberOfOperands(TreeN);
-           I < End; ++I) {
+      for (int I : reverse(seq<int>(getFirstOperandIndex(TreeN),
+                                    getNumberOfOperands(TreeN)))) {
         Value *EdgeVal = getRdxOperand(TreeN, I);
         ReducedValsToOps[EdgeVal].push_back(TreeN);
         auto *EdgeInst = dyn_cast<Instruction>(EdgeVal);
@@ -16927,7 +16933,6 @@ public:
     initReductionOps(Root);
     DenseMap<Value *, SmallVector<LoadInst *>> LoadsMap;
     SmallSet<size_t, 2> LoadKeyUsed;
-    SmallPtrSet<Value *, 4> DoNotReverseVals;
 
     auto GenerateLoadsSubkey = [&](size_t Key, LoadInst *LI) {
       Value *Ptr = getUnderlyingObject(LI->getPointerOperand());
@@ -16944,14 +16949,12 @@ public:
             if (arePointersCompatible(RLI->getPointerOperand(),
                                       LI->getPointerOperand(), TLI)) {
               hash_code SubKey = hash_value(RLI->getPointerOperand());
-              DoNotReverseVals.insert(RLI);
               return SubKey;
             }
           }
           if (LIt->second.size() > 2) {
             hash_code SubKey =
                 hash_value(LIt->second.back()->getPointerOperand());
-            DoNotReverseVals.insert(LIt->second.back());
             return SubKey;
           }
         }
@@ -17016,24 +17019,19 @@ public:
       });
       int NewIdx = -1;
       for (ArrayRef<Value *> Data : PossibleRedValsVect) {
-        if (isGoodForReduction(Data) ||
-            (isa<LoadInst>(Data.front()) && NewIdx >= 0 &&
-             isa<LoadInst>(ReducedVals[NewIdx].front()) &&
-             getUnderlyingObject(
-                 cast<LoadInst>(Data.front())->getPointerOperand()) ==
-                 getUnderlyingObject(cast<LoadInst>(ReducedVals[NewIdx].front())
-                                         ->getPointerOperand()))) {
-          if (NewIdx < 0) {
-            NewIdx = ReducedVals.size();
-            ReducedVals.emplace_back();
-          }
-          if (DoNotReverseVals.contains(Data.front()))
-            ReducedVals[NewIdx].append(Data.begin(), Data.end());
-          else
-            ReducedVals[NewIdx].append(Data.rbegin(), Data.rend());
-        } else {
-          ReducedVals.emplace_back().append(Data.rbegin(), Data.rend());
+        if (NewIdx < 0 ||
+            (!isGoodForReduction(Data) &&
+             (!isa<LoadInst>(Data.front()) ||
+              !isa<LoadInst>(ReducedVals[NewIdx].front()) ||
+              getUnderlyingObject(
+                  cast<LoadInst>(Data.front())->getPointerOperand()) !=
+                  getUnderlyingObject(
+                      cast<LoadInst>(ReducedVals[NewIdx].front())
+                          ->getPointerOperand())))) {
+          NewIdx = ReducedVals.size();
+          ReducedVals.emplace_back();
         }
+        ReducedVals[NewIdx].append(Data.rbegin(), Data.rend());
       }
     }
     // Sort the reduced values by number of same/alternate opcode and/or pointer
@@ -18734,6 +18732,11 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
         },
         /*MaxVFOnly=*/true, R);
     Changed |= HaveVectorizedPhiNodes;
+    if (HaveVectorizedPhiNodes && any_of(PHIToOpcodes, [&](const auto &P) {
+          auto *PHI = dyn_cast<PHINode>(P.first);
+          return !PHI || R.isDeleted(PHI);
+        }))
+      PHIToOpcodes.clear();
     VisitedInstrs.insert(Incoming.begin(), Incoming.end());
   } while (HaveVectorizedPhiNodes);
 
@@ -18806,7 +18809,7 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
       }
       // Try to vectorize the incoming values of the PHI, to catch reductions
       // that feed into PHIs.
-      for (unsigned I = 0, E = P->getNumIncomingValues(); I != E; I++) {
+      for (unsigned I : seq<unsigned>(P->getNumIncomingValues())) {
         // Skip if the incoming block is the current BB for now. Also, bypass
         // unreachable IR for efficiency and to avoid crashing.
         // TODO: Collect the skipped incoming values and try to vectorize them
@@ -18818,9 +18821,16 @@ bool SLPVectorizerPass::vectorizeChainsInBlock(BasicBlock *BB, BoUpSLP &R) {
         // Postponed instructions should not be vectorized here, delay their
         // vectorization.
         if (auto *PI = dyn_cast<Instruction>(P->getIncomingValue(I));
-            PI && !IsInPostProcessInstrs(PI))
-          Changed |= vectorizeRootInstruction(nullptr, PI,
+            PI && !IsInPostProcessInstrs(PI)) {
+          bool Res = vectorizeRootInstruction(nullptr, PI,
                                               P->getIncomingBlock(I), R, TTI);
+          Changed |= Res;
+          if (Res && R.isDeleted(P)) {
+            It = BB->begin();
+            E = BB->end();
+            break;
+          }
+        }
       }
       continue;
     }

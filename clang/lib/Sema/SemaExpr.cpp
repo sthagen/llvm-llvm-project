@@ -2624,7 +2624,7 @@ recoverFromMSUnqualifiedLookup(Sema &S, ASTContext &Context,
     return CXXDependentScopeMemberExpr::Create(
         Context, /*This=*/nullptr, ThisType, /*IsArrow=*/true,
         /*Op=*/SourceLocation(), NestedNameSpecifierLoc(), TemplateKWLoc,
-        /*FirstQualifierFoundInScope=*/nullptr, NameInfo, TemplateArgs);
+        /*UnqualifiedLookups=*/std::nullopt, NameInfo, TemplateArgs);
   }
 
   // Synthesize a fake NNS that points to the derived class.  This will
@@ -2666,11 +2666,10 @@ Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     return ExprError();
   }
 
-  // BoundsSafety: This specially handles arguments of bounds attributes
-  // appertains to a type of C struct field such that the name lookup
-  // within a struct finds the member name, which is not the case for other
-  // contexts in C.
-  if (isBoundsAttrContext() && !getLangOpts().CPlusPlus && S->isClassScope()) {
+  // This specially handles arguments of attributes appertains to a type of C
+  // struct field such that the name lookup within a struct finds the member
+  // name, which is not the case for other contexts in C.
+  if (isAttrContext() && !getLangOpts().CPlusPlus && S->isClassScope()) {
     // See if this is reference to a field of struct.
     LookupResult R(*this, NameInfo, LookupMemberName);
     // LookupName handles a name lookup from within anonymous struct.
@@ -3279,7 +3278,7 @@ ExprResult Sema::BuildDeclarationNameExpr(
   case Decl::Field:
   case Decl::IndirectField:
   case Decl::ObjCIvar:
-    assert((getLangOpts().CPlusPlus || isBoundsAttrContext()) &&
+    assert((getLangOpts().CPlusPlus || isAttrContext()) &&
            "building reference to field in C?");
 
     // These can't have reference type in well-formed programs, but
