@@ -533,6 +533,8 @@ set(files
   __memory/concepts.h
   __memory/construct_at.h
   __memory/destruct_n.h
+  __memory/inout_ptr.h
+  __memory/out_ptr.h
   __memory/pointer_traits.h
   __memory/ranges_construct_at.h
   __memory/ranges_uninitialized_algorithms.h
@@ -793,7 +795,6 @@ set(files
   __type_traits/is_referenceable.h
   __type_traits/is_same.h
   __type_traits/is_scalar.h
-  __type_traits/is_scoped_enum.h
   __type_traits/is_signed.h
   __type_traits/is_signed_integer.h
   __type_traits/is_specialization.h
