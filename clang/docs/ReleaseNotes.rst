@@ -58,7 +58,8 @@ C++ Specific Potentially Breaking Changes
   versions of clang. The deprecation warning for the negative spelling can be
   disabled with `-Wno-deprecated-no-relaxed-template-template-args`.
 
-- Clang now rejects pointer to member from parenthesized expression in unevaluated context such as ``decltype(&(foo::bar))``. (#GH40906).
+- Clang no longer tries to form pointer-to-members from qualified and parenthesized unevaluated expressions
+  such as ``decltype(&(foo::bar))``. (#GH40906).
 
 - Clang now performs semantic analysis for unary operators with dependent operands
   that are known to be of non-class non-enumeration type prior to instantiation.
@@ -284,8 +285,6 @@ C++2c Feature Support
 - Implemented `P3144R2 Deleting a Pointer to an Incomplete Type Should be Ill-formed <https://wg21.link/P3144R2>`_.
 
 - Implemented `P2963R3 Ordering of constraints involving fold expressions <https://wg21.link/P2963R3>`_.
-
-- Implemented `P3034R1 Module Declarations Shouldn’t be Macros <https://wg21.link/P3034R1>`_.
 
 
 Resolutions to C++ Defect Reports
