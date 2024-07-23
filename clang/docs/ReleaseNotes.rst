@@ -440,6 +440,13 @@ Non-comprehensive list of changes in this release
   pointers, enabling more powerful alias analysis when accessing pointer types.
   The new behavior can be enabled using ``-fpointer-tbaa``.
 
+- The ``__atomic_always_lock_free`` and ``__atomic_is_lock_free``
+  builtins may now return true if the pointer argument is a
+  compile-time constant (e.g. ``(void*)4``), and constant pointer is
+  sufficiently-aligned for the access requested. Previously, only the
+  type of the pointer was taken into account. This improves
+  compatibility with GCC's libstdc++.
+
 New Compiler Flags
 ------------------
 - ``-fsanitize=implicit-bitfield-conversion`` checks implicit truncation and
@@ -744,6 +751,19 @@ Improvements to Clang's diagnostics
 
 - Clang now diagnoses dangling assignments for pointer-like objects (annotated with `[[gsl::Pointer]]`) under `-Wdangling-assignment-gsl` (off by default)
   Fixes #GH63310.
+  
+- Clang now diagnoses uses of alias templates with a deprecated attribute. (Fixes #GH18236).
+
+  .. code-block:: c++
+
+     template <typename T>
+     struct NoAttr {
+     };
+
+     template <typename T>
+     using UsingWithAttr __attribute__((deprecated)) = NoAttr<T>;
+
+     UsingWithAttr<int> objUsingWA; // warning: 'UsingWithAttr' is deprecated
 
 Improvements to Clang's time-trace
 ----------------------------------
@@ -1238,6 +1258,11 @@ AIX Support
   This access sequence is not used for TLS variables larger than 32KB, and is
   currently only supported on 64-bit mode.
 
+NetBSD Support
+^^^^^^^^^^^^^^
+
+- Removed support for building NetBSD/i386 6.x or older binaries.
+
 WebAssembly Support
 ^^^^^^^^^^^^^^^^^^^
 
@@ -1325,6 +1350,10 @@ Crash and bug fixes
 
 - Z3 crosschecking (aka. Z3 refutation) is now bounded, and can't consume
   more total time than the eymbolic execution itself. (#GH97298)
+
+- ``std::addressof``, ``std::as_const``, ``std::forward``,
+  ``std::forward_like``, ``std::move``, ``std::move_if_noexcept``, are now
+  modeled just like their builtin counterpart. (#GH94193)
 
 Improvements
 ^^^^^^^^^^^^
