@@ -2121,7 +2121,7 @@ bool SignalContext::IsTrueFaultingAddress() const {
 UNUSED
 static const char *RegNumToRegName(int reg) {
   switch (reg) {
-#  if SANITIZER_LINUX
+#  if SANITIZER_LINUX && SANITIZER_GLIBC
 #    if defined(__x86_64__)
     case REG_RAX:
       return "rax";
@@ -2240,14 +2240,15 @@ static const char *RegNumToRegName(int reg) {
     case 31:
       return "sp";
 #    endif
-#  endif  // SANITIZER_LINUX
+#  endif  // SANITIZER_LINUX && SANITIZER_GLIBC
     default:
       return NULL;
   }
   return NULL;
 }
 
-#  if SANITIZER_LINUX && (defined(__arm__) || defined(__aarch64__))
+#  if SANITIZER_LINUX && SANITIZER_GLIBC && \
+      (defined(__arm__) || defined(__aarch64__))
 static uptr GetArmRegister(ucontext_t *ctx, int RegNum) {
   switch (RegNum) {
 #    if defined(__arm__)
@@ -2289,7 +2290,8 @@ static uptr GetArmRegister(ucontext_t *ctx, int RegNum) {
   }
   return 0;
 }
-#  endif  // SANITIZER_LINUX && (defined(__arm__) || defined(__aarch64__))
+#  endif  // SANITIZER_LINUX && SANITIZER_GLIBC && (defined(__arm__) ||
+          // defined(__aarch64__))
 
 UNUSED
 static void DumpSingleReg(ucontext_t *ctx, int RegNum) {
@@ -2312,7 +2314,7 @@ static void DumpSingleReg(ucontext_t *ctx, int RegNum) {
 
 void SignalContext::DumpAllRegisters(void *context) {
   ucontext_t *ucontext = (ucontext_t *)context;
-#  if SANITIZER_LINUX
+#  if SANITIZER_LINUX && SANITIZER_GLIBC
 #    if defined(__x86_64__)
   Report("Register values:\n");
   DumpSingleReg(ucontext, REG_RAX);
@@ -2386,25 +2388,25 @@ void SignalContext::DumpAllRegisters(void *context) {
 #  elif SANITIZER_FREEBSD
 #    if defined(__x86_64__)
   Report("Register values:\n");
-  Printf("rax = 0x%016llx  ", ucontext->uc_mcontext.mc_rax);
-  Printf("rbx = 0x%016llx  ", ucontext->uc_mcontext.mc_rbx);
-  Printf("rcx = 0x%016llx  ", ucontext->uc_mcontext.mc_rcx);
-  Printf("rdx = 0x%016llx  ", ucontext->uc_mcontext.mc_rdx);
+  Printf("rax = 0x%016lx  ", ucontext->uc_mcontext.mc_rax);
+  Printf("rbx = 0x%016lx  ", ucontext->uc_mcontext.mc_rbx);
+  Printf("rcx = 0x%016lx  ", ucontext->uc_mcontext.mc_rcx);
+  Printf("rdx = 0x%016lx  ", ucontext->uc_mcontext.mc_rdx);
   Printf("\n");
-  Printf("rdi = 0x%016llx  ", ucontext->uc_mcontext.mc_rdi);
-  Printf("rsi = 0x%016llx  ", ucontext->uc_mcontext.mc_rsi);
-  Printf("rbp = 0x%016llx  ", ucontext->uc_mcontext.mc_rbp);
-  Printf("rsp = 0x%016llx  ", ucontext->uc_mcontext.mc_rsp);
+  Printf("rdi = 0x%016lx  ", ucontext->uc_mcontext.mc_rdi);
+  Printf("rsi = 0x%016lx  ", ucontext->uc_mcontext.mc_rsi);
+  Printf("rbp = 0x%016lx  ", ucontext->uc_mcontext.mc_rbp);
+  Printf("rsp = 0x%016lx  ", ucontext->uc_mcontext.mc_rsp);
   Printf("\n");
-  Printf(" r8 = 0x%016llx  ", ucontext->uc_mcontext.mc_r8);
-  Printf(" r9 = 0x%016llx  ", ucontext->uc_mcontext.mc_r9);
-  Printf("r10 = 0x%016llx  ", ucontext->uc_mcontext.mc_r10);
-  Printf("r11 = 0x%016llx  ", ucontext->uc_mcontext.mc_r11);
+  Printf(" r8 = 0x%016lx  ", ucontext->uc_mcontext.mc_r8);
+  Printf(" r9 = 0x%016lx  ", ucontext->uc_mcontext.mc_r9);
+  Printf("r10 = 0x%016lx  ", ucontext->uc_mcontext.mc_r10);
+  Printf("r11 = 0x%016lx  ", ucontext->uc_mcontext.mc_r11);
   Printf("\n");
-  Printf("r12 = 0x%016llx  ", ucontext->uc_mcontext.mc_r12);
-  Printf("r13 = 0x%016llx  ", ucontext->uc_mcontext.mc_r13);
-  Printf("r14 = 0x%016llx  ", ucontext->uc_mcontext.mc_r14);
-  Printf("r15 = 0x%016llx  ", ucontext->uc_mcontext.mc_r15);
+  Printf("r12 = 0x%016lx  ", ucontext->uc_mcontext.mc_r12);
+  Printf("r13 = 0x%016lx  ", ucontext->uc_mcontext.mc_r13);
+  Printf("r14 = 0x%016lx  ", ucontext->uc_mcontext.mc_r14);
+  Printf("r15 = 0x%016lx  ", ucontext->uc_mcontext.mc_r15);
   Printf("\n");
 #    elif defined(__i386__)
   Report("Register values:\n");
