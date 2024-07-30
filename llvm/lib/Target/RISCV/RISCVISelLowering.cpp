@@ -273,7 +273,8 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
 
   setOperationAction(ISD::EH_DWARF_CFA, MVT::i32, Custom);
 
-  if (!Subtarget.hasStdExtZbb() && !Subtarget.hasVendorXTHeadBb())
+  if (!Subtarget.hasStdExtZbb() && !Subtarget.hasVendorXTHeadBb() &&
+      !(Subtarget.hasVendorXCValu() && !Subtarget.is64Bit()))
     setOperationAction(ISD::SIGN_EXTEND_INREG, {MVT::i8, MVT::i16}, Expand);
 
   if (Subtarget.is64Bit()) {
@@ -374,20 +375,24 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
                        Subtarget.hasStdExtZbkb() ? Custom : Expand);
   }
 
-  if (Subtarget.hasStdExtZbb()) {
+  if (Subtarget.hasStdExtZbb() ||
+      (Subtarget.hasVendorXCValu() && !Subtarget.is64Bit())) {
     setOperationAction({ISD::SMIN, ISD::SMAX, ISD::UMIN, ISD::UMAX}, XLenVT,
                        Legal);
     if (RV64LegalI32 && Subtarget.is64Bit())
       setOperationAction({ISD::SMIN, ISD::SMAX, ISD::UMIN, ISD::UMAX}, MVT::i32,
                          Promote);
+  }
 
+  if (Subtarget.hasStdExtZbb() ||
+      (Subtarget.hasVendorXCVbitmanip() && !Subtarget.is64Bit())) {
     if (Subtarget.is64Bit()) {
       if (RV64LegalI32)
         setOperationAction(ISD::CTTZ, MVT::i32, Legal);
       else
         setOperationAction({ISD::CTTZ, ISD::CTTZ_ZERO_UNDEF}, MVT::i32, Custom);
     }
-  } else if (!(Subtarget.hasVendorXCVbitmanip() && !Subtarget.is64Bit())) {
+  } else {
     setOperationAction({ISD::CTTZ, ISD::CTPOP}, XLenVT, Expand);
     if (RV64LegalI32 && Subtarget.is64Bit())
       setOperationAction({ISD::CTTZ, ISD::CTPOP}, MVT::i32, Expand);
@@ -412,13 +417,17 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
       setOperationAction(ISD::CTLZ, MVT::i32, Expand);
   }
 
-  if (!RV64LegalI32 && Subtarget.is64Bit() &&
-      !Subtarget.hasShortForwardBranchOpt())
-    setOperationAction(ISD::ABS, MVT::i32, Custom);
-
-  // We can use PseudoCCSUB to implement ABS.
-  if (Subtarget.hasShortForwardBranchOpt())
+  if (Subtarget.hasVendorXCValu() && !Subtarget.is64Bit()) {
     setOperationAction(ISD::ABS, XLenVT, Legal);
+  } else {
+    if (!RV64LegalI32 && Subtarget.is64Bit() &&
+        !Subtarget.hasShortForwardBranchOpt())
+      setOperationAction(ISD::ABS, MVT::i32, Custom);
+
+    // We can use PseudoCCSUB to implement ABS.
+    if (Subtarget.hasShortForwardBranchOpt())
+      setOperationAction(ISD::ABS, XLenVT, Legal);
+  }
 
   if (!Subtarget.hasVendorXTHeadCondMov()) {
     setOperationAction(ISD::SELECT, XLenVT, Custom);
@@ -1449,16 +1458,6 @@ RISCVTargetLowering::RISCVTargetLowering(const TargetMachine &TM,
     setIndexedStoreAction(ISD::POST_INC, MVT::i32, Legal);
   }
 
-  if (Subtarget.hasVendorXCValu() && !Subtarget.is64Bit()) {
-    setOperationAction(ISD::ABS, XLenVT, Legal);
-    setOperationAction(ISD::SMIN, XLenVT, Legal);
-    setOperationAction(ISD::UMIN, XLenVT, Legal);
-    setOperationAction(ISD::SMAX, XLenVT, Legal);
-    setOperationAction(ISD::UMAX, XLenVT, Legal);
-    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i8, Legal);
-    setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i16, Legal);
-  }
-
   // Function alignments.
   const Align FunctionAlignment(Subtarget.hasStdExtCOrZca() ? 2 : 4);
   setMinFunctionAlignment(FunctionAlignment);
@@ -1833,6 +1832,10 @@ bool RISCVTargetLowering::isLegalAddressingMode(const DataLayout &DL,
                                                 Instruction *I) const {
   // No global is ever allowed as a base.
   if (AM.BaseGV)
+    return false;
+
+  // None of our addressing modes allows a scalable offset
+  if (AM.ScalableOffset)
     return false;
 
   // RVV instructions only support register addressing.
@@ -3294,25 +3297,25 @@ static SDValue lowerVectorXRINT(SDValue Op, SelectionDAG &DAG,
 
 static SDValue
 getVSlidedown(SelectionDAG &DAG, const RISCVSubtarget &Subtarget,
-              const SDLoc &DL, EVT VT, SDValue Merge, SDValue Op,
+              const SDLoc &DL, EVT VT, SDValue Passthru, SDValue Op,
               SDValue Offset, SDValue Mask, SDValue VL,
               unsigned Policy = RISCVII::TAIL_UNDISTURBED_MASK_UNDISTURBED) {
-  if (Merge.isUndef())
+  if (Passthru.isUndef())
     Policy = RISCVII::TAIL_AGNOSTIC | RISCVII::MASK_AGNOSTIC;
   SDValue PolicyOp = DAG.getTargetConstant(Policy, DL, Subtarget.getXLenVT());
-  SDValue Ops[] = {Merge, Op, Offset, Mask, VL, PolicyOp};
+  SDValue Ops[] = {Passthru, Op, Offset, Mask, VL, PolicyOp};
   return DAG.getNode(RISCVISD::VSLIDEDOWN_VL, DL, VT, Ops);
 }
 
 static SDValue
 getVSlideup(SelectionDAG &DAG, const RISCVSubtarget &Subtarget, const SDLoc &DL,
-            EVT VT, SDValue Merge, SDValue Op, SDValue Offset, SDValue Mask,
+            EVT VT, SDValue Passthru, SDValue Op, SDValue Offset, SDValue Mask,
             SDValue VL,
             unsigned Policy = RISCVII::TAIL_UNDISTURBED_MASK_UNDISTURBED) {
-  if (Merge.isUndef())
+  if (Passthru.isUndef())
     Policy = RISCVII::TAIL_AGNOSTIC | RISCVII::MASK_AGNOSTIC;
   SDValue PolicyOp = DAG.getTargetConstant(Policy, DL, Subtarget.getXLenVT());
-  SDValue Ops[] = {Merge, Op, Offset, Mask, VL, PolicyOp};
+  SDValue Ops[] = {Passthru, Op, Offset, Mask, VL, PolicyOp};
   return DAG.getNode(RISCVISD::VSLIDEUP_VL, DL, VT, Ops);
 }
 
@@ -6086,8 +6089,8 @@ static unsigned getRISCVVLOp(SDValue Op) {
 #undef VP_CASE
 }
 
-/// Return true if a RISC-V target specified op has a merge operand.
-static bool hasMergeOp(unsigned Opcode) {
+/// Return true if a RISC-V target specified op has a passthru operand.
+static bool hasPassthruOp(unsigned Opcode) {
   assert(Opcode > RISCVISD::FIRST_NUMBER &&
          Opcode <= RISCVISD::LAST_RISCV_STRICTFP_OPCODE &&
          "not a RISC-V target specific op");
@@ -10953,7 +10956,7 @@ SDValue RISCVTargetLowering::lowerVectorStrictFSetcc(SDValue Op,
          True, VL});
     Mask =
         DAG.getNode(RISCVISD::VMAND_VL, DL, MaskVT, OrderMask1, OrderMask2, VL);
-    // Use Mask as the merge operand to let the result be 0 if either of the
+    // Use Mask as the passthru operand to let the result be 0 if either of the
     // inputs is unordered.
     Res = DAG.getNode(RISCVISD::STRICT_FSETCCS_VL, DL,
                       DAG.getVTList(MaskVT, MVT::Other),
@@ -11058,7 +11061,7 @@ SDValue RISCVTargetLowering::lowerFixedLengthVectorSelectToRVV(
 SDValue RISCVTargetLowering::lowerToScalableOp(SDValue Op,
                                                SelectionDAG &DAG) const {
   unsigned NewOpc = getRISCVVLOp(Op);
-  bool HasMergeOp = hasMergeOp(NewOpc);
+  bool HasPassthruOp = hasPassthruOp(NewOpc);
   bool HasMask = hasMaskOp(NewOpc);
 
   MVT VT = Op.getSimpleValueType();
@@ -11083,7 +11086,7 @@ SDValue RISCVTargetLowering::lowerToScalableOp(SDValue Op,
 
   SDLoc DL(Op);
   auto [Mask, VL] = getDefaultVLOps(VT, ContainerVT, DL, DAG, Subtarget);
-  if (HasMergeOp)
+  if (HasPassthruOp)
     Ops.push_back(DAG.getUNDEF(ContainerVT));
   if (HasMask)
     Ops.push_back(Mask);
@@ -11111,7 +11114,7 @@ SDValue RISCVTargetLowering::lowerToScalableOp(SDValue Op,
 //   types.
 SDValue RISCVTargetLowering::lowerVPOp(SDValue Op, SelectionDAG &DAG) const {
   unsigned RISCVISDOpc = getRISCVVLOp(Op);
-  bool HasMergeOp = hasMergeOp(RISCVISDOpc);
+  bool HasPassthruOp = hasPassthruOp(RISCVISDOpc);
 
   SDLoc DL(Op);
   MVT VT = Op.getSimpleValueType();
@@ -11124,9 +11127,9 @@ SDValue RISCVTargetLowering::lowerVPOp(SDValue Op, SelectionDAG &DAG) const {
   for (const auto &OpIdx : enumerate(Op->ops())) {
     SDValue V = OpIdx.value();
     assert(!isa<VTSDNode>(V) && "Unexpected VTSDNode node!");
-    // Add dummy merge value before the mask. Or if there isn't a mask, before
-    // EVL.
-    if (HasMergeOp) {
+    // Add dummy passthru value before the mask. Or if there isn't a mask,
+    // before EVL.
+    if (HasPassthruOp) {
       auto MaskIdx = ISD::getVPMaskIdx(Op.getOpcode());
       if (MaskIdx) {
         if (*MaskIdx == OpIdx.index())
@@ -14658,25 +14661,25 @@ struct CombineResult {
   /// The actual replacement is *not* done in that method.
   SDValue materialize(SelectionDAG &DAG,
                       const RISCVSubtarget &Subtarget) const {
-    SDValue Mask, VL, Merge;
+    SDValue Mask, VL, Passthru;
     std::tie(Mask, VL) =
         NodeExtensionHelper::getMaskAndVL(Root, DAG, Subtarget);
     switch (Root->getOpcode()) {
     default:
-      Merge = Root->getOperand(2);
+      Passthru = Root->getOperand(2);
       break;
     case ISD::ADD:
     case ISD::SUB:
     case ISD::MUL:
     case ISD::OR:
     case ISD::SHL:
-      Merge = DAG.getUNDEF(Root->getValueType(0));
+      Passthru = DAG.getUNDEF(Root->getValueType(0));
       break;
     }
     return DAG.getNode(TargetOpcode, SDLoc(Root), Root->getValueType(0),
                        LHS.getOrCreateExtendedOp(Root, DAG, Subtarget, LHSExt),
                        RHS.getOrCreateExtendedOp(Root, DAG, Subtarget, RHSExt),
-                       Merge, Mask, VL);
+                       Passthru, Mask, VL);
   }
 };
 
@@ -16159,8 +16162,8 @@ static SDValue combineToVWMACC(SDNode *N, SelectionDAG &DAG,
   SDValue MulOp = N->getOperand(1);
 
   if (N->getOpcode() == RISCVISD::ADD_VL) {
-    SDValue AddMergeOp = N->getOperand(2);
-    if (!AddMergeOp.isUndef())
+    SDValue AddPassthruOp = N->getOperand(2);
+    if (!AddPassthruOp.isUndef())
       return SDValue();
   }
 
@@ -16181,9 +16184,9 @@ static SDValue combineToVWMACC(SDNode *N, SelectionDAG &DAG,
   if (!IsVWMulOpc(MulOp.getOpcode()))
     return SDValue();
 
-  SDValue MulMergeOp = MulOp.getOperand(2);
+  SDValue MulPassthruOp = MulOp.getOperand(2);
 
-  if (!MulMergeOp.isUndef())
+  if (!MulPassthruOp.isUndef())
     return SDValue();
 
   auto [AddMask, AddVL] = [](SDNode *N, SelectionDAG &DAG,
