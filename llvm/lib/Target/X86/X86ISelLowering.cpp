@@ -10763,9 +10763,9 @@ static SDValue lowerShuffleAsBlend(const SDLoc &DL, MVT VT, SDValue V1,
     for (int i = 0, Size = Mask.size(); i < Size; ++i)
       for (int j = 0; j < Scale; ++j)
         VSELECTMask.push_back(
-            Mask[i] < 0 ? DAG.getUNDEF(MVT::i8)
-                        : DAG.getConstant(Mask[i] < Size ? -1 : 0, DL,
-                                          MVT::i8));
+            Mask[i] < 0
+                ? DAG.getUNDEF(MVT::i8)
+                : DAG.getSignedConstant(Mask[i] < Size ? -1 : 0, DL, MVT::i8));
 
     V1 = DAG.getBitcast(BlendVT, V1);
     V2 = DAG.getBitcast(BlendVT, V2);
@@ -18654,7 +18654,7 @@ SDValue X86TargetLowering::LowerGlobalOrExternal(SDValue Op, SelectionDAG &DAG,
   // addition for it.
   if (Offset != 0)
     Result = DAG.getNode(ISD::ADD, dl, PtrVT, Result,
-                         DAG.getConstant(Offset, dl, PtrVT));
+                         DAG.getSignedConstant(Offset, dl, PtrVT));
 
   return Result;
 }
@@ -24975,9 +24975,9 @@ X86TargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
       Result = DAG.getNode(ISD::SUB, dl, VT, SP, Size); // Value
     }
     if (Alignment && *Alignment > StackAlign)
-      Result =
-          DAG.getNode(ISD::AND, dl, VT, Result,
-                      DAG.getConstant(~(Alignment->value() - 1ULL), dl, VT));
+      Result = DAG.getNode(
+          ISD::AND, dl, VT, Result,
+          DAG.getSignedConstant(~(Alignment->value() - 1ULL), dl, VT));
     Chain = DAG.getCopyToReg(Chain, dl, SPReg, Result); // Output chain
   } else if (SplitStack) {
     MachineRegisterInfo &MRI = MF.getRegInfo();
@@ -25009,8 +25009,9 @@ X86TargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
     Chain = SP.getValue(1);
 
     if (Alignment) {
-      SP = DAG.getNode(ISD::AND, dl, VT, SP.getValue(0),
-                       DAG.getConstant(~(Alignment->value() - 1ULL), dl, VT));
+      SP = DAG.getNode(
+          ISD::AND, dl, VT, SP.getValue(0),
+          DAG.getSignedConstant(~(Alignment->value() - 1ULL), dl, VT));
       Chain = DAG.getCopyToReg(Chain, dl, SPReg, SP);
     }
 
@@ -42525,6 +42526,26 @@ bool X86TargetLowering::SimplifyDemandedVectorEltsForTargetNode(
           insertSubVector(UndefVec, ExtOp, 0, TLO.DAG, DL, ExtSizeInBits);
       return TLO.CombineTo(Op, Insert);
     }
+      // Conversions.
+      // TODO: Add more CVT opcodes when we have test coverage.
+    case X86ISD::CVTTP2SI:
+    case X86ISD::CVTTP2UI:
+    case X86ISD::CVTPH2PS: {
+      SDLoc DL(Op);
+      unsigned Scale = SizeInBits / ExtSizeInBits;
+      SDValue SrcOp = Op.getOperand(0);
+      MVT SrcVT = SrcOp.getSimpleValueType();
+      unsigned SrcExtSize =
+          std::max<unsigned>(SrcVT.getSizeInBits() / Scale, 128);
+      MVT ExtVT = MVT::getVectorVT(VT.getSimpleVT().getScalarType(),
+                                   ExtSizeInBits / VT.getScalarSizeInBits());
+      SDValue ExtOp = TLO.DAG.getNode(
+          Opc, DL, ExtVT, extractSubVector(SrcOp, 0, TLO.DAG, DL, SrcExtSize));
+      SDValue UndefVec = TLO.DAG.getUNDEF(VT);
+      SDValue Insert =
+          insertSubVector(UndefVec, ExtOp, 0, TLO.DAG, DL, ExtSizeInBits);
+      return TLO.CombineTo(Op, Insert);
+    }
       // Zero upper elements.
     case X86ISD::VZEXT_MOVL:
       // Variable blend.
@@ -57183,11 +57204,13 @@ static SDValue combineEXTRACT_SUBVECTOR(SDNode *N, SelectionDAG &DAG,
       }
     }
     // v4i32 CVTPS2DQ(v4f32) / CVTPS2UDQ(v4f32).
-    if ((InOpcode == ISD::FP_TO_SINT ||
-         (InOpcode == ISD::FP_TO_UINT && Subtarget.hasVLX())) &&
-        VT == MVT::v4i32) {
+    // v4f32 CVTDQ2PS(v4i32) / CVTUDQ2PS(v4i32).
+    if ((InOpcode == ISD::FP_TO_SINT || InOpcode == ISD::SINT_TO_FP ||
+         ((InOpcode == ISD::FP_TO_UINT || InOpcode == ISD::UINT_TO_FP) &&
+          Subtarget.hasVLX())) &&
+        (VT == MVT::v4i32 || VT == MVT::v4f32)) {
       SDValue Src = InVec.getOperand(0);
-      if (Src.getValueType().getScalarType() == MVT::f32)
+      if (Src.getValueType().getScalarSizeInBits() == 32)
         return DAG.getNode(InOpcode, DL, VT,
                            extractSubVector(Src, IdxVal, DAG, DL, SizeInBits));
     }
