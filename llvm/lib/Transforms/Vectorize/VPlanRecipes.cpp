@@ -593,7 +593,7 @@ Value *VPInstruction::generatePerPart(VPTransformState &State, unsigned Part) {
          RecurrenceDescriptor::isAnyOfRecurrenceKind(RK)) &&
         !PhiR->isInLoop()) {
       ReducedPartRdx =
-          createTargetReduction(Builder, RdxDesc, ReducedPartRdx, OrigPhi);
+          createReduction(Builder, RdxDesc, ReducedPartRdx, OrigPhi);
       // If the reduction can be performed in a smaller type, we need to extend
       // the reduction to the wider type before we branch to the original loop.
       if (PhiTy != RdxDesc.getRecurrenceType())
@@ -1829,13 +1829,18 @@ void VPReductionRecipe::execute(VPTransformState &State) {
       Value *NewCond = State.get(Cond, Part, State.VF.isScalar());
       VectorType *VecTy = dyn_cast<VectorType>(NewVecOp->getType());
       Type *ElementTy = VecTy ? VecTy->getElementType() : NewVecOp->getType();
-      Value *Iden = RdxDesc.getRecurrenceIdentity(Kind, ElementTy,
-                                                  RdxDesc.getFastMathFlags());
-      if (State.VF.isVector()) {
-        Iden = State.Builder.CreateVectorSplat(VecTy->getElementCount(), Iden);
-      }
 
-      Value *Select = State.Builder.CreateSelect(NewCond, NewVecOp, Iden);
+      Value *Start;
+      if (RecurrenceDescriptor::isAnyOfRecurrenceKind(Kind))
+        Start = RdxDesc.getRecurrenceStartValue();
+      else
+        Start = RdxDesc.getRecurrenceIdentity(Kind, ElementTy,
+                                              RdxDesc.getFastMathFlags());
+      if (State.VF.isVector())
+        Start = State.Builder.CreateVectorSplat(VecTy->getElementCount(),
+                                                Start);
+
+      Value *Select = State.Builder.CreateSelect(NewCond, NewVecOp, Start);
       NewVecOp = Select;
     }
     Value *NewRed;
@@ -1852,7 +1857,7 @@ void VPReductionRecipe::execute(VPTransformState &State) {
       NextInChain = NewRed;
     } else {
       PrevInChain = State.get(getChainOp(), Part, /*IsScalar*/ true);
-      NewRed = createTargetReduction(State.Builder, RdxDesc, NewVecOp);
+      NewRed = createReduction(State.Builder, RdxDesc, NewVecOp);
       if (RecurrenceDescriptor::isMinMaxRecurrenceKind(Kind))
         NextInChain = createMinMaxOp(State.Builder, RdxDesc.getRecurrenceKind(),
                                      NewRed, PrevInChain);
@@ -1895,7 +1900,7 @@ void VPReductionEVLRecipe::execute(VPTransformState &State) {
   if (isOrdered()) {
     NewRed = createOrderedReduction(VBuilder, RdxDesc, VecOp, Prev);
   } else {
-    NewRed = createSimpleTargetReduction(VBuilder, VecOp, RdxDesc);
+    NewRed = createSimpleReduction(VBuilder, VecOp, RdxDesc);
     if (RecurrenceDescriptor::isMinMaxRecurrenceKind(Kind))
       NewRed = createMinMaxOp(Builder, Kind, NewRed, Prev);
     else
