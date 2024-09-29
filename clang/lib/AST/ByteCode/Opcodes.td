@@ -98,7 +98,7 @@ def FloatTypeClass : TypeClass {
 }
 
 def AluTypeClass : TypeClass {
-  let Types = !listconcat(IntegerTypeClass.Types, [Bool]);
+  let Types = !listconcat(IntegerTypeClass.Types, [Bool], [FixedPoint]);
 }
 
 def PtrTypeClass : TypeClass {
@@ -110,7 +110,7 @@ def NonPtrTypeClass : TypeClass {
 }
 
 def AllTypeClass : TypeClass {
-  let Types = !listconcat(AluTypeClass.Types, PtrTypeClass.Types, FloatTypeClass.Types, [FixedPoint]);
+  let Types = !listconcat(AluTypeClass.Types, PtrTypeClass.Types, FloatTypeClass.Types);
 }
 
 def ComparableTypeClass : TypeClass {
@@ -626,6 +626,10 @@ def CastFP : Opcode {
   let Args = [ArgFltSemantics, ArgRoundingMode];
 }
 
+def CastFixedPoint : Opcode {
+  let Args = [ArgUint32];
+}
+
 def FixedSizeIntegralTypes : TypeClass {
   let Types = [Uint8, Sint8, Uint16, Sint16, Uint32, Sint32, Uint64, Sint64, Bool];
 }
@@ -684,6 +688,10 @@ def CastFloatingFixedPoint : Opcode {
 }
 def CastFixedPointFloating : Opcode {
   let Args = [ArgFltSemantics];
+}
+def CastFixedPointIntegral : Opcode {
+  let Types = [FixedSizeIntegralTypes];
+  let HasGroup = 1;
 }
 
 def PtrPtrCast : Opcode {

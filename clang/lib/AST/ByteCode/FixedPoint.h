@@ -33,27 +33,52 @@ public:
       : V(APInt(0, 0ULL, false),
           llvm::FixedPointSemantics(0, 0, false, false, false)) {}
 
-  static FixedPoint Zero(llvm::FixedPointSemantics Sem) {
+  static FixedPoint zero(llvm::FixedPointSemantics Sem) {
     return FixedPoint(APInt(Sem.getWidth(), 0ULL, Sem.isSigned()), Sem);
   }
 
-  operator bool() const { return V.getBoolValue(); }
-  template <typename Ty, typename = std::enable_if_t<std::is_integral_v<Ty>>>
-  explicit operator Ty() const {
-    // FIXME
-    return 0;
+  static FixedPoint from(const APSInt &I, llvm::FixedPointSemantics Sem,
+                         bool *Overflow) {
+    return FixedPoint(llvm::APFixedPoint::getFromIntValue(I, Sem, Overflow));
+  }
+  static FixedPoint from(const llvm::APFloat &I, llvm::FixedPointSemantics Sem,
+                         bool *Overflow) {
+    return FixedPoint(llvm::APFixedPoint::getFromFloatValue(I, Sem, Overflow));
   }
 
+  operator bool() const { return V.getBoolValue(); }
   void print(llvm::raw_ostream &OS) const { OS << V; }
 
   APValue toAPValue(const ASTContext &) const { return APValue(V); }
-  APSInt toAPSInt(unsigned BitWidth) const { return V.getValue(); }
+  APSInt toAPSInt(unsigned BitWidth = 0) const { return V.getValue(); }
 
   unsigned bitWidth() const { return V.getWidth(); }
   bool isSigned() const { return V.isSigned(); }
+  bool isZero() const { return V.getValue().isZero(); }
+  bool isNegative() const { return V.getValue().isNegative(); }
+  bool isPositive() const { return V.getValue().isNonNegative(); }
+  bool isMin() const {
+    return V.getValue() == APSInt::getMinValue(V.getSemantics().getWidth(),
+                                               !V.getSemantics().isSigned());
+  }
+
+  FixedPoint truncate(unsigned BitWidth) const { return *this; }
+
+  FixedPoint toSemantics(const llvm::FixedPointSemantics &Sem,
+                         bool *Overflow) const {
+    return FixedPoint(V.convert(Sem, Overflow));
+  }
 
   llvm::APFloat toFloat(const llvm::fltSemantics *Sem) const {
     return V.convertToFloat(*Sem);
+  }
+
+  llvm::APSInt toInt(unsigned BitWidth, bool Signed, bool *Overflow) const {
+    return V.convertToInt(BitWidth, Signed, Overflow);
+  }
+
+  std::string toDiagnosticString(const ASTContext &Ctx) const {
+    return V.toString();
   }
 
   ComparisonCategoryResult compare(const FixedPoint &Other) const {
@@ -67,6 +92,27 @@ public:
     *R = FixedPoint(A.V.negate(&Overflow));
     return Overflow;
   }
+
+  static bool add(const FixedPoint A, const FixedPoint B, unsigned Bits,
+                  FixedPoint *R) {
+    bool Overflow = false;
+    *R = FixedPoint(A.V.add(B.V, &Overflow));
+    return Overflow;
+  }
+  static bool sub(const FixedPoint A, const FixedPoint B, unsigned Bits,
+                  FixedPoint *R) {
+    return true;
+  }
+  static bool mul(const FixedPoint A, const FixedPoint B, unsigned Bits,
+                  FixedPoint *R) {
+    return true;
+  }
+  static bool div(const FixedPoint A, const FixedPoint B, unsigned Bits,
+                  FixedPoint *R) {
+    return true;
+  }
+  static bool increment(const FixedPoint &A, FixedPoint *R) { return true; }
+  static bool decrement(const FixedPoint &A, FixedPoint *R) { return true; }
 };
 
 inline FixedPoint getSwappedBytes(FixedPoint F) { return F; }
