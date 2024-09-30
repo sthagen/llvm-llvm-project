@@ -1547,7 +1547,6 @@ bool Compiler<Emitter>::VisitFixedPointBinOp(const BinaryOperator *E) {
     return this->emitEQFixedPoint(E);
   case BO_NE:
     return this->emitNEFixedPoint(E);
-#if 0
   case BO_LT:
     return this->emitLTFixedPoint(E);
   case BO_LE:
@@ -1556,9 +1555,18 @@ bool Compiler<Emitter>::VisitFixedPointBinOp(const BinaryOperator *E) {
     return this->emitGTFixedPoint(E);
   case BO_GE:
     return this->emitGEFixedPoint(E);
-#endif
   case BO_Add:
     return ConvertResult(this->emitAddFixedPoint(E));
+  case BO_Sub:
+    return ConvertResult(this->emitSubFixedPoint(E));
+  case BO_Mul:
+    return ConvertResult(this->emitMulFixedPoint(E));
+  case BO_Div:
+    return ConvertResult(this->emitDivFixedPoint(E));
+  case BO_Shl:
+    return ConvertResult(this->emitShiftFixedPoint(/*Left=*/true, E));
+  case BO_Shr:
+    return ConvertResult(this->emitShiftFixedPoint(/*Left=*/false, E));
 
   default:
     return this->emitInvalid(E);

@@ -374,9 +374,12 @@ bool AddSubMulHelper(InterpState &S, CodePtr OpPC, unsigned Bits, const T &LHS,
     S.Stk.push<T>(Result);
     return true;
   }
-
   // If for some reason evaluation continues, use the truncated results.
   S.Stk.push<T>(Result);
+
+  // Short-circuit fixed-points here since the error handling is easier.
+  if constexpr (std::is_same_v<T, FixedPoint>)
+    return handleFixedPointOverflow(S, OpPC, Result);
 
   // Slow path - compute the result using another bit of precision.
   APSInt Value = OpAP<APSInt>()(LHS.toAPSInt(Bits), RHS.toAPSInt(Bits));
@@ -686,6 +689,13 @@ bool Div(InterpState &S, CodePtr OpPC) {
   if (!T::div(LHS, RHS, Bits, &Result)) {
     S.Stk.push<T>(Result);
     return true;
+  }
+
+  if constexpr (std::is_same_v<T, FixedPoint>) {
+    if (handleFixedPointOverflow(S, OpPC, Result)) {
+      S.Stk.push<T>(Result);
+      return true;
+    }
   }
   return false;
 }
@@ -2567,6 +2577,42 @@ inline bool Shl(InterpState &S, CodePtr OpPC) {
   auto LHS = S.Stk.pop<LT>();
 
   return DoShift<LT, RT, ShiftDir::Left>(S, OpPC, LHS, RHS);
+}
+
+static inline bool ShiftFixedPoint(InterpState &S, CodePtr OpPC, bool Left) {
+  const auto &RHS = S.Stk.pop<FixedPoint>();
+  const auto &LHS = S.Stk.pop<FixedPoint>();
+  llvm::FixedPointSemantics LHSSema = LHS.getSemantics();
+
+  unsigned ShiftBitWidth =
+      LHSSema.getWidth() - (unsigned)LHSSema.hasUnsignedPadding() - 1;
+
+  // Embedded-C 4.1.6.2.2:
+  //   The right operand must be nonnegative and less than the total number
+  //   of (nonpadding) bits of the fixed-point operand ...
+  if (RHS.isNegative()) {
+    S.CCEDiag(S.Current->getLocation(OpPC), diag::note_constexpr_negative_shift)
+        << RHS.toAPSInt();
+  } else if (static_cast<unsigned>(RHS.toAPSInt().getLimitedValue(
+                 ShiftBitWidth)) != RHS.toAPSInt()) {
+    const Expr *E = S.Current->getExpr(OpPC);
+    S.CCEDiag(E, diag::note_constexpr_large_shift)
+        << RHS.toAPSInt() << E->getType() << ShiftBitWidth;
+  }
+
+  FixedPoint Result;
+  if (Left) {
+    if (FixedPoint::shiftLeft(LHS, RHS, ShiftBitWidth, &Result) &&
+        !handleFixedPointOverflow(S, OpPC, Result))
+      return false;
+  } else {
+    if (FixedPoint::shiftRight(LHS, RHS, ShiftBitWidth, &Result) &&
+        !handleFixedPointOverflow(S, OpPC, Result))
+      return false;
+  }
+
+  S.Stk.push<FixedPoint>(Result);
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
