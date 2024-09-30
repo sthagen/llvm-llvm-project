@@ -447,6 +447,7 @@ Bug Fixes to C++ Support
 - Fixed an assertion failure in debug mode, and potential crashes in release mode, when
   diagnosing a failed cast caused indirectly by a failed implicit conversion to the type of the constructor parameter.
 - Fixed an assertion failure by adjusting integral to boolean vector conversions (#GH108326)
+- Mangle friend function templates with a constraint that depends on a template parameter from an enclosing template as members of the enclosing class. (#GH110247)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -509,6 +510,13 @@ X86 Support
 - Support ISA of ``AVX10.2``.
   * Supported MINMAX intrinsics of ``*_(mask(z)))_minmax(ne)_p[s|d|h|bh]`` and
   ``*_(mask(z)))_minmax_s[s|d|h]``.
+
+- The following bit manipulation intrinsics can now be used in constant expressions:
+  all lzcnt intrinsics in lzcntintrin.h 
+  all bextr intrinsics in bmiintrin.h
+  all tzcnt intrinsics in bmiintrin.h
+  all bzhi intrinsics in bmi2intrin.h
+  all intrinsics in tbmintrin.h
 
 Arm and AArch64 Support
 ^^^^^^^^^^^^^^^^^^^^^^^
