@@ -354,6 +354,17 @@ bool doesClauseApplyToDirective(OpenACCDirectiveKind DirectiveKind,
       return false;
     }
   }
+  case OpenACCClauseKind::Tile: {
+    switch (DirectiveKind) {
+    case OpenACCDirectiveKind::Loop:
+    case OpenACCDirectiveKind::ParallelLoop:
+    case OpenACCDirectiveKind::SerialLoop:
+    case OpenACCDirectiveKind::KernelsLoop:
+      return true;
+    default:
+      return false;
+    }
+  }
 
   default:
     // Do nothing so we can go to the 'unimplemented' diagnostic instead.
@@ -524,6 +535,36 @@ OpenACCClause *SemaOpenACCClauseVisitor::VisitDefaultClause(
   return OpenACCDefaultClause::Create(
       Ctx, Clause.getDefaultClauseKind(), Clause.getBeginLoc(),
       Clause.getLParenLoc(), Clause.getEndLoc());
+}
+
+OpenACCClause *SemaOpenACCClauseVisitor::VisitTileClause(
+    SemaOpenACC::OpenACCParsedClause &Clause) {
+  if (Clause.getDirectiveKind() != OpenACCDirectiveKind::Loop)
+    return isNotImplemented();
+
+  // Duplicates here are not really sensible.  We could possible permit
+  // multiples if they all had the same value, but there isn't really a good
+  // reason to do so. Also, this simplifies the suppression of duplicates, in
+  // that we know if we 'find' one after instantiation, that it is the same
+  // clause, which simplifies instantiation/checking/etc.
+  if (checkAlreadyHasClauseOfKind(SemaRef, ExistingClauses, Clause))
+    return nullptr;
+
+  llvm::SmallVector<Expr *> NewSizeExprs;
+
+  // Make sure these are all positive constant expressions or *.
+  for (Expr *E : Clause.getIntExprs()) {
+    ExprResult Res = SemaRef.CheckTileSizeExpr(E);
+
+    if (!Res.isUsable())
+      return nullptr;
+
+    NewSizeExprs.push_back(Res.get());
+  }
+
+  return OpenACCTileClause::Create(Ctx, Clause.getBeginLoc(),
+                                   Clause.getLParenLoc(), NewSizeExprs,
+                                   Clause.getEndLoc());
 }
 
 OpenACCClause *SemaOpenACCClauseVisitor::VisitIfClause(
@@ -1698,6 +1739,34 @@ ExprResult SemaOpenACC::CheckCollapseLoopCount(Expr *LoopCount) {
       ConstantExpr::Create(getASTContext(), LoopCount, APValue{*ICE})};
 }
 
+ExprResult SemaOpenACC::CheckTileSizeExpr(Expr *SizeExpr) {
+  if (!SizeExpr)
+    return ExprError();
+
+  assert((SizeExpr->isInstantiationDependent() ||
+          SizeExpr->getType()->isIntegerType()) &&
+         "size argument non integer?");
+
+  // If dependent, or an asterisk, the expression is fine.
+  if (SizeExpr->isInstantiationDependent() ||
+      isa<OpenACCAsteriskSizeExpr>(SizeExpr))
+    return ExprResult{SizeExpr};
+
+  std::optional<llvm::APSInt> ICE =
+      SizeExpr->getIntegerConstantExpr(getASTContext());
+
+  // OpenACC 3.3 2.9.8
+  // where each tile size is a constant positive integer expression or asterisk.
+  if (!ICE || *ICE <= 0) {
+    Diag(SizeExpr->getBeginLoc(), diag::err_acc_size_expr_value)
+        << ICE.has_value() << ICE.value_or(llvm::APSInt{}).getExtValue();
+    return ExprError();
+  }
+
+  return ExprResult{
+      ConstantExpr::Create(getASTContext(), SizeExpr, APValue{*ICE})};
+}
+
 void SemaOpenACC::ActOnWhileStmt(SourceLocation WhileLoc) {
   if (!getLangOpts().OpenACC)
     return;
@@ -1770,11 +1839,61 @@ void SemaOpenACC::ActOnForStmtBegin(SourceLocation ForLoc) {
   CollapseInfo.CurLevelHasLoopAlready = false;
 }
 
+namespace {
+SourceLocation FindInterveningCodeInCollapseLoop(const Stmt *CurStmt) {
+  // We should diagnose on anything except `CompoundStmt`, `NullStmt`,
+  // `ForStmt`, `CXXForRangeStmt`, since those are legal, and `WhileStmt` and
+  // `DoStmt`, as those are caught as a violation elsewhere.
+  // For `CompoundStmt` we need to search inside of it.
+  if (!CurStmt ||
+      isa<ForStmt, NullStmt, ForStmt, CXXForRangeStmt, WhileStmt, DoStmt>(
+          CurStmt))
+    return SourceLocation{};
+
+  // Any other construct is an error anyway, so it has already been diagnosed.
+  if (isa<OpenACCConstructStmt>(CurStmt))
+    return SourceLocation{};
+
+  // Search inside the compound statement, this allows for arbitrary nesting
+  // of compound statements, as long as there isn't any code inside.
+  if (const auto *CS = dyn_cast<CompoundStmt>(CurStmt)) {
+    for (const auto *ChildStmt : CS->children()) {
+      SourceLocation ChildStmtLoc =
+          FindInterveningCodeInCollapseLoop(ChildStmt);
+      if (ChildStmtLoc.isValid())
+        return ChildStmtLoc;
+    }
+    // Empty/not invalid compound statements are legal.
+    return SourceLocation{};
+  }
+  return CurStmt->getBeginLoc();
+}
+} // namespace
+
 void SemaOpenACC::ActOnForStmtEnd(SourceLocation ForLoc, StmtResult Body) {
   if (!getLangOpts().OpenACC)
     return;
   // Set this to 'true' so if we find another one at this level we can diagnose.
   CollapseInfo.CurLevelHasLoopAlready = true;
+
+  if (!Body.isUsable())
+    return;
+
+  if (CollapseInfo.CurCollapseCount && *CollapseInfo.CurCollapseCount > 0 &&
+      !CollapseInfo.ActiveCollapse->hasForce()) {
+    // OpenACC 3.3: 2.9.1
+    // If the 'force' modifier does not appear, then the associated loops must
+    // be tightly nested.  If the force modifier appears, then any intervening
+    // code may be executed multiple times as needed to perform the collapse.
+
+    SourceLocation OtherStmtLoc = FindInterveningCodeInCollapseLoop(Body.get());
+
+    if (OtherStmtLoc.isValid()) {
+      Diag(OtherStmtLoc, diag::err_acc_collapse_intervening_code);
+      Diag(CollapseInfo.ActiveCollapse->getBeginLoc(),
+           diag::note_acc_collapse_clause_here);
+    }
+  }
 }
 
 bool SemaOpenACC::ActOnStartStmtDirective(OpenACCDirectiveKind K,
@@ -1894,3 +2013,13 @@ bool SemaOpenACC::ActOnStartDeclDirective(OpenACCDirectiveKind K,
 }
 
 DeclGroupRef SemaOpenACC::ActOnEndDeclDirective() { return DeclGroupRef{}; }
+
+ExprResult
+SemaOpenACC::BuildOpenACCAsteriskSizeExpr(SourceLocation AsteriskLoc) {
+  return OpenACCAsteriskSizeExpr::Create(getASTContext(), AsteriskLoc);
+}
+
+ExprResult
+SemaOpenACC::ActOnOpenACCAsteriskSizeExpr(SourceLocation AsteriskLoc) {
+  return BuildOpenACCAsteriskSizeExpr(AsteriskLoc);
+}
