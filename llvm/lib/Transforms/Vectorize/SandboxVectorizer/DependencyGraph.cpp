@@ -56,23 +56,21 @@ DependencyGraph::getRoughDepType(Instruction *FromI, Instruction *ToI) {
   // TODO: Perhaps compile-time improvement by skipping if neither is mem?
   if (FromI->mayWriteToMemory()) {
     if (ToI->mayReadFromMemory())
-      return DependencyType::RAW;
+      return DependencyType::ReadAfterWrite;
     if (ToI->mayWriteToMemory())
-      return DependencyType::WAW;
+      return DependencyType::WriteAfterWrite;
   } else if (FromI->mayReadFromMemory()) {
     if (ToI->mayWriteToMemory())
-      return DependencyType::WAR;
-    if (ToI->mayReadFromMemory())
-      return DependencyType::RAR;
+      return DependencyType::WriteAfterRead;
   }
   if (isa<sandboxir::PHINode>(FromI) || isa<sandboxir::PHINode>(ToI))
-    return DependencyType::CTRL;
+    return DependencyType::Control;
   if (ToI->isTerminator())
-    return DependencyType::CTRL;
+    return DependencyType::Control;
   if (DGNode::isStackSaveOrRestoreIntrinsic(FromI) ||
       DGNode::isStackSaveOrRestoreIntrinsic(ToI))
-    return DependencyType::OTHER;
-  return DependencyType::NONE;
+    return DependencyType::Other;
+  return DependencyType::None;
 }
 
 static bool isOrdered(Instruction *I) {
@@ -103,13 +101,13 @@ bool DependencyGraph::alias(Instruction *SrcI, Instruction *DstI,
   // TODO: Check AABudget
   ModRefInfo SrcModRef =
       isOrdered(SrcI)
-          ? ModRefInfo::Mod
+          ? ModRefInfo::ModRef
           : Utils::aliasAnalysisGetModRefInfo(*BatchAA, SrcI, *DstLocOpt);
   switch (DepType) {
-  case DependencyType::RAW:
-  case DependencyType::WAW:
+  case DependencyType::ReadAfterWrite:
+  case DependencyType::WriteAfterWrite:
     return isModSet(SrcModRef);
-  case DependencyType::WAR:
+  case DependencyType::WriteAfterRead:
     return isRefSet(SrcModRef);
   default:
     llvm_unreachable("Expected only RAW, WAW and WAR!");
@@ -119,23 +117,22 @@ bool DependencyGraph::alias(Instruction *SrcI, Instruction *DstI,
 bool DependencyGraph::hasDep(Instruction *SrcI, Instruction *DstI) {
   DependencyType RoughDepType = getRoughDepType(SrcI, DstI);
   switch (RoughDepType) {
-  case DependencyType::RAR:
-    return false;
-  case DependencyType::RAW:
-  case DependencyType::WAW:
-  case DependencyType::WAR:
+  case DependencyType::ReadAfterWrite:
+  case DependencyType::WriteAfterWrite:
+  case DependencyType::WriteAfterRead:
     return alias(SrcI, DstI, RoughDepType);
-  case DependencyType::CTRL:
+  case DependencyType::Control:
     // Adding actual dep edges from PHIs/to terminator would just create too
     // many edges, which would be bad for compile-time.
     // So we ignore them in the DAG formation but handle them in the
     // scheduler, while sorting the ready list.
     return false;
-  case DependencyType::OTHER:
+  case DependencyType::Other:
     return true;
-  case DependencyType::NONE:
+  case DependencyType::None:
     return false;
   }
+  llvm_unreachable("Unknown DependencyType enum");
 }
 
 void DependencyGraph::scanAndAddDeps(DGNode &DstN,
@@ -174,9 +171,11 @@ Interval<Instruction> DependencyGraph::extend(ArrayRef<Instruction *> Instrs) {
   }
   // Create the dependencies.
   auto DstRange = MemDGNodeIntervalBuilder::make(InstrInterval, *this);
-  for (MemDGNode &DstN : drop_begin(DstRange)) {
-    auto SrcRange = Interval<MemDGNode>(DstRange.top(), DstN.getPrevNode());
-    scanAndAddDeps(DstN, SrcRange);
+  if (!DstRange.empty()) {
+    for (MemDGNode &DstN : drop_begin(DstRange)) {
+      auto SrcRange = Interval<MemDGNode>(DstRange.top(), DstN.getPrevNode());
+      scanAndAddDeps(DstN, SrcRange);
+    }
   }
 
   return InstrInterval;
