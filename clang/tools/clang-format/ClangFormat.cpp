@@ -510,7 +510,7 @@ static bool format(StringRef FileName, bool ErrorOnIncompleteFormat = false) {
       reformat(*FormatStyle, *ChangedCode, Ranges, AssumedFileName, &Status);
   Replaces = Replaces.merge(FormatChanges);
   if (DryRun) {
-    return Replaces.size() > (IsJson ? 1 : 0) &&
+    return Replaces.size() > (IsJson ? 1u : 0u) &&
            emitReplacementWarnings(Replaces, AssumedFileName, Code);
   }
   if (OutputXML) {
@@ -707,8 +707,11 @@ int main(int argc, const char **argv) {
     errs() << "Clang-formatting " << LineNo << " files\n";
   }
 
-  if (FileNames.empty())
+  if (FileNames.empty()) {
+    if (isIgnored(AssumeFileName))
+      return 0;
     return clang::format::format("-", FailOnIncompleteFormat);
+  }
 
   if (FileNames.size() > 1 &&
       (!Offsets.empty() || !Lengths.empty() || !LineRanges.empty())) {

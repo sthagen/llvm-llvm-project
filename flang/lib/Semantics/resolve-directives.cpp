@@ -1526,6 +1526,7 @@ bool OmpAttributeVisitor::Pre(const parser::OpenMPBlockConstruct &x) {
   case llvm::omp::Directive::OMPD_master:
   case llvm::omp::Directive::OMPD_ordered:
   case llvm::omp::Directive::OMPD_parallel:
+  case llvm::omp::Directive::OMPD_scope:
   case llvm::omp::Directive::OMPD_single:
   case llvm::omp::Directive::OMPD_target:
   case llvm::omp::Directive::OMPD_target_data:
@@ -1557,6 +1558,7 @@ void OmpAttributeVisitor::Post(const parser::OpenMPBlockConstruct &x) {
   case llvm::omp::Directive::OMPD_masked:
   case llvm::omp::Directive::OMPD_parallel_masked:
   case llvm::omp::Directive::OMPD_parallel:
+  case llvm::omp::Directive::OMPD_scope:
   case llvm::omp::Directive::OMPD_single:
   case llvm::omp::Directive::OMPD_target:
   case llvm::omp::Directive::OMPD_task:
@@ -2320,7 +2322,7 @@ void OmpAttributeVisitor::ResolveOmpObject(
               if (auto *symbol{ResolveOmp(*name, ompFlag, currScope())}) {
                 auto checkExclusivelists =
                     [&](const Symbol *symbol1, Symbol::Flag firstOmpFlag,
-                        Symbol *symbol2, Symbol::Flag secondOmpFlag) {
+                        const Symbol *symbol2, Symbol::Flag secondOmpFlag) {
                       if ((symbol1->test(firstOmpFlag) &&
                               symbol2->test(secondOmpFlag)) ||
                           (symbol1->test(secondOmpFlag) &&
@@ -2330,9 +2332,8 @@ void OmpAttributeVisitor::ResolveOmpObject(
                             "appear on both %s and %s "
                             "clauses on a %s construct"_err_en_US,
                             symbol2->name(),
-                            const_cast<Symbol *>(symbol1)->OmpFlagToClauseName(
-                                firstOmpFlag),
-                            symbol2->OmpFlagToClauseName(secondOmpFlag),
+                            Symbol::OmpFlagToClauseName(firstOmpFlag),
+                            Symbol::OmpFlagToClauseName(secondOmpFlag),
                             parser::ToUpperCaseLetters(
                                 llvm::omp::getOpenMPDirectiveName(
                                     GetContext().directive)
