@@ -178,11 +178,13 @@ Changes to the RISC-V Backend
   means Zve32x and Zve32f will also require Zvl64b. The prior support was
   largely untested.
 * The `Zvbc32e` and `Zvkgs` extensions are now supported experimentally.
-* Added `Smctr` and `Ssctr` extensions.
+* Added `Smctr`, `Ssctr` and `Svvptc` extensions.
 * `-mcpu=syntacore-scr7` was added.
 * The `Zacas` extension is no longer marked as experimental.
 * The `Smmpm`, `Smnpm`, `Ssnpm`, `Supm`, and `Sspm` pointer masking extensions
   are no longer marked as experimental.
+* The `Sha` extension is now supported.
+* The RVA23U64 and RVA23S64 profiles are no longer marked as experimental.
 
 Changes to the WebAssembly Backend
 ----------------------------------
@@ -218,6 +220,10 @@ Changes to the X86 Backend
 * Support ISA of `AVX10.2-256` and `AVX10.2-512`.
 
 * Supported instructions of `MOVRS AND AVX10.2`
+
+* Supported ISA of `SM4(EVEX)`.
+
+* Supported ISA of `MSR_IMM`.
 
 Changes to the OCaml bindings
 -----------------------------
