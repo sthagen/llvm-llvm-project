@@ -335,7 +335,15 @@ enum OperandType : unsigned {
   OPERAND_FRMARG,
   // Operand is a 3-bit rounding mode where only RTZ is valid.
   OPERAND_RTZARG,
-  OPERAND_LAST_RISCV_IMM = OPERAND_RTZARG,
+  // Condition code used by select and short forward branch pseudos.
+  OPERAND_COND_CODE,
+  // Vector policy operand.
+  OPERAND_VEC_POLICY,
+  // Vector SEW operand.
+  OPERAND_SEW,
+  // Vector rounding mode for VXRM or FRM.
+  OPERAND_VEC_RM,
+  OPERAND_LAST_RISCV_IMM = OPERAND_VEC_RM,
   // Operand is either a register or uimm5, this is used by V extension pseudo
   // instructions to represent a value that be passed as AVL to either vsetvli
   // or vsetivli.
