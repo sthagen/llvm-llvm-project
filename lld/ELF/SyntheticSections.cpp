@@ -77,7 +77,7 @@ static ArrayRef<uint8_t> getVersion(Ctx &ctx) {
   // This is only for testing.
   StringRef s = getenv("LLD_VERSION");
   if (s.empty())
-    s = saver(ctx).save(Twine("Linker: ") + getLLDVersion());
+    s = ctx.saver.save(Twine("Linker: ") + getLLDVersion());
 
   // +1 to include the terminating '\0'.
   return {(const uint8_t *)s.data(), s.size() + 1};
@@ -270,7 +270,7 @@ MipsReginfoSection<ELFT>::create(Ctx &ctx) {
 
 InputSection *elf::createInterpSection(Ctx &ctx) {
   // StringSaver guarantees that the returned string ends with '\0'.
-  StringRef s = saver(ctx).save(ctx.arg.dynamicLinker);
+  StringRef s = ctx.saver.save(ctx.arg.dynamicLinker);
   ArrayRef<uint8_t> contents = {(const uint8_t *)s.data(), s.size() + 1};
 
   return make<InputSection>(ctx.internalFile, SHF_ALLOC, SHT_PROGBITS, 1,
@@ -2876,8 +2876,7 @@ void DebugNamesBaseSection::parseDebugNames(
       return;
     }
     if (nd.hdr.Version != 5) {
-      Err(ctx) << namesSec.sec << Twine(": unsupported version: ")
-               << Twine(nd.hdr.Version);
+      Err(ctx) << namesSec.sec << ": unsupported version: " << nd.hdr.Version;
       return;
     }
     uint32_t dwarfSize = dwarf::getDwarfOffsetByteSize(DwarfFormat::DWARF32);
@@ -2915,7 +2914,7 @@ void DebugNamesBaseSection::parseDebugNames(
         ne.indexEntries.push_back(std::move(*ieOrErr));
       }
       if (offset >= namesSec.Data.size())
-        Err(ctx) << namesSec.sec << Twine(": index entry is out of bounds");
+        Err(ctx) << namesSec.sec << ": index entry is out of bounds";
 
       for (IndexEntry &ie : ne.entries())
         offsetMap[ie.poolOffset] = &ie;
@@ -3213,7 +3212,7 @@ DebugNamesSection<ELFT>::DebugNamesSection(Ctx &ctx)
 
     inputChunk.llvmDebugNames.emplace(namesExtractor, strExtractor);
     if (Error e = inputChunk.llvmDebugNames->extract()) {
-      Err(ctx) << dobj.getNamesSection().sec << Twine(": ") << std::move(e);
+      Err(ctx) << dobj.getNamesSection().sec << ": " << std::move(e);
     }
     parseDebugNames(
         ctx, inputChunk, chunk, namesExtractor, strExtractor,
@@ -3514,7 +3513,7 @@ createSymbols(
   }
   // If off overflows, the last symbol's nameOff likely overflows.
   if (!isUInt<32>(off))
-    Err(ctx) << "--gdb-index: constant pool size (" << Twine(off)
+    Err(ctx) << "--gdb-index: constant pool size (" << off
              << ") exceeds UINT32_MAX";
 
   return {ret, off};
@@ -4680,7 +4679,8 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     ctx.in.shStrTab =
         std::make_unique<StringTableSection>(ctx, ".shstrtab", false);
 
-  ctx.out.programHeaders = make<OutputSection>(ctx, "", 0, SHF_ALLOC);
+  ctx.out.programHeaders =
+      std::make_unique<OutputSection>(ctx, "", 0, SHF_ALLOC);
   ctx.out.programHeaders->addralign = ctx.arg.wordsize;
 
   if (ctx.arg.strip != StripPolicy::All) {
@@ -4908,8 +4908,10 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   ctx.in.iplt = std::make_unique<IpltSection>(ctx);
   add(*ctx.in.iplt);
 
-  if (ctx.arg.andFeatures || !ctx.aarch64PauthAbiCoreInfo.empty())
-    add(*make<GnuPropertySection>(ctx));
+  if (ctx.arg.andFeatures || !ctx.aarch64PauthAbiCoreInfo.empty()) {
+    ctx.in.gnuProperty = std::make_unique<GnuPropertySection>(ctx);
+    add(*ctx.in.gnuProperty);
+  }
 
   if (ctx.arg.debugNames) {
     ctx.in.debugNames = std::make_unique<DebugNamesSection<ELFT>>(ctx);
@@ -4926,8 +4928,10 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
   // section to control the executable-ness of the stack area, but that
   // is irrelevant these days. Stack area should always be non-executable
   // by default. So we emit this section unconditionally.
-  if (ctx.arg.relocatable)
-    add(*make<GnuStackSection>(ctx));
+  if (ctx.arg.relocatable) {
+    ctx.in.gnuStack = std::make_unique<GnuStackSection>(ctx);
+    add(*ctx.in.gnuStack);
+  }
 
   if (ctx.in.symTab)
     add(*ctx.in.symTab);

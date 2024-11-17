@@ -30,6 +30,7 @@
 #include "llvm/Support/TarWriter.h"
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -43,6 +44,7 @@ class SharedFile;
 class InputSectionBase;
 class EhInputSection;
 class Defined;
+class Undefined;
 class Symbol;
 class SymbolTable;
 class BitcodeCompiler;
@@ -172,13 +174,13 @@ private:
   bool inLib = false;
 
   std::unique_ptr<BitcodeCompiler> lto;
-  std::vector<InputFile *> files;
+  SmallVector<std::unique_ptr<InputFile>, 0> files, ltoObjectFiles;
 
 public:
   // See InputFile::groupId.
   uint32_t nextGroupId;
   bool isInGroup;
-  InputFile *armCmseImpLib = nullptr;
+  std::unique_ptr<InputFile> armCmseImpLib;
   SmallVector<std::pair<StringRef, unsigned>, 0> archiveFiles;
 };
 
@@ -505,6 +507,16 @@ struct DuplicateSymbol {
   uint64_t value;
 };
 
+struct UndefinedDiag {
+  Undefined *sym;
+  struct Loc {
+    InputSectionBase *sec;
+    uint64_t offset;
+  };
+  SmallVector<Loc, 0> locs;
+  bool isWarning;
+};
+
 // Linker generated sections which can be used as inputs and are not specific to
 // a partition.
 struct InStruct {
@@ -512,6 +524,8 @@ struct InStruct {
   std::unique_ptr<SyntheticSection> riscvAttributes;
   std::unique_ptr<BssSection> bss;
   std::unique_ptr<BssSection> bssRelRo;
+  std::unique_ptr<SyntheticSection> gnuProperty;
+  std::unique_ptr<SyntheticSection> gnuStack;
   std::unique_ptr<GotSection> got;
   std::unique_ptr<GotPltSection> gotPlt;
   std::unique_ptr<IgotPltSection> igotPlt;
@@ -539,14 +553,11 @@ struct InStruct {
   std::unique_ptr<SymtabShndxSection> symTabShndx;
 };
 
-struct Ctx {
+struct Ctx : CommonLinkerContext {
   Config arg;
   LinkerDriver driver;
   LinkerScript *script;
   std::unique_ptr<TargetInfo> target;
-
-  CommonLinkerContext *commonCtx;
-  ErrorHandler *errHandler;
 
   // These variables are initialized by Writer and should not be used before
   // Writer is initialized.
@@ -554,13 +565,13 @@ struct Ctx {
   Partition *mainPart = nullptr;
   PhdrEntry *tlsPhdr = nullptr;
   struct OutSections {
-    OutputSection *elfHeader;
-    OutputSection *programHeaders;
-    OutputSection *preinitArray;
-    OutputSection *initArray;
-    OutputSection *finiArray;
+    std::unique_ptr<OutputSection> elfHeader;
+    std::unique_ptr<OutputSection> programHeaders;
+    OutputSection *preinitArray = nullptr;
+    OutputSection *initArray = nullptr;
+    OutputSection *finiArray = nullptr;
   };
-  OutSections out{};
+  OutSections out;
   SmallVector<OutputSection *, 0> outputSections;
   std::vector<Partition> partitions;
 
@@ -619,6 +630,11 @@ struct Ctx {
   SmallVector<SymbolAux, 0> symAux;
   // Duplicate symbol candidates.
   SmallVector<DuplicateSymbol, 0> duplicates;
+  // Undefined diagnostics are collected in a vector and emitted once all of
+  // them are known, so that some postprocessing on the list of undefined
+  // symbols can happen before lld emits diagnostics.
+  std::mutex relocMutex;
+  SmallVector<UndefinedDiag, 0> undefErrs;
   // Symbols in a non-prevailing COMDAT group which should be changed to an
   // Undefined.
   SmallVector<std::pair<Symbol *, unsigned>, 0> nonPrevailingSyms;
@@ -672,18 +688,10 @@ static inline ArrayRef<VersionDefinition> namedVersionDefs(Ctx &ctx) {
   return llvm::ArrayRef(ctx.arg.versionDefinitions).slice(2);
 }
 
-inline llvm::BumpPtrAllocator &bAlloc(Ctx &ctx) {
-  return ctx.commonCtx->bAlloc;
-}
-inline llvm::StringSaver &saver(Ctx &ctx) { return ctx.commonCtx->saver; }
-inline llvm::UniqueStringSaver &uniqueSaver(Ctx &ctx) {
-  return ctx.commonCtx->uniqueSaver;
-}
-
 struct ELFSyncStream : SyncStream {
   Ctx &ctx;
   ELFSyncStream(Ctx &ctx, DiagLevel level)
-      : SyncStream(*ctx.errHandler, level), ctx(ctx) {}
+      : SyncStream(ctx.e, level), ctx(ctx) {}
 };
 
 template <typename T>

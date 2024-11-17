@@ -58,9 +58,9 @@ static void handleColorDiagnostics(Ctx &ctx, opt::InputArgList &args) {
     return;
   StringRef s = arg->getValue();
   if (s == "always")
-    ctx.errHandler->errs().enable_colors(true);
+    ctx.e.errs().enable_colors(true);
   else if (s == "never")
-    ctx.errHandler->errs().enable_colors(false);
+    ctx.e.errs().enable_colors(false);
   else if (s != "auto")
     ErrAlways(ctx) << "unknown option: --color-diagnostics=" << s;
 }
@@ -95,7 +95,7 @@ static void concatLTOPluginOptions(Ctx &ctx,
   for (size_t i = 0, e = args.size(); i != e; ++i) {
     StringRef s = args[i];
     if ((s == "-plugin-opt" || s == "--plugin-opt") && i + 1 != e) {
-      v.push_back(saver(ctx).save(s + "=" + args[i + 1]).data());
+      v.push_back(ctx.saver.save(s + "=" + args[i + 1]).data());
       ++i;
     } else {
       v.push_back(args[i]);
@@ -118,14 +118,13 @@ opt::InputArgList ELFOptTable::parse(Ctx &ctx, ArrayRef<const char *> argv) {
 
   // Expand response files (arguments in the form of @<filename>)
   // and then parse the argument again.
-  cl::ExpandResponseFiles(saver(ctx), getQuotingStyle(ctx, args), vec);
+  cl::ExpandResponseFiles(ctx.saver, getQuotingStyle(ctx, args), vec);
   concatLTOPluginOptions(ctx, vec);
   args = this->ParseArgs(vec, missingIndex, missingCount);
 
   handleColorDiagnostics(ctx, args);
   if (missingCount)
-    ErrAlways(ctx) << Twine(args.getArgString(missingIndex))
-                   << ": missing argument";
+    ErrAlways(ctx) << args.getArgString(missingIndex) << ": missing argument";
 
   for (opt::Arg *arg : args.filtered(OPT_UNKNOWN)) {
     std::string nearest;
@@ -139,7 +138,7 @@ opt::InputArgList ELFOptTable::parse(Ctx &ctx, ArrayRef<const char *> argv) {
 }
 
 void elf::printHelp(Ctx &ctx) {
-  auto &outs = ctx.errHandler->outs();
+  auto &outs = ctx.e.outs();
   ELFOptTable().printHelp(
       outs, (ctx.arg.progName + " [options] file...").str().c_str(), "lld",
       false /*ShowHidden*/, true /*ShowAllAliases*/);

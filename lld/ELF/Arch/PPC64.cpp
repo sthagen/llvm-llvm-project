@@ -271,7 +271,7 @@ static void writeSequence(Ctx &ctx, const char *prefix, int from,
   char name[16];
   int first;
   const size_t size = 32 - from + tail.size();
-  MutableArrayRef<uint32_t> buf(bAlloc(ctx).Allocate<uint32_t>(size), size);
+  MutableArrayRef<uint32_t> buf(ctx.bAlloc.Allocate<uint32_t>(size), size);
   uint32_t *ptr = buf.data();
   for (int r = from; r < 32; ++r) {
     format("%s%d", prefix, r).snprint(name, sizeof(name));
@@ -644,7 +644,7 @@ uint32_t PPC64::calcEFlags() const {
     if (flag == 1)
       ErrAlways(ctx) << f << ": ABI version 1 is not supported";
     else if (flag > 2)
-      ErrAlways(ctx) << f << ": unrecognized e_flags: " << Twine(flag);
+      ErrAlways(ctx) << f << ": unrecognized e_flags: " << flag;
   }
   return 2;
 }
@@ -1100,7 +1100,7 @@ RelExpr PPC64::getRelExpr(RelType type, const Symbol &s,
   case R_PPC64_TLS:
     return R_TLSIE_HINT;
   default:
-    Err(ctx) << getErrorLoc(ctx, loc) << "unknown relocation (" << Twine(type)
+    Err(ctx) << getErrorLoc(ctx, loc) << "unknown relocation (" << type.v
              << ") against symbol " << &s;
     return R_NONE;
   }

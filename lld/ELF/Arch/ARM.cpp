@@ -195,7 +195,7 @@ RelExpr ARM::getRelExpr(RelType type, const Symbol &s,
     // not ARMv4 output, we can just ignore it.
     return R_NONE;
   default:
-    Err(ctx) << getErrorLoc(ctx, loc) << "unknown relocation (" << Twine(type)
+    Err(ctx) << getErrorLoc(ctx, loc) << "unknown relocation (" << type.v
              << ") against symbol " << &s;
     return R_NONE;
   }
@@ -1466,12 +1466,14 @@ template <typename ELFT> void elf::writeARMCmseImportLib(Ctx &ctx) {
   SymbolTableBaseSection *impSymTab =
       make<SymbolTableSection<ELFT>>(ctx, *strtab);
 
-  SmallVector<std::pair<OutputSection *, SyntheticSection *>, 0> osIsPairs;
-  osIsPairs.emplace_back(make<OutputSection>(ctx, strtab->name, 0, 0), strtab);
-  osIsPairs.emplace_back(make<OutputSection>(ctx, impSymTab->name, 0, 0),
-                         impSymTab);
-  osIsPairs.emplace_back(make<OutputSection>(ctx, shstrtab->name, 0, 0),
-                         shstrtab);
+  SmallVector<std::pair<std::unique_ptr<OutputSection>, SyntheticSection *>, 0>
+      osIsPairs;
+  osIsPairs.emplace_back(
+      std::make_unique<OutputSection>(ctx, strtab->name, 0, 0), strtab);
+  osIsPairs.emplace_back(
+      std::make_unique<OutputSection>(ctx, impSymTab->name, 0, 0), impSymTab);
+  osIsPairs.emplace_back(
+      std::make_unique<OutputSection>(ctx, shstrtab->name, 0, 0), shstrtab);
 
   llvm::sort(ctx.symtab->cmseSymMap, [&](const auto &a, const auto &b) {
     return a.second.sym->getVA(ctx) < b.second.sym->getVA(ctx);
