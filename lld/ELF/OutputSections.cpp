@@ -118,9 +118,9 @@ void OutputSection::commitSection(InputSection *isec) {
       type = SHT_CREL;
       if (type == SHT_REL) {
         if (name.consume_front(".rel"))
-          name = saver().save(".crel" + name);
+          name = saver(ctx).save(".crel" + name);
       } else if (name.consume_front(".rela")) {
-        name = saver().save(".crel" + name);
+        name = saver(ctx).save(".crel" + name);
       }
     } else {
       if (typeIsSet || !canMergeToProgbits(ctx, type) ||
@@ -908,13 +908,12 @@ void OutputSection::checkDynRelAddends(Ctx &ctx) {
               ? 0
               : ctx.target->getImplicitAddend(relocTarget, rel.type);
       if (addend != writtenAddend)
-        internalLinkerError(
-            getErrorLoc(ctx, relocTarget),
-            "wrote incorrect addend value 0x" + utohexstr(writtenAddend) +
-                " instead of 0x" + utohexstr(addend) +
-                " for dynamic relocation " + toString(rel.type) +
-                " at offset 0x" + utohexstr(rel.getOffset()) +
-                (rel.sym ? " against symbol " + toString(*rel.sym) : ""));
+        InternalErr(ctx, relocTarget)
+            << "wrote incorrect addend value 0x" << utohexstr(writtenAddend)
+            << " instead of 0x" << utohexstr(addend)
+            << " for dynamic relocation " << rel.type << " at offset 0x"
+            << utohexstr(rel.getOffset())
+            << (rel.sym ? " against symbol " + rel.sym->getName() : "");
     }
   });
 }

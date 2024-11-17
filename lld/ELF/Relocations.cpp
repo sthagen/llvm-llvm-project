@@ -77,7 +77,7 @@ static std::optional<std::string> getLinkerScriptLocation(Ctx &ctx,
 static std::string getDefinedLocation(Ctx &ctx, const Symbol &sym) {
   const char msg[] = "\n>>> defined in ";
   if (sym.file)
-    return msg + toString(sym.file);
+    return msg + toStr(ctx, sym.file);
   if (std::optional<std::string> loc = getLinkerScriptLocation(ctx, sym))
     return msg + *loc;
   return "";
@@ -100,44 +100,41 @@ static std::string getLocation(Ctx &ctx, InputSectionBase &s, const Symbol &sym,
 void elf::reportRangeError(Ctx &ctx, uint8_t *loc, const Relocation &rel,
                            const Twine &v, int64_t min, uint64_t max) {
   ErrorPlace errPlace = getErrorPlace(ctx, loc);
-  std::string hint;
+  auto diag = Err(ctx);
+  diag << errPlace.loc << "relocation " << rel.type
+       << " out of range: " << v.str() << " is not in [" << min << ", " << max
+       << ']';
+
   if (rel.sym) {
     if (!rel.sym->isSection())
-      hint = "; references '" + lld::toString(*rel.sym) + '\'';
+      diag << "; references '" << rel.sym << '\'';
     else if (auto *d = dyn_cast<Defined>(rel.sym))
-      hint = ("; references section '" + d->section->name + "'").str();
+      diag << "; references section '" << d->section->name << "'";
 
     if (ctx.arg.emachine == EM_X86_64 && rel.type == R_X86_64_PC32 &&
         rel.sym->getOutputSection() &&
         (rel.sym->getOutputSection()->flags & SHF_X86_64_LARGE)) {
-      hint += "; R_X86_64_PC32 should not reference a section marked "
+      diag << "; R_X86_64_PC32 should not reference a section marked "
               "SHF_X86_64_LARGE";
     }
   }
   if (!errPlace.srcLoc.empty())
-    hint += "\n>>> referenced by " + errPlace.srcLoc;
+    diag << "\n>>> referenced by " << errPlace.srcLoc;
   if (rel.sym && !rel.sym->isSection())
-    hint += getDefinedLocation(ctx, *rel.sym);
+    diag << getDefinedLocation(ctx, *rel.sym);
 
   if (errPlace.isec && errPlace.isec->name.starts_with(".debug"))
-    hint += "; consider recompiling with -fdebug-types-section to reduce size "
+    diag << "; consider recompiling with -fdebug-types-section to reduce size "
             "of debug sections";
-
-  Err(ctx) << errPlace.loc << "relocation " << lld::toString(rel.type)
-           << " out of range: " << v.str() << " is not in [" << Twine(min).str()
-           << ", " << Twine(max).str() << "]" << hint;
 }
 
 void elf::reportRangeError(Ctx &ctx, uint8_t *loc, int64_t v, int n,
                            const Symbol &sym, const Twine &msg) {
-  ErrorPlace errPlace = getErrorPlace(ctx, loc);
-  std::string hint;
+  auto diag = Err(ctx);
+  diag << getErrorPlace(ctx, loc).loc << msg << " is out of range: " << v
+       << " is not in [" << llvm::minIntN(n) << ", " << llvm::maxIntN(n) << "]";
   if (!sym.getName().empty())
-    hint = "; references '" + lld::toString(sym) + '\'' +
-           getDefinedLocation(ctx, sym);
-  Err(ctx) << errPlace.loc << msg << " is out of range: " << Twine(v)
-           << " is not in [" << Twine(llvm::minIntN(n)) << ", "
-           << Twine(llvm::maxIntN(n)) << "]" << hint;
+    diag << "; references '" << &sym << '\'' << getDefinedLocation(ctx, sym);
 }
 
 // Build a bitmask with one bit set for each 64 subset of RelExpr.
@@ -535,13 +532,13 @@ static std::string maybeReportDiscarded(Ctx &ctx, Undefined &sym) {
   std::string msg;
   if (sym.type == ELF::STT_SECTION) {
     msg = "relocation refers to a discarded section: ";
-    msg += CHECK(
+    msg += CHECK2(
         file->getObj().getSectionName(objSections[sym.discardedSecIdx]), file);
   } else {
     msg = "relocation refers to a symbol in a discarded section: " +
-          toString(sym);
+          toStr(ctx, sym);
   }
-  msg += "\n>>> defined in " + toString(file);
+  msg += "\n>>> defined in " + toStr(ctx, file);
 
   Elf_Shdr_Impl<ELFT> elfSec = objSections[sym.discardedSecIdx - 1];
   if (elfSec.sh_type != SHT_GROUP)
@@ -552,7 +549,7 @@ static std::string maybeReportDiscarded(Ctx &ctx, Undefined &sym) {
   if (const InputFile *prevailing =
           ctx.symtab->comdatGroups.lookup(CachedHashStringRef(signature))) {
     msg += "\n>>> section group signature: " + signature.str() +
-           "\n>>> prevailing definition is in " + toString(prevailing);
+           "\n>>> prevailing definition is in " + toStr(ctx, prevailing);
     if (sym.nonPrevailing) {
       msg += "\n>>> or the symbol in the prevailing group had STB_WEAK "
              "binding and the symbol in a non-prevailing group had STB_GLOBAL "
@@ -748,7 +745,7 @@ static void reportUndefinedSymbol(Ctx &ctx, const UndefinedDiag &undef,
     llvm_unreachable("");
   }
   if (msg.empty())
-    msg = "undefined " + visibility() + "symbol: " + toString(sym);
+    msg = "undefined " + visibility() + "symbol: " + toStr(ctx, sym);
 
   const size_t maxUndefReferences = 3;
   size_t i = 0;
@@ -777,9 +774,10 @@ static void reportUndefinedSymbol(Ctx &ctx, const UndefinedDiag &undef,
     std::string pre_hint = ": ", post_hint;
     if (const Symbol *corrected =
             getAlternativeSpelling(ctx, sym, pre_hint, post_hint)) {
-      msg += "\n>>> did you mean" + pre_hint + toString(*corrected) + post_hint;
+      msg +=
+          "\n>>> did you mean" + pre_hint + toStr(ctx, *corrected) + post_hint;
       if (corrected->file)
-        msg += "\n>>> defined in: " + toString(corrected->file);
+        msg += "\n>>> defined in: " + toStr(ctx, corrected->file);
     }
   }
 
@@ -797,7 +795,7 @@ static void reportUndefinedSymbol(Ctx &ctx, const UndefinedDiag &undef,
   if (undef.isWarning)
     Warn(ctx) << msg;
   else
-    error(msg, ErrorTag::SymbolNotFound, {sym.getName()});
+    ctx.errHandler->error(msg, ErrorTag::SymbolNotFound, {sym.getName()});
 }
 
 void elf::reportUndefinedSymbols(Ctx &ctx) {
@@ -1267,7 +1265,7 @@ void RelocationScanner::processAux(RelExpr expr, RelType type, uint64_t offset,
 
   Err(ctx) << "relocation " << type << " cannot be used against "
            << (sym.getName().empty() ? "local symbol"
-                                     : ("symbol '" + toString(sym) + "'"))
+                                     : ("symbol '" + toStr(ctx, sym) + "'"))
            << "; recompile with -fPIC" << getLocation(ctx, *sec, sym, offset);
 }
 
@@ -2472,7 +2470,7 @@ static void scanCrossRefs(Ctx &ctx, const NoCrossRefCommand &cmd,
 
     std::string toSymName;
     if (!sym.isSection())
-      toSymName = toString(sym);
+      toSymName = toStr(ctx, sym);
     else if (auto *d = dyn_cast<Defined>(&sym))
       toSymName = d->section->name;
     Err(ctx) << sec->getLocation(r.r_offset)

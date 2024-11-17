@@ -348,8 +348,7 @@ int64_t AArch64::getImplicitAddend(const uint8_t *buf, RelType type) const {
     return SignExtend64<28>(getBits(read32le(buf), 0, 25) << 2);
 
   default:
-    internalLinkerError(getErrorLoc(ctx, buf),
-                        "cannot read addend for relocation " + toString(type));
+    InternalErr(ctx, buf) << "cannot read addend for relocation " << type;
     return 0;
   }
 }
