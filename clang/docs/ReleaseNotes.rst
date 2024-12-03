@@ -256,6 +256,8 @@ C++2c Feature Support
 - Added the ``__builtin_is_within_lifetime`` builtin, which supports
   `P2641R4 Checking if a union alternative is active <https://wg21.link/p2641r4>`_
 
+- Implemented `P3176R1 The Oxford variadic comma <https://wg21.link/P3176R1>`_
+
 C++23 Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 - Removed the restriction to literal types in constexpr functions in C++23 mode.
@@ -624,9 +626,6 @@ Improvements to Clang's diagnostics
 
 - Fixed a false negative ``-Wunused-private-field`` diagnostic when a defaulted comparison operator is defined out of class (#GH116961).
 
-- Clang now supports using alias templates in deduction guides, aligning with the C++ standard,
-  which treats alias templates as synonyms for their underlying types (#GH54909).
-
 - Clang now diagnoses dangling references for C++20's parenthesized aggregate initialization (#101957).
 
 Improvements to Clang's time-trace
@@ -763,6 +762,7 @@ Bug Fixes to C++ Support
 - Fixed a bug where bounds of partially expanded pack indexing expressions were checked too early. (#GH116105)
 - Fixed an assertion failure caused by using ``consteval`` in condition in consumed analyses. (#GH117385)
 - Fix a crash caused by incorrect argument position in merging deduced template arguments. (#GH113659)
+- Fixed an assertion failure caused by mangled names with invalid identifiers. (#GH112205)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
