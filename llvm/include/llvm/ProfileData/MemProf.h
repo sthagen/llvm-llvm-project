@@ -1214,8 +1214,10 @@ template <> struct CustomMappingTraits<memprof::PortableMemInfoBlock> {
   static void output(IO &Io, memprof::PortableMemInfoBlock &MIB) {
     auto Schema = MIB.getSchema();
 #define MIBEntryDef(NameTag, Name, Type)                                       \
-  if (Schema.test(llvm::to_underlying(memprof::Meta::Name)))                   \
-    Io.mapRequired(#Name, MIB.Name);
+  if (Schema.test(llvm::to_underlying(memprof::Meta::Name))) {                 \
+    uint64_t Value = MIB.Name;                                                 \
+    Io.mapRequired(#Name, Value);                                              \
+  }
 #include "llvm/ProfileData/MIBEntryDef.inc"
 #undef MIBEntryDef
   }
