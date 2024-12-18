@@ -321,6 +321,11 @@ Resolutions to C++ Defect Reports
 - Fix name lookup for a dependent base class that is the current instantiation.
   (`CWG591: When a dependent base class is the current instantiation <https://cplusplus.github.io/CWG/issues/591.html>`_).
 
+- Clang now allows calling explicit object member functions directly with prvalues
+  instead of always materializing a temporary, meaning by-value explicit object parameters
+  do not need to move from a temporary.
+  (`CWG2813: Class member access with prvalues <https://cplusplus.github.io/CWG/issues/2813.html>`_).
+
 C Language Changes
 ------------------
 
@@ -681,6 +686,16 @@ Improvements to Clang's diagnostics
     void test() {
       std::vector<std::string_view> views;
       views.push_back(std::string("123")); // warning
+    }
+
+- Clang now emits a ``-Wtautological-compare`` diagnostic when a check for
+  pointer addition overflow is always true or false, because overflow would
+  be undefined behavior.
+
+  .. code-block:: c++
+
+    bool incorrect_overflow_check(const char *ptr, size_t index) {
+      return ptr + index < ptr; // warning
     }
 
 Improvements to Clang's time-trace

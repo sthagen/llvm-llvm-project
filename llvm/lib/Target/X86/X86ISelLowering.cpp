@@ -30224,8 +30224,7 @@ static SDValue LowerShift(SDValue Op, const X86Subtarget &Subtarget,
       // another. The construction of this mask will be constant folded.
       // The mask for a logical right shift is nearly identical, the only
       // difference is that the all ones mask is shifted right instead of left.
-      SDValue CstFullMask = DAG.getAllOnesConstant(dl, NarrowScalarVT);
-      SDValue SplatFullMask = DAG.getSplat(VT, dl, CstFullMask);
+      SDValue SplatFullMask = DAG.getAllOnesConstant(dl, VT);
       SDValue Mask = DAG.getNode(LogicalOpc, dl, VT, SplatFullMask, Amt);
       Mask = DAG.getBitcast(WideVT, Mask);
       // Finally, we mask the shifted vector with the SWAR mask.
@@ -30258,9 +30257,8 @@ static SDValue LowerShift(SDValue Op, const X86Subtarget &Subtarget,
       //
       // This is equal to Masked - 2*SignBitMask which will correctly sign
       // extend our result.
-      SDValue CstHighBit =
-          DAG.getConstant(1ULL << (EltSizeInBits - 1), dl, NarrowScalarVT);
-      SDValue SplatHighBit = DAG.getSplat(VT, dl, CstHighBit);
+      SDValue SplatHighBit =
+          DAG.getConstant(APInt::getSignMask(EltSizeInBits), dl, VT);
       // This does not induce recursion, all operands are constants.
       SDValue SignBitMask = DAG.getNode(LogicalOpc, dl, VT, SplatHighBit, Amt);
       SDValue FlippedSignBit =
@@ -58708,11 +58706,30 @@ static SDValue combineEXTEND_VECTOR_INREG(SDNode *N, SelectionDAG &DAG,
 static SDValue combineKSHIFT(SDNode *N, SelectionDAG &DAG,
                              TargetLowering::DAGCombinerInfo &DCI) {
   EVT VT = N->getValueType(0);
-
+  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   if (ISD::isBuildVectorAllZeros(N->getOperand(0).getNode()))
     return DAG.getConstant(0, SDLoc(N), VT);
 
-  const TargetLowering &TLI = DAG.getTargetLoweringInfo();
+  // Fold kshiftr(extract_subvector(X,C1),C2)
+  //  --> extract_subvector(kshiftr(X,C1+C2),0)
+  // Fold kshiftr(kshiftr(X,C1),C2) --> kshiftr(X,C1+C2)
+  if (N->getOpcode() == X86ISD::KSHIFTR) {
+    SDLoc DL(N);
+    if (N->getOperand(0).getOpcode() == ISD::EXTRACT_SUBVECTOR ||
+        N->getOperand(0).getOpcode() == X86ISD::KSHIFTR) {
+      SDValue Src = N->getOperand(0).getOperand(0);
+      uint64_t Amt = N->getConstantOperandVal(1) +
+                     N->getOperand(0).getConstantOperandVal(1);
+      EVT SrcVT = Src.getValueType();
+      if (TLI.isTypeLegal(SrcVT) && Amt < SrcVT.getVectorNumElements()) {
+        SDValue Shift = DAG.getNode(X86ISD::KSHIFTR, DL, SrcVT, Src,
+                                    DAG.getTargetConstant(Amt, DL, MVT::i8));
+        return DAG.getNode(ISD::EXTRACT_SUBVECTOR, DL, VT, Shift,
+                           DAG.getIntPtrConstant(0, DL));
+      }
+    }
+  }
+
   APInt DemandedElts = APInt::getAllOnes(VT.getVectorNumElements());
   if (TLI.SimplifyDemandedVectorElts(SDValue(N, 0), DemandedElts, DCI))
     return SDValue(N, 0);
