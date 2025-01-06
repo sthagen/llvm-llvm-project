@@ -333,7 +333,7 @@ namespace cwg2358 { // cwg2358: 16
 
 // CWG2363 was closed as NAD, but its resolution does affirm that
 // a friend declaration cannot have an opaque-enumm-specifier.
-namespace cwg2363 { // cwg2363: yes
+namespace cwg2363 { // cwg2363: 19
 #if __cplusplus >= 201103L
 enum class E0;
 enum E1 : int;
@@ -341,26 +341,26 @@ enum E1 : int;
 struct A {
   friend enum class E0;
   // since-cxx11-error@-1 {{reference to enumeration must use 'enum' not 'enum class'}}
-  // expected-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
-  // expected-note@-3 {{remove 'enum class' to befriend an enum}}
+  // since-cxx11-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
+  //   since-cxx11-note@-3 {{remove 'enum class' to befriend an enum}}
 
   friend enum E0;
-  // expected-error@-1 {{elaborated enum specifier cannot be declared as a friend}}
-  // expected-note@-2 {{remove 'enum' to befriend an enum}}
+  // since-cxx11-error@-1 {{elaborated enum specifier cannot be declared as a friend}}
+  //   since-cxx11-note@-2 {{remove 'enum' to befriend an enum}}
 
   friend enum class E1;
   // since-cxx11-error@-1 {{reference to enumeration must use 'enum' not 'enum class'}}
-  // expected-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
-  // expected-note@-3 {{remove 'enum class' to befriend an enum}}
+  // since-cxx11-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
+  //   since-cxx11-note@-3 {{remove 'enum class' to befriend an enum}}
 
   friend enum E1;
-  // expected-error@-1 {{elaborated enum specifier cannot be declared as a friend}}
-  // expected-note@-2 {{remove 'enum' to befriend an enum}}
+  // since-cxx11-error@-1 {{elaborated enum specifier cannot be declared as a friend}}
+  //   since-cxx11-note@-2 {{remove 'enum' to befriend an enum}}
 
   friend enum class E2;
   // since-cxx11-error@-1 {{reference to enumeration must use 'enum' not 'enum class'}}
-  // expected-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
-  // expected-note@-3 {{remove 'enum class' to befriend an enum}}
+  // since-cxx11-error@-2 {{elaborated enum specifier cannot be declared as a friend}}
+  //   since-cxx11-note@-3 {{remove 'enum class' to befriend an enum}}
 };
 #endif
 } // namespace cwg2363
