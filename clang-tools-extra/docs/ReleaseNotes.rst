@@ -108,19 +108,19 @@ Improvements to clang-query
 Improvements to clang-tidy
 --------------------------
 
-- Improved :program:`clang-tidy`'s `--verify-config` flag by adding support for
-  the configuration options of the `Clang Static Analyzer Checks
-  <https://clang.llvm.org/docs/analyzer/checkers.html>`_.
-
-- Improved :program:`clang-tidy` by accepting parameters file in command line.
-
 - Improved :program:`run-clang-tidy.py` script. Fixed minor shutdown noise
   happening on certain platforms when interrupting the script.
 
-- Removed :program:`clang-tidy`'s global options for most of checks. All options
-  are changed to local options except `IncludeStyle`, `StrictMode` and
-  `IgnoreMacros`. Global scoped `StrictMode` and `IgnoreMacros` are deprecated
-  and will be removed in further releases.
+- Improved :program:`clang-tidy`:
+
+  - add support for `--verify-config` flag to check the configuration options of
+    the `Clang Static Analyzer Checks <https://clang.llvm.org/docs/analyzer/checkers.html>`_.
+  - accept parameters file in command line.
+  - fix incorrect configuration file path resolving when file paths contain ``..``.
+  - remove global options for most of checks. All options are changed to local
+    options except `IncludeStyle`, `StrictMode` and `IgnoreMacros`. Global scoped
+    `StrictMode` and `IgnoreMacros` are deprecated and will be removed in further
+    releases.
 
 .. csv-table::
   :header: "Check", "Options removed from global option"
@@ -192,7 +192,7 @@ Changes in existing checks
   the offending code with ``reinterpret_cast``, to more clearly express intent.
 
 - Improved :doc:`bugprone-dangling-handle
-  <clang-tidy/checks/bugprone/dangling-handle>` check to treat `std::span` as a
+  <clang-tidy/checks/bugprone/dangling-handle>` check to treat ``std::span`` as a
   handle class.
 
 - Improved :doc:`bugprone-exception-escape
@@ -230,7 +230,7 @@ Changes in existing checks
 
 - Improved :doc:`bugprone-unchecked-optional-access
   <clang-tidy/checks/bugprone/unchecked-optional-access>` to support
-  `bsl::optional` and `bdlb::NullableValue` from
+  ``bsl::optional`` and ``bdlb::NullableValue`` from
   <https://github.com/bloomberg/bde>_.
 
 - Improved :doc:`bugprone-unhandled-self-assignment
@@ -360,9 +360,18 @@ Changes in existing checks
   case of the literal suffix in fixes and fixing false positive for implicit
   conversion of comparison result in C23.
 
+- Improved :doc:`readability-redundant-casting
+  <clang-tidy/checks/readability/redundant-casting>` check
+  by addressing a false positive in aggregate initialization through
+  parenthesized list.
+
 - Improved :doc:`readability-redundant-smartptr-get
   <clang-tidy/checks/readability/redundant-smartptr-get>` check to
-  remove `->`, when redundant `get()` is removed.
+  remove ``->``, when redundant ``get()`` is removed.
+
+- Improved :doc:`readability-use-std-min-max
+  <clang-tidy/checks/readability/use-std-min-max>` check to use correct template
+  type in ``std::min`` and ``std::max`` when operand is integer literal.
 
 Removed checks
 ^^^^^^^^^^^^^^
