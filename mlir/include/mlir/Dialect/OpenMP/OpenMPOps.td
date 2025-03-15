@@ -236,7 +236,7 @@ def TerminatorOp : OpenMP_Op<"terminator", [Terminator, Pure]> {
 // 2.7 teams Construct
 //===----------------------------------------------------------------------===//
 def TeamsOp : OpenMP_Op<"teams", traits = [
-    AttrSizedOperandSegments, RecursiveMemoryEffects
+    AttrSizedOperandSegments, RecursiveMemoryEffects, OutlineableOpenMPOpInterface
   ], clauses = [
     OpenMP_AllocateClause, OpenMP_IfClause, OpenMP_NumTeamsClause,
     OpenMP_PrivateClause, OpenMP_ReductionClause, OpenMP_ThreadLimitClause
@@ -1342,7 +1342,11 @@ def TargetOp : OpenMP_Op<"target", traits = [
 
     /// Infers the kernel type (Generic, SPMD or Generic-SPMD) based on the
     /// contents of the target region.
-    llvm::omp::OMPTgtExecModeFlags getKernelExecFlags();
+    ///
+    /// \param capturedOp result of a still valid (no modifications made to any
+    /// nested operations) previous call to `getInnermostCapturedOmpOp()`.
+    static llvm::omp::OMPTgtExecModeFlags
+    getKernelExecFlags(Operation *capturedOp);
   }] # clausesExtraClassDeclaration;
 
   let assemblyFormat = clausesAssemblyFormat # [{
