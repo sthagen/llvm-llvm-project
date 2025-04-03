@@ -316,6 +316,9 @@ Improvements to Clang's diagnostics
 
 - Split diagnosing base class qualifiers from the ``-Wignored-Qualifiers`` diagnostic group into a new ``-Wignored-base-class-qualifiers`` diagnostic group (which is grouped under ``-Wignored-qualifiers``). Fixes #GH131935.
 
+- ``-Wc++98-compat`` no longer diagnoses use of ``__auto_type`` or
+  ``decltype(auto)`` as though it was the extension for ``auto``. (#GH47900)
+
 Improvements to Clang's time-trace
 ----------------------------------
 
@@ -363,6 +366,7 @@ Bug Fixes to Attribute Support
 Bug Fixes to C++ Support
 ^^^^^^^^^^^^^^^^^^^^^^^^
 
+- Clang now supports implicitly defined comparison operators for friend declarations. (#GH132249)
 - Clang now diagnoses copy constructors taking the class by value in template instantiations. (#GH130866)
 - Clang is now better at keeping track of friend function template instance contexts. (#GH55509)
 - Clang now prints the correct instantiation context for diagnostics suppressed
