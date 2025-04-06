@@ -24,8 +24,8 @@ void MCValue::print(raw_ostream &OS) const {
 
   // FIXME: prints as a number, which isn't ideal. But the meaning will be
   // target-specific anyway.
-  if (getRefKind())
-    OS << ':' << getRefKind() <<  ':';
+  if (getSpecifier())
+    OS << ':' << getSpecifier() << ':';
 
   SymA->print(OS, nullptr);
 
@@ -43,9 +43,3 @@ LLVM_DUMP_METHOD void MCValue::dump() const {
   print(dbgs());
 }
 #endif
-
-uint16_t MCValue::getAccessVariant() const {
-  if (!SymA)
-    return 0;
-  return SymA->getSpecifier();
-}
