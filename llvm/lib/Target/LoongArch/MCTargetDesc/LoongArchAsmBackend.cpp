@@ -44,8 +44,7 @@ LoongArchAsmBackend::getFixupKind(StringRef Name) const {
   return std::nullopt;
 }
 
-const MCFixupKindInfo &
-LoongArchAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
+MCFixupKindInfo LoongArchAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
   const static MCFixupKindInfo Infos[] = {
       // This table *must* be in the order that the fixup_* kinds are defined in
       // LoongArchFixupKinds.h.
@@ -58,11 +57,6 @@ LoongArchAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_loongarch_abs_lo12", 10, 12, 0},
       {"fixup_loongarch_abs64_lo20", 5, 20, 0},
       {"fixup_loongarch_abs64_hi12", 10, 12, 0},
-      {"fixup_loongarch_tls_le_hi20", 5, 20, 0},
-      {"fixup_loongarch_tls_le_lo12", 10, 12, 0},
-      {"fixup_loongarch_tls_le64_lo20", 5, 20, 0},
-      {"fixup_loongarch_tls_le64_hi12", 10, 12, 0},
-      // TODO: Add more fixup kinds.
   };
 
   static_assert((std::size(Infos)) == LoongArch::NumTargetFixupKinds,
@@ -120,16 +114,12 @@ static uint64_t adjustFixupValue(const MCFixup &Fixup, uint64_t Value,
     return ((Value & 0x3fffc) << 8) | ((Value >> 18) & 0x3ff);
   }
   case LoongArch::fixup_loongarch_abs_hi20:
-  case LoongArch::fixup_loongarch_tls_le_hi20:
     return (Value >> 12) & 0xfffff;
   case LoongArch::fixup_loongarch_abs_lo12:
-  case LoongArch::fixup_loongarch_tls_le_lo12:
     return Value & 0xfff;
   case LoongArch::fixup_loongarch_abs64_lo20:
-  case LoongArch::fixup_loongarch_tls_le64_lo20:
     return (Value >> 32) & 0xfffff;
   case LoongArch::fixup_loongarch_abs64_hi12:
-  case LoongArch::fixup_loongarch_tls_le64_hi12:
     return (Value >> 52) & 0xfff;
   }
 }
@@ -221,9 +211,7 @@ bool LoongArchAsmBackend::shouldInsertFixupForCodeAlign(MCAssembler &Asm,
   MCSection *Sec = AF.getParent();
   MCContext &Ctx = Asm.getContext();
   const MCExpr *Dummy = MCConstantExpr::create(0, Ctx);
-  // Create fixup_loongarch_align fixup.
-  MCFixup Fixup =
-      MCFixup::create(0, Dummy, MCFixupKind(LoongArch::fixup_loongarch_align));
+  MCFixup Fixup = MCFixup::create(0, Dummy, ELF::R_LARCH_ALIGN);
   unsigned MaxBytesToEmit = AF.getMaxBytesToEmit();
 
   auto createExtendedValue = [&]() {
