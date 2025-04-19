@@ -2403,8 +2403,8 @@ void MCAsmStreamer::AddEncodingComment(const MCInst &Inst,
        << "offset: " << F.getOffset() << ", value: ";
     F.getValue()->print(OS, MAI);
     auto Kind = F.getKind();
-    if (FirstRelocationKind <= Kind)
-      OS << ", relocation type: " << (Kind - FirstRelocationKind);
+    if (mc::isRelocation(Kind))
+      OS << ", relocation type: " << Kind;
     else
       OS << ", kind: "
          << getAssembler().getBackend().getFixupKindInfo(Kind).Name;
