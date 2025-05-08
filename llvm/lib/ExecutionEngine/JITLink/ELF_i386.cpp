@@ -110,34 +110,36 @@ private:
   }
 };
 
-template <typename ELFT>
-class ELFLinkGraphBuilder_i386 : public ELFLinkGraphBuilder<ELFT> {
+class ELFLinkGraphBuilder_i386 : public ELFLinkGraphBuilder<object::ELF32LE> {
 private:
-  static Expected<i386::EdgeKind_i386> getRelocationKind(const uint32_t Type) {
-    using namespace i386;
+  using ELFT = object::ELF32LE;
+
+  Expected<i386::EdgeKind_i386> getRelocationKind(const uint32_t Type) {
     switch (Type) {
-    case ELF::R_386_NONE:
-      return EdgeKind_i386::None;
     case ELF::R_386_32:
-      return EdgeKind_i386::Pointer32;
+      return i386::Pointer32;
     case ELF::R_386_PC32:
-      return EdgeKind_i386::PCRel32;
+      return i386::PCRel32;
     case ELF::R_386_16:
-      return EdgeKind_i386::Pointer16;
+      return i386::Pointer16;
     case ELF::R_386_PC16:
-      return EdgeKind_i386::PCRel16;
+      return i386::PCRel16;
     case ELF::R_386_GOT32:
-      return EdgeKind_i386::RequestGOTAndTransformToDelta32FromGOT;
+      return i386::RequestGOTAndTransformToDelta32FromGOT;
+    case ELF::R_386_GOT32X:
+      // TODO: Add a relaxable edge kind and update relaxation optimization.
+      return i386::RequestGOTAndTransformToDelta32FromGOT;
     case ELF::R_386_GOTPC:
-      return EdgeKind_i386::Delta32;
+      return i386::Delta32;
     case ELF::R_386_GOTOFF:
-      return EdgeKind_i386::Delta32FromGOT;
+      return i386::Delta32FromGOT;
     case ELF::R_386_PLT32:
-      return EdgeKind_i386::BranchPCRel32;
+      return i386::BranchPCRel32;
     }
 
-    return make_error<JITLinkError>("Unsupported i386 relocation:" +
-                                    formatv("{0:d}", Type));
+    return make_error<JITLinkError>(
+        "In " + G->getName() + ": Unsupported i386 relocation type " +
+        object::getELFRelocationTypeName(ELF::EM_386, Type));
   }
 
   Error addRelocations() override {
@@ -165,6 +167,12 @@ private:
                             Block &BlockToFix) {
     using Base = ELFLinkGraphBuilder<ELFT>;
 
+    auto ELFReloc = Rel.getType(false);
+
+    // R_386_NONE is a no-op.
+    if (LLVM_UNLIKELY(ELFReloc == ELF::R_386_NONE))
+      return Error::success();
+
     uint32_t SymbolIndex = Rel.getSymbol(false);
     auto ObjSymbol = Base::Obj.getRelocationSymbol(Rel, Base::SymTabSec);
     if (!ObjSymbol)
@@ -179,7 +187,7 @@ private:
                   Base::GraphSymbols.size()),
           inconvertibleErrorCode());
 
-    Expected<i386::EdgeKind_i386> Kind = getRelocationKind(Rel.getType(false));
+    Expected<i386::EdgeKind_i386> Kind = getRelocationKind(ELFReloc);
     if (!Kind)
       return Kind.takeError();
 
@@ -187,23 +195,21 @@ private:
     int64_t Addend = 0;
 
     switch (*Kind) {
-    case i386::EdgeKind_i386::None:
-      break;
-    case i386::EdgeKind_i386::Pointer32:
-    case i386::EdgeKind_i386::PCRel32:
-    case i386::EdgeKind_i386::RequestGOTAndTransformToDelta32FromGOT:
-    case i386::EdgeKind_i386::Delta32:
-    case i386::EdgeKind_i386::Delta32FromGOT:
-    case i386::EdgeKind_i386::BranchPCRel32:
-    case i386::EdgeKind_i386::BranchPCRel32ToPtrJumpStub:
-    case i386::EdgeKind_i386::BranchPCRel32ToPtrJumpStubBypassable: {
+    case i386::Pointer32:
+    case i386::PCRel32:
+    case i386::RequestGOTAndTransformToDelta32FromGOT:
+    case i386::Delta32:
+    case i386::Delta32FromGOT:
+    case i386::BranchPCRel32:
+    case i386::BranchPCRel32ToPtrJumpStub:
+    case i386::BranchPCRel32ToPtrJumpStubBypassable: {
       const char *FixupContent = BlockToFix.getContent().data() +
                                  (FixupAddress - BlockToFix.getAddress());
       Addend = *(const support::little32_t *)FixupContent;
       break;
     }
-    case i386::EdgeKind_i386::Pointer16:
-    case i386::EdgeKind_i386::PCRel16: {
+    case i386::Pointer16:
+    case i386::PCRel16: {
       const char *FixupContent = BlockToFix.getContent().data() +
                                  (FixupAddress - BlockToFix.getAddress());
       Addend = *(const support::little16_t *)FixupContent;
@@ -253,9 +259,9 @@ createLinkGraphFromELFObject_i386(MemoryBufferRef ObjectBuffer,
 
   auto &ELFObjFile = cast<object::ELFObjectFile<object::ELF32LE>>(**ELFObj);
 
-  return ELFLinkGraphBuilder_i386<object::ELF32LE>(
-             (*ELFObj)->getFileName(), ELFObjFile.getELFFile(), std::move(SSP),
-             (*ELFObj)->makeTriple(), std::move(*Features))
+  return ELFLinkGraphBuilder_i386((*ELFObj)->getFileName(),
+                                  ELFObjFile.getELFFile(), std::move(SSP),
+                                  (*ELFObj)->makeTriple(), std::move(*Features))
       .buildGraph();
 }
 
