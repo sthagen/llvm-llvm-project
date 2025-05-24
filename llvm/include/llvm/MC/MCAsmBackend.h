@@ -147,8 +147,7 @@ public:
 
   /// Target specific predicate for whether a given fixup requires the
   /// associated instruction to be relaxed.
-  virtual bool fixupNeedsRelaxationAdvanced(const MCAssembler &,
-                                            const MCFixup &, const MCValue &,
+  virtual bool fixupNeedsRelaxationAdvanced(const MCFixup &, const MCValue &,
                                             uint64_t, bool Resolved) const;
 
   /// Simple predicate for targets where !Resolved implies requiring relaxation
@@ -165,22 +164,20 @@ public:
   virtual void relaxInstruction(MCInst &Inst,
                                 const MCSubtargetInfo &STI) const {};
 
-  virtual bool relaxDwarfLineAddr(const MCAssembler &Asm,
-                                  MCDwarfLineAddrFragment &DF,
+  // Defined by linker relaxation targets.
+  virtual bool relaxDwarfLineAddr(MCDwarfLineAddrFragment &DF,
                                   bool &WasRelaxed) const {
     return false;
   }
-
-  virtual bool relaxDwarfCFA(const MCAssembler &Asm,
-                             MCDwarfCallFrameFragment &DF,
+  virtual bool relaxDwarfCFA(MCDwarfCallFrameFragment &DF,
                              bool &WasRelaxed) const {
     return false;
   }
 
   // Defined by linker relaxation targets to possibly emit LEB128 relocations
   // and set Value at the relocated location.
-  virtual std::pair<bool, bool>
-  relaxLEB128(const MCAssembler &Asm, MCLEBFragment &LF, int64_t &Value) const {
+  virtual std::pair<bool, bool> relaxLEB128(MCLEBFragment &LF,
+                                            int64_t &Value) const {
     return std::make_pair(false, false);
   }
 
