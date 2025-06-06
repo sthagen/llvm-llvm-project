@@ -685,6 +685,8 @@ Bug Fixes in This Version
 - Fixed an assertion failure in serialization of constexpr structs containing unions. (#GH140130)
 - Fixed duplicate entries in TableGen that caused the wrong attribute to be selected. (GH#140701)
 - Fixed type mismatch error when 'builtin-elementwise-math' arguments have different qualifiers, this should be well-formed. (#GH141397)
+- Constant evaluation now correctly runs the destructor of a variable declared in 
+  the second clause of a C-style ``for`` loop. (#GH139818)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -831,6 +833,7 @@ Bug Fixes to C++ Support
 - Fixed an access checking bug when initializing non-aggregates in default arguments (#GH62444), (#GH83608)
 - Fixed a pack substitution bug in deducing class template partial specializations. (#GH53609)
 - Fixed a crash when constant evaluating some explicit object member assignment operators. (#GH142835)
+- Fixed an access checking bug when substituting into concepts (#GH115838)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
