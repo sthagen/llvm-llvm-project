@@ -214,7 +214,7 @@ define <8 x float> @insert_v8f32_z12345z7(<8 x float> %a) {
 ; SSE41-LABEL: insert_v8f32_z12345z7:
 ; SSE41:       # %bb.0:
 ; SSE41-NEXT:    xorps %xmm2, %xmm2
-; SSE41-NEXT:    blendps {{.*#+}} xmm0 = xmm2[0],xmm0[1,2,3]
+; SSE41-NEXT:    movss {{.*#+}} xmm0 = xmm2[0],xmm0[1,2,3]
 ; SSE41-NEXT:    blendps {{.*#+}} xmm1 = xmm1[0,1],xmm2[2],xmm1[3]
 ; SSE41-NEXT:    retq
 ;
@@ -287,7 +287,7 @@ define <8 x i32> @insert_v8i32_z12345z7(<8 x i32> %a) {
 ; SSE41-LABEL: insert_v8i32_z12345z7:
 ; SSE41:       # %bb.0:
 ; SSE41-NEXT:    xorps %xmm2, %xmm2
-; SSE41-NEXT:    blendps {{.*#+}} xmm0 = xmm2[0],xmm0[1,2,3]
+; SSE41-NEXT:    movss {{.*#+}} xmm0 = xmm2[0],xmm0[1,2,3]
 ; SSE41-NEXT:    blendps {{.*#+}} xmm1 = xmm1[0,1],xmm2[2],xmm1[3]
 ; SSE41-NEXT:    retq
 ;
@@ -508,8 +508,8 @@ define <8 x float> @PR41512_v8f32(float %x, float %y) {
 ; AVX-LABEL: PR41512_v8f32:
 ; AVX:       # %bb.0:
 ; AVX-NEXT:    vxorps %xmm2, %xmm2, %xmm2
-; AVX-NEXT:    vblendps {{.*#+}} xmm1 = xmm1[0],xmm2[1,2,3]
-; AVX-NEXT:    vblendps {{.*#+}} xmm0 = xmm0[0],xmm2[1,2,3]
+; AVX-NEXT:    vmovss {{.*#+}} xmm1 = xmm1[0],xmm2[1,2,3]
+; AVX-NEXT:    vmovss {{.*#+}} xmm0 = xmm0[0],xmm2[1,2,3]
 ; AVX-NEXT:    vinsertf128 $1, %xmm1, %ymm0, %ymm0
 ; AVX-NEXT:    retq
   %ins1 = insertelement <8 x float> zeroinitializer, float %x, i32 0
