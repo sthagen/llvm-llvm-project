@@ -535,6 +535,13 @@ mlir::LogicalResult CIRToLLVMBitPopcountOpLowering::matchAndRewrite(
   return mlir::LogicalResult::success();
 }
 
+mlir::LogicalResult CIRToLLVMBitReverseOpLowering::matchAndRewrite(
+    cir::BitReverseOp op, OpAdaptor adaptor,
+    mlir::ConversionPatternRewriter &rewriter) const {
+  rewriter.replaceOpWithNewOp<mlir::LLVM::BitReverseOp>(op, adaptor.getInput());
+  return mlir::success();
+}
+
 mlir::LogicalResult CIRToLLVMBrCondOpLowering::matchAndRewrite(
     cir::BrCondOp brOp, OpAdaptor adaptor,
     mlir::ConversionPatternRewriter &rewriter) const {
@@ -549,6 +556,13 @@ mlir::LogicalResult CIRToLLVMBrCondOpLowering::matchAndRewrite(
       brOp.getDestFalse(), adaptor.getDestOperandsFalse());
 
   return mlir::success();
+}
+
+mlir::LogicalResult CIRToLLVMByteSwapOpLowering::matchAndRewrite(
+    cir::ByteSwapOp op, OpAdaptor adaptor,
+    mlir::ConversionPatternRewriter &rewriter) const {
+  rewriter.replaceOpWithNewOp<mlir::LLVM::ByteSwapOp>(op, adaptor.getInput());
+  return mlir::LogicalResult::success();
 }
 
 mlir::Type CIRToLLVMCastOpLowering::convertTy(mlir::Type ty) const {
@@ -2044,14 +2058,17 @@ void ConvertCIRToLLVMPass::runOnOperation() {
                CIRToLLVMBitCtzOpLowering,
                CIRToLLVMBitParityOpLowering,
                CIRToLLVMBitPopcountOpLowering,
+               CIRToLLVMBitReverseOpLowering,
                CIRToLLVMBrCondOpLowering,
                CIRToLLVMBrOpLowering,
+               CIRToLLVMByteSwapOpLowering,
                CIRToLLVMCallOpLowering,
                CIRToLLVMCmpOpLowering,
                CIRToLLVMComplexAddOpLowering,
                CIRToLLVMComplexCreateOpLowering,
                CIRToLLVMComplexImagOpLowering,
                CIRToLLVMComplexRealOpLowering,
+               CIRToLLVMComplexRealPtrOpLowering,
                CIRToLLVMConstantOpLowering,
                CIRToLLVMExpectOpLowering,
                CIRToLLVMFuncOpLowering,
@@ -2523,6 +2540,23 @@ mlir::LogicalResult CIRToLLVMSetBitfieldOpLowering::matchAndRewrite(
                             info.getIsSigned());
 
   rewriter.replaceOp(op, resultVal);
+  return mlir::success();
+}
+
+mlir::LogicalResult CIRToLLVMComplexRealPtrOpLowering::matchAndRewrite(
+    cir::ComplexRealPtrOp op, OpAdaptor adaptor,
+    mlir::ConversionPatternRewriter &rewriter) const {
+  cir::PointerType operandTy = op.getOperand().getType();
+  mlir::Type resultLLVMTy = getTypeConverter()->convertType(op.getType());
+  mlir::Type elementLLVMTy =
+      getTypeConverter()->convertType(operandTy.getPointee());
+
+  mlir::LLVM::GEPArg gepIndices[2] = {0, 0};
+  mlir::LLVM::GEPNoWrapFlags inboundsNuw =
+      mlir::LLVM::GEPNoWrapFlags::inbounds | mlir::LLVM::GEPNoWrapFlags::nuw;
+  rewriter.replaceOpWithNewOp<mlir::LLVM::GEPOp>(
+      op, resultLLVMTy, elementLLVMTy, adaptor.getOperand(), gepIndices,
+      inboundsNuw);
   return mlir::success();
 }
 
