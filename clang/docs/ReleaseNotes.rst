@@ -140,6 +140,9 @@ Non-comprehensive list of changes in this release
 - A vector of booleans is now a valid condition for the ternary ``?:`` operator.
   This binds to a simple vector select operation.
 
+- Added ``__builtin_masked_load`` and ``__builtin_masked_store`` for conditional
+  memory loads from vectors. Binds to the LLVM intrinsic of the same name.
+
 - Use of ``__has_feature`` to detect the ``ptrauth_qualifier`` and ``ptrauth_intrinsics``
   features has been deprecated, and is restricted to the arm64e target only. The
   correct method to check for these features is to test for the ``__PTRAUTH__``
@@ -205,6 +208,9 @@ Improvements to Clang's diagnostics
 - Fixed false positives in ``-Waddress-of-packed-member`` diagnostics when
   potential misaligned members get processed before they can get discarded.
   (#GH144729)
+
+- Fixed false positive in ``-Wmissing-noreturn`` diagnostic when it was requiring the usage of
+  ``[[noreturn]]`` on lambdas before C++23 (#GH154493).
 
 Improvements to Clang's time-trace
 ----------------------------------
