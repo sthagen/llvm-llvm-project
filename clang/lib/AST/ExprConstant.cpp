@@ -11255,6 +11255,24 @@ static bool EvaluateVector(const Expr* E, APValue& Result, EvalInfo &Info) {
   return VectorExprEvaluator(Info, Result).Visit(E);
 }
 
+static llvm::APInt ConvertBoolVectorToInt(const APValue &Val) {
+  assert(Val.isVector() && "expected vector APValue");
+  unsigned NumElts = Val.getVectorLength();
+
+  // Each element is one bit, so create an integer with NumElts bits.
+  llvm::APInt Result(NumElts, 0);
+
+  for (unsigned I = 0; I < NumElts; ++I) {
+    const APValue &Elt = Val.getVectorElt(I);
+    assert(Elt.isInt() && "expected integer element in bool vector");
+
+    if (Elt.getInt().getBoolValue())
+      Result.setBit(I);
+  }
+
+  return Result;
+}
+
 bool VectorExprEvaluator::VisitCastExpr(const CastExpr *E) {
   const VectorType *VTy = E->getType()->castAs<VectorType>();
   unsigned NElts = VTy->getNumElements();
@@ -13442,8 +13460,14 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   case Builtin::BI__lzcnt:
   case Builtin::BI__lzcnt64: {
     APSInt Val;
-    if (!EvaluateInteger(E->getArg(0), Val, Info))
+    if (E->getArg(0)->getType()->isExtVectorBoolType()) {
+      APValue Vec;
+      if (!EvaluateVector(E->getArg(0), Vec, Info))
+        return false;
+      Val = ConvertBoolVectorToInt(Vec);
+    } else if (!EvaluateInteger(E->getArg(0), Val, Info)) {
       return false;
+    }
 
     std::optional<APSInt> Fallback;
     if ((BuiltinOp == Builtin::BI__builtin_clzg ||
@@ -13528,8 +13552,14 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   case Builtin::BI__builtin_ctzg:
   case Builtin::BI__builtin_elementwise_cttz: {
     APSInt Val;
-    if (!EvaluateInteger(E->getArg(0), Val, Info))
+    if (E->getArg(0)->getType()->isExtVectorBoolType()) {
+      APValue Vec;
+      if (!EvaluateVector(E->getArg(0), Vec, Info))
+        return false;
+      Val = ConvertBoolVectorToInt(Vec);
+    } else if (!EvaluateInteger(E->getArg(0), Val, Info)) {
       return false;
+    }
 
     std::optional<APSInt> Fallback;
     if ((BuiltinOp == Builtin::BI__builtin_ctzg ||
@@ -13744,8 +13774,14 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   case Builtin::BI__popcnt:
   case Builtin::BI__popcnt64: {
     APSInt Val;
-    if (!EvaluateInteger(E->getArg(0), Val, Info))
+    if (E->getArg(0)->getType()->isExtVectorBoolType()) {
+      APValue Vec;
+      if (!EvaluateVector(E->getArg(0), Vec, Info))
+        return false;
+      Val = ConvertBoolVectorToInt(Vec);
+    } else if (!EvaluateInteger(E->getArg(0), Val, Info)) {
       return false;
+    }
 
     return Success(Val.popcount(), E);
   }
@@ -15407,10 +15443,9 @@ bool IntExprEvaluator::VisitOffsetOfExpr(const OffsetOfExpr *OOE) {
 
     case OffsetOfNode::Field: {
       FieldDecl *MemberDecl = ON.getField();
-      const RecordType *RT = CurrentType->getAs<RecordType>();
-      if (!RT)
+      const auto *RD = CurrentType->getAsRecordDecl();
+      if (!RD)
         return Error(OOE);
-      RecordDecl *RD = RT->getOriginalDecl()->getDefinitionOrSelf();
       if (RD->isInvalidDecl()) return false;
       const ASTRecordLayout &RL = Info.Ctx.getASTRecordLayout(RD);
       unsigned i = MemberDecl->getFieldIndex();
@@ -15429,22 +15464,20 @@ bool IntExprEvaluator::VisitOffsetOfExpr(const OffsetOfExpr *OOE) {
         return Error(OOE);
 
       // Find the layout of the class whose base we are looking into.
-      const RecordType *RT = CurrentType->getAs<RecordType>();
-      if (!RT)
+      const auto *RD = CurrentType->getAsCXXRecordDecl();
+      if (!RD)
         return Error(OOE);
-      RecordDecl *RD = RT->getOriginalDecl()->getDefinitionOrSelf();
       if (RD->isInvalidDecl()) return false;
       const ASTRecordLayout &RL = Info.Ctx.getASTRecordLayout(RD);
 
       // Find the base class itself.
       CurrentType = BaseSpec->getType();
-      const RecordType *BaseRT = CurrentType->getAs<RecordType>();
-      if (!BaseRT)
+      const auto *BaseRD = CurrentType->getAsCXXRecordDecl();
+      if (!BaseRD)
         return Error(OOE);
 
       // Add the offset to the base.
-      Result += RL.getBaseClassOffset(cast<CXXRecordDecl>(
-          BaseRT->getOriginalDecl()->getDefinitionOrSelf()));
+      Result += RL.getBaseClassOffset(BaseRD);
       break;
     }
     }
