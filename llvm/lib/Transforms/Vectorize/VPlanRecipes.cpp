@@ -440,7 +440,6 @@ unsigned VPInstruction::getNumOperandsForOpcode(unsigned Opcode) {
   case VPInstruction::ExtractLastElement:
   case VPInstruction::ExtractLastLanePerPart:
   case VPInstruction::ExtractPenultimateElement:
-  case VPInstruction::FirstActiveLane:
   case VPInstruction::Not:
   case VPInstruction::ResumeForEpilogue:
   case VPInstruction::Unpack:
@@ -470,6 +469,8 @@ unsigned VPInstruction::getNumOperandsForOpcode(unsigned Opcode) {
   case Instruction::PHI:
   case Instruction::Switch:
   case VPInstruction::AnyOf:
+  case VPInstruction::FirstActiveLane:
+  case VPInstruction::LastActiveLane:
   case VPInstruction::SLPLoad:
   case VPInstruction::SLPStore:
     // Cannot determine the number of operands from the opcode.
@@ -1055,6 +1056,29 @@ InstructionCost VPInstruction::computeCost(ElementCount VF,
                                   {PredTy, Type::getInt1Ty(Ctx.LLVMCtx)});
     return Ctx.TTI.getIntrinsicInstrCost(Attrs, Ctx.CostKind);
   }
+  case VPInstruction::LastActiveLane: {
+    Type *ScalarTy = Ctx.Types.inferScalarType(getOperand(0));
+    if (VF.isScalar())
+      return Ctx.TTI.getCmpSelInstrCost(Instruction::ICmp, ScalarTy,
+                                        CmpInst::makeCmpResultType(ScalarTy),
+                                        CmpInst::ICMP_EQ, Ctx.CostKind);
+    // Calculate the cost of determining the lane index: NOT + cttz_elts + SUB.
+    auto *PredTy = toVectorTy(ScalarTy, VF);
+    IntrinsicCostAttributes Attrs(Intrinsic::experimental_cttz_elts,
+                                  Type::getInt64Ty(Ctx.LLVMCtx),
+                                  {PredTy, Type::getInt1Ty(Ctx.LLVMCtx)});
+    InstructionCost Cost = Ctx.TTI.getIntrinsicInstrCost(Attrs, Ctx.CostKind);
+    // Add cost of NOT operation on the predicate.
+    Cost += Ctx.TTI.getArithmeticInstrCost(
+        Instruction::Xor, PredTy, Ctx.CostKind,
+        {TargetTransformInfo::OK_AnyValue, TargetTransformInfo::OP_None},
+        {TargetTransformInfo::OK_UniformConstantValue,
+         TargetTransformInfo::OP_None});
+    // Add cost of SUB operation on the index.
+    Cost += Ctx.TTI.getArithmeticInstrCost(
+        Instruction::Sub, Type::getInt64Ty(Ctx.LLVMCtx), Ctx.CostKind);
+    return Cost;
+  }
   case VPInstruction::FirstOrderRecurrenceSplice: {
     assert(VF.isVector() && "Scalar FirstOrderRecurrenceSplice?");
     SmallVector<int> Mask(VF.getKnownMinValue());
@@ -1109,6 +1133,7 @@ bool VPInstruction::isVectorToScalar() const {
          getOpcode() == Instruction::ExtractElement ||
          getOpcode() == VPInstruction::ExtractLane ||
          getOpcode() == VPInstruction::FirstActiveLane ||
+         getOpcode() == VPInstruction::LastActiveLane ||
          getOpcode() == VPInstruction::ComputeAnyOfResult ||
          getOpcode() == VPInstruction::ComputeFindIVResult ||
          getOpcode() == VPInstruction::ComputeReductionResult ||
@@ -1176,6 +1201,7 @@ bool VPInstruction::opcodeMayReadOrWriteFromMemory() const {
   case VPInstruction::ActiveLaneMask:
   case VPInstruction::ExplicitVectorLength:
   case VPInstruction::FirstActiveLane:
+  case VPInstruction::LastActiveLane:
   case VPInstruction::FirstOrderRecurrenceSplice:
   case VPInstruction::LogicalAnd:
   case VPInstruction::Not:
@@ -1351,6 +1377,9 @@ void VPInstruction::printRecipe(raw_ostream &O, const Twine &Indent,
     break;
   case VPInstruction::FirstActiveLane:
     O << "first-active-lane";
+    break;
+  case VPInstruction::LastActiveLane:
+    O << "last-active-lane";
     break;
   case VPInstruction::ReductionStartVector:
     O << "reduction-start-vector";
@@ -3471,18 +3500,24 @@ InstructionCost VPWidenMemoryRecipe::computeCost(ElementCount VF,
     if (!vputils::isSingleScalar(getAddr()))
       PtrTy = toVectorTy(PtrTy, VF);
 
+    unsigned IID = isa<VPWidenLoadRecipe>(this)      ? Intrinsic::masked_gather
+                   : isa<VPWidenStoreRecipe>(this)   ? Intrinsic::masked_scatter
+                   : isa<VPWidenLoadEVLRecipe>(this) ? Intrinsic::vp_gather
+                                                     : Intrinsic::vp_scatter;
     return Ctx.TTI.getAddressComputationCost(PtrTy, nullptr, nullptr,
                                              Ctx.CostKind) +
-           Ctx.TTI.getGatherScatterOpCost(Opcode, Ty, Ptr, IsMasked, Alignment,
-                                          Ctx.CostKind, &Ingredient);
+           Ctx.TTI.getMemIntrinsicInstrCost(
+               MemIntrinsicCostAttributes(IID, Ty, Ptr, IsMasked, Alignment,
+                                          &Ingredient),
+               Ctx.CostKind);
   }
 
   InstructionCost Cost = 0;
   if (IsMasked) {
     unsigned IID = isa<VPWidenLoadRecipe>(this) ? Intrinsic::masked_load
                                                 : Intrinsic::masked_store;
-    Cost +=
-        Ctx.TTI.getMaskedMemoryOpCost({IID, Ty, Alignment, AS}, Ctx.CostKind);
+    Cost += Ctx.TTI.getMemIntrinsicInstrCost(
+        MemIntrinsicCostAttributes(IID, Ty, Alignment, AS), Ctx.CostKind);
   } else {
     TTI::OperandValueInfo OpInfo = Ctx.getOperandInfo(
         isa<VPWidenLoadRecipe, VPWidenLoadEVLRecipe>(this) ? getOperand(0)
@@ -3592,18 +3627,19 @@ InstructionCost VPWidenLoadEVLRecipe::computeCost(ElementCount VF,
   if (!Consecutive || IsMasked)
     return VPWidenMemoryRecipe::computeCost(VF, Ctx);
 
-  // We need to use the getMaskedMemoryOpCost() instead of getMemoryOpCost()
+  // We need to use the getMemIntrinsicInstrCost() instead of getMemoryOpCost()
   // here because the EVL recipes using EVL to replace the tail mask. But in the
   // legacy model, it will always calculate the cost of mask.
-  // TODO: Using getMemoryOpCost() instead of getMaskedMemoryOpCost when we
+  // TODO: Using getMemoryOpCost() instead of getMemIntrinsicInstrCost  when we
   // don't need to compare to the legacy cost model.
   Type *Ty = toVectorTy(getLoadStoreType(&Ingredient), VF);
   unsigned AS = cast<PointerType>(Ctx.Types.inferScalarType(getAddr()))
                     ->getAddressSpace();
   // FIXME: getMaskedMemoryOpCost assumes masked_* intrinsics.
   // After migrating to getMemIntrinsicInstrCost, switch this to vp_load.
-  InstructionCost Cost = Ctx.TTI.getMaskedMemoryOpCost(
-      {Intrinsic::masked_load, Ty, Alignment, AS}, Ctx.CostKind);
+  InstructionCost Cost = Ctx.TTI.getMemIntrinsicInstrCost(
+      MemIntrinsicCostAttributes(Intrinsic::masked_load, Ty, Alignment, AS),
+      Ctx.CostKind);
   if (!Reverse)
     return Cost;
 
@@ -3703,18 +3739,19 @@ InstructionCost VPWidenStoreEVLRecipe::computeCost(ElementCount VF,
   if (!Consecutive || IsMasked)
     return VPWidenMemoryRecipe::computeCost(VF, Ctx);
 
-  // We need to use the getMaskedMemoryOpCost() instead of getMemoryOpCost()
+  // We need to use the getMemIntrinsicInstrCost() instead of getMemoryOpCost()
   // here because the EVL recipes using EVL to replace the tail mask. But in the
   // legacy model, it will always calculate the cost of mask.
-  // TODO: Using getMemoryOpCost() instead of getMaskedMemoryOpCost when we
+  // TODO: Using getMemoryOpCost() instead of getMemIntrinsicInstrCost when we
   // don't need to compare to the legacy cost model.
   Type *Ty = toVectorTy(getLoadStoreType(&Ingredient), VF);
   unsigned AS = cast<PointerType>(Ctx.Types.inferScalarType(getAddr()))
                     ->getAddressSpace();
   // FIXME: getMaskedMemoryOpCost assumes masked_* intrinsics.
   // After migrating to getMemIntrinsicInstrCost, switch this to vp_store.
-  InstructionCost Cost = Ctx.TTI.getMaskedMemoryOpCost(
-      {Intrinsic::masked_store, Ty, Alignment, AS}, Ctx.CostKind);
+  InstructionCost Cost = Ctx.TTI.getMemIntrinsicInstrCost(
+      MemIntrinsicCostAttributes(Intrinsic::masked_store, Ty, Alignment, AS),
+      Ctx.CostKind);
   if (!Reverse)
     return Cost;
 
