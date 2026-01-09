@@ -130,6 +130,12 @@ C++ Specific Potentially Breaking Changes
 - ``VarTemplateSpecializationDecl::getTemplateArgsAsWritten()`` method now
   returns ``nullptr`` for implicitly instantiated declarations.
 
+- ``__builtin_is_replaceable``, ``trivially_relocable_if_eligible``, and ``replaceable_if_eligible``
+  have been removed as `P2786 <https://wg21.link/P2786>`_ have been removed from C++2c.
+  ``__builtin_is_cpp_trivially_relocatable`` and ``__builtin_trivially_relocate`` have been kept back,
+  with the `P2786 <https://wg21.link/P2786>`_ semantics, except there is no longer a way
+  to explicitly specify a type is relocatable.
+
 ABI Changes in This Version
 ---------------------------
 - Fix AArch64 argument passing for C++ empty classes with large explicitly specified alignment.
@@ -197,7 +203,7 @@ C++2c Feature Support
 ^^^^^^^^^^^^^^^^^^^^^
 
 - Started the implementation of `P2686R5 <https://wg21.link/P2686R5>`_ Constexpr structured bindings.
-  At this timem, references to constexpr and decomposition of *tuple-like* types are not supported
+  At this time, references to constexpr and decomposition of *tuple-like* types are not supported
   (only arrays and aggregates are).
 
 C++23 Feature Support
@@ -429,6 +435,8 @@ Improvements to Clang's diagnostics
 - Fixed false positives in ``-Waddress-of-packed-member`` diagnostics when
   potential misaligned members get processed before they can get discarded.
   (#GH144729)
+- Clang now emits a warning when ``std::atomic_thread_fence`` is used with ``-fsanitize=thread`` as this can
+  lead to false positives. (This can be disabled with ``-Wno-tsan``)
 - Fix a false positive warning in ``-Wignored-qualifiers`` when the return type is undeduced. (#GH43054)
 
 - Clang now emits a diagnostic with the correct message in case of assigning to const reference captured in lambda. (#GH105647)
@@ -552,6 +560,7 @@ Bug Fixes in This Version
   containing a single colon. (#GH167905)
 - Fixed a crash when parsing malformed #pragma clang loop vectorize_width(4,8,16)
   by diagnosing invalid comma-separated argument lists. (#GH166325)
+- Clang now treats enumeration constants of fixed-underlying enums as the enumerated type. (#GH172118)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -632,6 +641,9 @@ Bug Fixes to C++ Support
 - Fix the result of ``__is_pointer_interconvertible_base_of`` when arguments are qualified and passed via template parameters. (#GH135273)
 - Fixed a crash when evaluating nested requirements in requires-expressions that reference invented parameters. (#GH166325)
 - Fixed a crash when standard comparison categories (e.g. ``std::partial_ordering``) are defined with incorrect static member types. (#GH170015) (#GH56571)
+- Fixed a crash when parsing the ``enable_if`` attribute on C function declarations with identifier-list parameters. (#GH173826)
+- Fixed an assertion failure triggered by nested lambdas during capture handling. (#GH172814)
+- Fixed an assertion failure in vector conversions involving instantiation-dependent template expressions. (#GH173347)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
