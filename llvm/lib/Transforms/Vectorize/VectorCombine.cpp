@@ -1655,7 +1655,13 @@ bool VectorCombine::foldSelectsFromBitcast(Instruction &I) {
     }
 
     // Create the vector select and bitcast once for this condition.
-    Builder.SetInsertPoint(BC->getNextNode());
+    auto InsertPt = std::next(BC->getIterator());
+
+    if (auto *CondInst = dyn_cast<Instruction>(Cond))
+      if (DT.dominates(BC, CondInst))
+        InsertPt = std::next(CondInst->getIterator());
+
+    Builder.SetInsertPoint(InsertPt);
     Value *VecSel =
         Builder.CreateSelect(Cond, SrcVec, Constant::getNullValue(SrcVecTy));
     Value *NewBC = Builder.CreateBitCast(VecSel, DstVecTy);
@@ -4348,7 +4354,8 @@ bool VectorCombine::foldSignBitReductionCmp(Instruction &I) {
         TTI.getArithmeticReductionCost(getArithmeticReductionInstruction(Arith),
                                        VecTy, std::nullopt, CostKind);
     InstructionCost MinMaxCost =
-        TTI.getMinMaxReductionCost(MinMax, VecTy, FastMathFlags(), CostKind);
+        TTI.getMinMaxReductionCost(getMinMaxReductionIntrinsicOp(MinMax), VecTy,
+                                   FastMathFlags(), CostKind);
     return ArithCost <= MinMaxCost ? std::make_pair(Arith, ArithCost)
                                    : std::make_pair(MinMax, MinMaxCost);
   };
@@ -4522,10 +4529,10 @@ bool VectorCombine::foldICmpEqZeroVectorReduce(Instruction &I) {
     case Intrinsic::vector_reduce_umax:
     case Intrinsic::vector_reduce_smin:
     case Intrinsic::vector_reduce_smax:
-      OldReduceCost =
-          TTI.getMinMaxReductionCost(IID, FXTy, FastMathFlags(), CostKind);
-      NewReduceCost =
-          TTI.getMinMaxReductionCost(IID, XTy, FastMathFlags(), CostKind);
+      OldReduceCost = TTI.getMinMaxReductionCost(
+          getMinMaxReductionIntrinsicOp(IID), FXTy, FastMathFlags(), CostKind);
+      NewReduceCost = TTI.getMinMaxReductionCost(
+          getMinMaxReductionIntrinsicOp(IID), XTy, FastMathFlags(), CostKind);
       break;
     default:
       llvm_unreachable("Unexpected reduction");
@@ -4668,7 +4675,8 @@ bool VectorCombine::foldEquivalentReductionCmp(Instruction &I) {
     if (ReductionOpc != Instruction::ICmp)
       return TTI.getArithmeticReductionCost(ReductionOpc, VecTy, std::nullopt,
                                             CostKind);
-    return TTI.getMinMaxReductionCost(IID, VecTy, FastMathFlags(), CostKind);
+    return TTI.getMinMaxReductionCost(getMinMaxReductionIntrinsicOp(IID), VecTy,
+                                      FastMathFlags(), CostKind);
   };
 
   InstructionCost OrigCost = GetReductionCost(OriginalIID);
