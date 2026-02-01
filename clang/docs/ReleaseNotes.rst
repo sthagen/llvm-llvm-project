@@ -232,6 +232,7 @@ Bug Fixes to Attribute Support
 Bug Fixes to C++ Support
 ^^^^^^^^^^^^^^^^^^^^^^^^
 - Fixed a crash when instantiating ``requires`` expressions involving substitution failures in C++ concepts. (#GH176402)
+- Fixed a crash when a default argument is passed to an explicit object parameter. (#GH176639)
 - Fixed a crash when diagnosing an invalid static member function with an explicit object parameter (#GH177741)
 
 Bug Fixes to AST Handling
@@ -362,6 +363,12 @@ Python Binding Changes
 
   Affected methods: ``isKindOptional``, ``isKindTypedText``, ``isKindPlaceHolder``,
   ``isKindInformative`` and ``isKindResultType``.
+- Add a deprecation warning to ``CodeCompletionResults.results``.
+  This property will become an implementation detail with changed behavior in a 
+  future release and should not be used directly.. Existing uses of 
+  ``CodeCompletionResults.results`` should be changed to directly use
+  ``CodeCompletionResults``: it nows supports ``__len__`` and ``__getitem__``,
+  so it can be used the same as ``CodeCompletionResults.results``.
 
 OpenMP Support
 --------------
