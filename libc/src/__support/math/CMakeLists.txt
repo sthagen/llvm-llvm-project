@@ -290,6 +290,22 @@ add_header_library(
 )
 
 add_header_library(
+  atanbf16
+  HDRS
+    atanbf16.h
+  DEPENDS
+    libc.src.__support.FPUtil.cast
+    libc.src.__support.FPUtil.fenv_impl
+    libc.src.__support.FPUtil.fp_bits
+    libc.src.__support.FPUtil.multiply_add
+    libc.src.__support.FPUtil.polyeval
+    libc.src.__support.FPUtil.sqrt
+    libc.src.__support.macros.optimization
+    libc.src.__support.FPUtil.bfloat16
+    
+)
+
+add_header_library(
   atanf
   HDRS
     atanf_float.h
@@ -879,6 +895,25 @@ add_header_library(
     libc.src.__support.FPUtil.fp_bits
     libc.src.__support.FPUtil.multiply_add
     libc.src.__support.macros.optimization
+)
+
+add_header_library(
+  daddf128
+  HDRS
+    daddf128.h
+  DEPENDS
+    libc.include.llvm-libc-types.float128
+    libc.src.__support.FPUtil.generic.add_sub
+    libc.src.__support.macros.config
+)
+
+add_header_library(
+  daddl
+  HDRS
+    daddl.h
+  DEPENDS
+    libc.src.__support.FPUtil.generic.add_sub
+    libc.src.__support.macros.config
 )
 
 add_header_library(
@@ -3050,6 +3085,17 @@ add_header_library(
     sqrt.h
   DEPENDS
     libc.src.__support.FPUtil.sqrt
+)
+
+add_header_library(
+  sqrtbf16
+  HDRS
+    sqrtbf16.h
+  DEPENDS
+    libc.src.__support.FPUtil.bfloat16
+    libc.src.__support.FPUtil.sqrt
+    libc.src.__support.common
+    libc.src.__support.macros.config
 )
 
 add_header_library(
