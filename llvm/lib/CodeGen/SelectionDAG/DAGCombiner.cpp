@@ -7980,7 +7980,7 @@ SDValue DAGCombiner::visitAND(SDNode *N) {
   // fold (and (freeze (load x)), 255) -> (freeze (zextload x, i8))
   // fold (and (freeze (extload x, i16)), 255) -> (freeze (zextload x, i8))
   if (N1C && !VT.isVector()) {
-    SDValue Inner = N0.getOpcode() == ISD::FREEZE ? N0.getOperand(0) : N0;
+    SDValue Inner = peekThroughFreeze(N0);
     if (Inner.getOpcode() == ISD::LOAD)
       if (SDValue Res = reduceLoadWidth(N))
         return Res;
@@ -12212,16 +12212,15 @@ SDValue DAGCombiner::visitBSWAP(SDNode *N) {
     return DAG.getConstant(0, DL, VT);
   // If only one byte of the operand may be nonzero, bswap becomes a shift
   // to the mirror byte.
-  unsigned Lo = Known.countMinTrailingZeros();
-  unsigned Hi = BW - Known.countMinLeadingZeros();
-  if (unsigned SrcByte = Lo / 8; SrcByte == (Hi - 1) / 8) {
-    unsigned DstByte = (BW / 8) - 1 - SrcByte;
-    unsigned Opc = DstByte > SrcByte ? ISD::SHL : ISD::SRL;
+  unsigned TZ = alignDown(Known.countMinTrailingZeros(), 8);
+  unsigned LZ = alignDown(Known.countMinLeadingZeros(), 8);
+  if (BW - (LZ + TZ) == 8) {
+    unsigned Opc = LZ > TZ ? ISD::SHL : ISD::SRL;
     // Skip if the target would re-expand the produced shift post-legalize.
     // Targets that custom-lower byte-multiple shifts via bswap (e.g. MSP430
     // for shl i16) would loop with this combine.
     if (!LegalOperations || hasOperation(Opc, VT)) {
-      unsigned Amt = AbsoluteDifference(DstByte, SrcByte) * 8;
+      unsigned Amt = AbsoluteDifference(LZ, TZ);
       SDNodeFlags Flags =
           Opc == ISD::SHL ? SDNodeFlags::NoUnsignedWrap : SDNodeFlags::Exact;
       return DAG.getNode(Opc, DL, VT, N0,
