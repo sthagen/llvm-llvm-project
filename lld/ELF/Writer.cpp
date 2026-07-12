@@ -261,25 +261,31 @@ static void demoteDefined(Defined &sym, DenseMap<SectionBase *, size_t> &map) {
 // references to /DISCARD/ discarded symbols will lead to errors.
 static void demoteSymbolsAndComputeIsPreemptible(Ctx &ctx) {
   llvm::TimeTraceScope timeScope("Demote symbols");
-  DenseMap<InputFile *, DenseMap<SectionBase *, size_t>> sectionIndexMap;
-  for (Symbol *sym : ctx.symtab->getSymbols()) {
-    if (auto *d = dyn_cast<Defined>(sym)) {
-      if (d->section && !d->section->isLive())
-        demoteDefined(*d, sectionIndexMap[d->file]);
-    } else {
-      auto *s = dyn_cast<SharedSymbol>(sym);
-      if (sym->isLazy() || (s && !cast<SharedFile>(s->file)->isNeeded)) {
-        uint8_t binding = sym->isLazy() ? sym->binding : uint8_t(STB_WEAK);
-        Undefined(ctx.internalFile, sym->getName(), binding, sym->stOther,
-                  sym->type)
-            .overwrite(*sym);
-        sym->versionId = VER_NDX_GLOBAL;
+  ArrayRef<Symbol *> syms = ctx.symtab->getSymbols();
+  constexpr size_t chunkSize = 4096;
+  parallelFor(0, (syms.size() + chunkSize - 1) / chunkSize, [&](size_t c) {
+    DenseMap<InputFile *, DenseMap<SectionBase *, size_t>> sectionIndexMap;
+    size_t begin = c * chunkSize;
+    for (Symbol *sym :
+         syms.slice(begin, std::min(chunkSize, syms.size() - begin))) {
+      if (auto *d = dyn_cast<Defined>(sym)) {
+        if (d->section && !d->section->isLive())
+          demoteDefined(*d, sectionIndexMap[d->file]);
+      } else {
+        auto *s = dyn_cast<SharedSymbol>(sym);
+        if (sym->isLazy() || (s && !cast<SharedFile>(s->file)->isNeeded)) {
+          uint8_t binding = sym->isLazy() ? sym->binding : uint8_t(STB_WEAK);
+          Undefined(ctx.internalFile, sym->getName(), binding, sym->stOther,
+                    sym->type)
+              .overwrite(*sym);
+          sym->versionId = VER_NDX_GLOBAL;
+        }
       }
-    }
 
-    sym->isPreemptible = (sym->isUndefined() || sym->isExported) &&
-                         computeIsPreemptible(ctx, *sym);
-  }
+      sym->isPreemptible = (sym->isUndefined() || sym->isExported) &&
+                           computeIsPreemptible(ctx, *sym);
+    }
+  });
 }
 
 static OutputSection *findSection(Ctx &ctx, StringRef name) {
@@ -820,6 +826,22 @@ template <class ELFT> void Writer<ELFT>::addRelIpltSymbols() {
       addOptionalRegular(ctx, name, ctx.out.elfHeader.get(), 0, STV_HIDDEN);
 }
 
+static bool updateRelIpltSymbols(Ctx &ctx) {
+  if (ctx.sym.relaIpltStart) {
+    auto &dyn = getIRelativeSection(ctx);
+    if (dyn.isNeeded()) {
+      SectionBase *oldSec = ctx.sym.relaIpltEnd->section;
+      uint64_t oldVal = ctx.sym.relaIpltEnd->value;
+      ctx.sym.relaIpltStart->section = &dyn;
+      ctx.sym.relaIpltEnd->section = &dyn;
+      ctx.sym.relaIpltEnd->value = dyn.getSize();
+      return (oldSec != ctx.sym.relaIpltEnd->section ||
+              oldVal != ctx.sym.relaIpltEnd->value);
+    }
+  }
+  return false;
+}
+
 // This function generates assignments for predefined symbols (e.g. _end or
 // _etext) and inserts them into the commands sequence to be processed at the
 // appropriate time. This ensures that the value is going to be correct by the
@@ -838,14 +860,7 @@ template <class ELFT> void Writer<ELFT>::setReservedSymbolSections() {
 
   // .rela_iplt_{start,end} mark the start and the end of the section containing
   // IRELATIVE relocations.
-  if (ctx.sym.relaIpltStart) {
-    auto &dyn = getIRelativeSection(ctx);
-    if (dyn.isNeeded()) {
-      ctx.sym.relaIpltStart->section = &dyn;
-      ctx.sym.relaIpltEnd->section = &dyn;
-      ctx.sym.relaIpltEnd->value = dyn.getSize();
-    }
-  }
+  (void)updateRelIpltSymbols(ctx);
 
   PhdrEntry *last = nullptr;
   OutputSection *lastRO = nullptr;
@@ -1571,6 +1586,18 @@ template <class ELFT> void Writer<ELFT>::finalizeAddressDependentContent() {
       changed |= ctx.in.relrDyn->updateAllocSize(ctx);
     if (ctx.in.relrAuthDyn)
       changed |= ctx.in.relrAuthDyn->updateAllocSize(ctx);
+    if (ctx.in.relrAuthDyn && ctx.in.dynamic && ctx.in.dynamic->getParent()) {
+      size_t oldSize = ctx.in.dynamic->getSize();
+      finalizeSynthetic(ctx, ctx.in.dynamic.get());
+      changed |= (oldSize != ctx.in.dynamic->getSize());
+    }
+
+    // .rela_iplt_{start,end} mark the start and the end of the section
+    // containing IRELATIVE relocations. Update them on each iteration because
+    // they might be affected by the above move of relocations from
+    // .relr.auth.dyn to .rela.dyn.
+    changed |= updateRelIpltSymbols(ctx);
+
     if (ctx.in.memtagGlobalDescriptors)
       changed |= ctx.in.memtagGlobalDescriptors->updateAllocSize(ctx);
     if (ctx.in.ehFrameHdr && ctx.in.ehFrameHdr->isNeeded())
@@ -1760,7 +1787,8 @@ static void removeUnusedSyntheticSections(Ctx &ctx) {
         // Conservatively keep .rela.dyn. .relr.auth.dyn can be made empty, but
         // we would fail to remove it here.
         if (ctx.arg.emachine == EM_AARCH64 && ctx.arg.relrPackDynRelocs &&
-            sec == ctx.in.relaDyn.get())
+            sec == ctx.in.relaDyn.get() && ctx.in.relrAuthDyn &&
+            ctx.in.relrAuthDyn->isNeeded())
           return false;
         unused.insert(sec);
         return true;
