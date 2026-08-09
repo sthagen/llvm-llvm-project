@@ -142,22 +142,6 @@ template <typename DomTreeT> struct SemiNCAInfo {
 
   NodePtr getIDom(NodePtr BB) { return getNodeInfo(BB).IDom; }
 
-  TreeNodePtr getNodeForBlock(NodePtr BB, DomTreeT &DT) {
-    if (TreeNodePtr Node = DT.getNode(BB))
-      return Node;
-
-    // Haven't calculated this node yet?  Get or calculate the node for the
-    // immediate dominator.
-    NodePtr IDom = getIDom(BB);
-
-    assert(IDom || DT.getNode(nullptr));
-    TreeNodePtr IDomNode = getNodeForBlock(IDom, DT);
-
-    // Add a new tree node for this NodeT, and link it as a child of
-    // IDomNode
-    return DT.createNode(BB, IDomNode);
-  }
-
   static bool AlwaysDescend(NodePtr, NodePtr) { return true; }
 
   struct BlockNamePrinter {
@@ -620,10 +604,10 @@ template <typename DomTreeT> struct SemiNCAInfo {
       if (DT.getNode(W))
         continue; // Already calculated the node before
 
+      // W's dominator has a smaller DFS number, so its tree node already exists.
       NodePtr ImmDom = getIDom(W);
-
-      // Get or calculate the node for the immediate dominator.
-      TreeNodePtr IDomNode = getNodeForBlock(ImmDom, DT);
+      TreeNodePtr IDomNode = DT.getNode(ImmDom);
+      assert(IDomNode);
 
       // Add a new tree node for this BasicBlock, and link it as a child of
       // IDomNode.
@@ -1645,6 +1629,76 @@ bool Verify(const DomTreeT &DT, typename DomTreeT::VerificationLevel VL) {
 }
 
 } // namespace DomTreeBuilder
+
+// Defined here so that a translation unit including only
+// GenericDomTree.h calls these out of line, and needs no instantiation
+// of the algorithms above.
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::applyUpdates(
+    ArrayRef<UpdateType> Updates) {
+  GraphDiff<NodePtr, IsPostDominator> PreViewCFG(Updates,
+                                                 /*ReverseApplyUpdates=*/true);
+  DomTreeBuilder::ApplyUpdates(*this, PreViewCFG, nullptr);
+}
+
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::applyUpdates(
+    ArrayRef<UpdateType> Updates, ArrayRef<UpdateType> PostViewUpdates) {
+  if (Updates.empty()) {
+    GraphDiff<NodePtr, IsPostDom> PostViewCFG(PostViewUpdates);
+    DomTreeBuilder::ApplyUpdates(*this, PostViewCFG, &PostViewCFG);
+    return;
+  }
+  // PreViewCFG needs to merge Updates and PostViewCFG. The updates in Updates
+  // need to be reversed, and match the direction in PostViewCFG. The
+  // PostViewCFG is created with updates reversed (equivalent to changes made
+  // to the CFG), so the PreViewCFG needs all the updates reverse applied.
+  SmallVector<UpdateType> AllUpdates(Updates);
+  append_range(AllUpdates, PostViewUpdates);
+  GraphDiff<NodePtr, IsPostDom> PreViewCFG(AllUpdates,
+                                           /*ReverseApplyUpdates=*/true);
+  GraphDiff<NodePtr, IsPostDom> PostViewCFG(PostViewUpdates);
+  DomTreeBuilder::ApplyUpdates(*this, PreViewCFG, &PostViewCFG);
+}
+
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::insertEdge(NodeT *From, NodeT *To) {
+  assert(From);
+  assert(To);
+  assert(NodeTrait::getParent(From) == Parent);
+  assert(NodeTrait::getParent(To) == Parent);
+  DomTreeBuilder::InsertEdge(*this, From, To);
+}
+
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::deleteEdge(NodeT *From, NodeT *To) {
+  assert(From);
+  assert(To);
+  assert(NodeTrait::getParent(From) == Parent);
+  assert(NodeTrait::getParent(To) == Parent);
+  DomTreeBuilder::DeleteEdge(*this, From, To);
+}
+
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::recalculate(ParentType &Func) {
+  Parent = &Func;
+  updateBlockNumberEpoch();
+  DomTreeBuilder::Calculate(*this);
+}
+
+template <typename NodeT, bool IsPostDom>
+void DominatorTreeBase<NodeT, IsPostDom>::recalculate(
+    ParentType &Func, ArrayRef<UpdateType> Updates) {
+  Parent = &Func;
+  updateBlockNumberEpoch();
+  DomTreeBuilder::CalculateWithUpdates(*this, Updates);
+}
+
+template <typename NodeT, bool IsPostDom>
+bool DominatorTreeBase<NodeT, IsPostDom>::verify(VerificationLevel VL) const {
+  return DomTreeBuilder::Verify(*this, VL);
+}
+
 } // namespace llvm
 
 #undef DEBUG_TYPE
